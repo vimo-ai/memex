@@ -1,5 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import * as os from 'os';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -30,7 +30,7 @@ export interface BackupStats {
  * - 自动清理超过 30 天的旧备份
  */
 @Injectable()
-export class BackupService {
+export class BackupService implements OnModuleInit {
   private readonly logger = new Logger(BackupService.name);
 
   /** Claude projects 源目录 */
@@ -48,6 +48,25 @@ export class BackupService {
     this.backupBasePath =
       process.env.MEMEX_BACKUP_PATH ||
       path.join(os.homedir(), 'memex-data', 'backups');
+  }
+
+  /**
+   * 服务启动时执行备份
+   */
+  async onModuleInit(): Promise<void> {
+    this.logger.log('服务启动，开始执行初始备份...');
+
+    try {
+      const stats = await this.runDailyBackup();
+      this.logger.log(
+        `启动备份完成: ${stats.projectsBackedUp} 项目, ` +
+          `${stats.sessionsBackedUp} 会话已备份, ` +
+          `${stats.sessionsSkipped} 会话已跳过, ` +
+          `耗时 ${stats.duration}ms`,
+      );
+    } catch (error) {
+      this.logger.error('启动备份失败', error);
+    }
   }
 
   /**
