@@ -1,0 +1,131 @@
+/* Markdown Styles for Void Theme */
+
+.markdown-content {
+  line-height: 1.6;
+}
+
+.markdown-content p {
+  margin: 0;
+}
+
+.markdown-content p:not(:last-child) {
+  margin-bottom: 1em;
+}
+
+/* Headers */
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  font-family: 'Orbitron', sans-serif;
+  color: #fff;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  font-weight: 700;
+}
+
+.markdown-content h1 {
+  font-size: 1.5em;
+  color: #00f3ff;
+}
+
+.markdown-content h2 {
+  font-size: 1.3em;
+  color: #bd00ff;
+}
+
+.markdown-content h3 {
+  font-size: 1.1em;
+}
+
+/* Links */
+.markdown-content a {
+  color: #00f3ff;
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(0, 243, 255, 0.5);
+  transition: all 0.2s;
+}
+
+.markdown-content a:hover {
+  text-shadow: 0 0 8px rgba(0, 243, 255, 0.5);
+  border-bottom-style: solid;
+}
+
+/* Code Blocks */
+.markdown-content pre {
+  background: rgba(17, 17, 17, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 1em;
+  margin: 1em 0;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9em;
+}
+
+.markdown-content code {
+  font-family: 'JetBrains Mono', monospace;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-size: 0.9em;
+  color: #e2e8f0;
+}
+
+.markdown-content pre code {
+  background: transparent;
+  padding: 0;
+  color: #a78bfa;
+  /* Light violet for code block text */
+  border-radius: 0;
+}
+
+/* Lists */
+.markdown-content ul,
+.markdown-content ol {
+  margin: 1em 0;
+  padding-left: 1.5em;
+}
+
+.markdown-content li {
+  margin-bottom: 0.5em;
+}
+
+.markdown-content ul li::marker {
+  color: #00f3ff;
+}
+
+.markdown-content ol li::marker {
+  color: #bd00ff;
+}
+
+/* Blockquotes */
+.markdown-content blockquote {
+  border-left: 3px solid #bd00ff;
+  margin: 1em 0;
+  padding-left: 1em;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+/* Tables */
+.markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+}
+
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.5em;
+  text-align: left;
+}
+
+.markdown-content th {
+  background: rgba(255, 255, 255, 0.05);
+  color: #00f3ff;
+  font-weight: 600;
+}

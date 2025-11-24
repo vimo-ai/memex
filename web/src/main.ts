@@ -2,8 +2,9 @@ import { createApp } from 'vue'
 import router from './router'
 import App from './App.vue'
 
-// 引入 UnoCSS
 import 'virtual:uno.css'
+import './style.css'
+import './markdown.css'
 
 const app = createApp(App)
 
