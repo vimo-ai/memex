@@ -9,16 +9,37 @@ import { MessageEntity, MessageType } from '../../domain/entities/message.entity
 /**
  * JSONL 消息条目类型
  * 对应 Claude Code 的消息格式
+ *
+ * 参考：/docs/17-user-message-scenarios.md
  */
 interface JsonlMessageEntry {
   uuid: string;
-  type: 'user' | 'message' | 'summary';
+  type: 'user' | 'message' | 'summary' | 'system' | 'assistant';
   message?: {
     id?: string;
     role?: 'user' | 'assistant';
     content?: string | ContentBlock[];
   };
   timestamp?: string;
+
+  // User 消息的特殊标记字段
+  /** 工具执行结果（占 80% 的 user 消息） */
+  toolUseResult?: {
+    toolName?: string;
+    result?: string;
+    isError?: boolean;
+  };
+  /** 仅在 Transcript 中可见 */
+  isVisibleInTranscriptOnly?: boolean;
+  /** 压缩摘要 */
+  isCompactSummary?: boolean;
+  /** 元数据消息 */
+  isMeta?: boolean;
+  /** 思考元数据 */
+  thinkingMetadata?: {
+    thinkingBudget?: number;
+    thinkingEnabled?: boolean;
+  };
 }
 
 /**
@@ -27,6 +48,10 @@ interface JsonlMessageEntry {
 interface ContentBlock {
   type: string;
   text?: string;
+  // tool_result 类型的字段
+  tool_use_id?: string;
+  content?: string | ContentBlock[];
+  is_error?: boolean;
 }
 
 /**
@@ -162,15 +187,78 @@ export class ParserService {
    */
   private getMessageType(entry: JsonlMessageEntry): MessageType | null {
     if (entry.type === 'user') {
+      // 关键：过滤掉不应该显示的 user 消息
+      if (!this.shouldDisplayUserMessage(entry)) {
+        return null;
+      }
       return MessageType.USER;
     }
 
-    if (entry.type === 'message' && entry.message?.role === 'assistant') {
+    // assistant 消息有两种格式：
+    // 1. type: 'message' + role: 'assistant'（旧格式）
+    // 2. type: 'assistant'（新格式）
+    if (entry.type === 'assistant' ||
+        (entry.type === 'message' && entry.message?.role === 'assistant')) {
       return MessageType.ASSISTANT;
     }
 
     // 其他类型的消息不处理
     return null;
+  }
+
+  /**
+   * 判断 User 消息是否应该显示
+   *
+   * 根据 /docs/17-user-message-scenarios.md：
+   * - 82% 的 user 消息是 tool_result，不应该作为独立消息显示
+   * - 只有约 18% 的 user 消息是真正的用户输入
+   */
+  private shouldDisplayUserMessage(entry: JsonlMessageEntry): boolean {
+    // 1. 工具执行结果 - 不显示（占 80%）
+    if (entry.toolUseResult) {
+      return false;
+    }
+
+    // 2. 检查 content 中是否包含 tool_result
+    if (this.hasToolResultInContent(entry)) {
+      return false;
+    }
+
+    // 3. 仅 Transcript 可见 - 不显示
+    if (entry.isVisibleInTranscriptOnly) {
+      return false;
+    }
+
+    // 4. 压缩摘要 - 不显示
+    if (entry.isCompactSummary) {
+      return false;
+    }
+
+    // 5. 元数据消息 - 不显示
+    if (entry.isMeta) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * 检查消息内容中是否包含 tool_result
+   */
+  private hasToolResultInContent(entry: JsonlMessageEntry): boolean {
+    const content = entry.message?.content;
+    if (!content || typeof content === 'string') {
+      return false;
+    }
+
+    // content 是数组
+    for (const block of content) {
+      if (block.type === 'tool_result') {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**
@@ -204,9 +292,9 @@ export class ParserService {
         }
       }
 
-      // 如果没有提取到文本，返回 JSON 序列化的原始内容
+      // 如果没有提取到文本（只有 thinking/tool_use 等），跳过这条消息
       if (textParts.length === 0) {
-        return JSON.stringify(content);
+        return null;
       }
 
       return textParts.join('\n');
