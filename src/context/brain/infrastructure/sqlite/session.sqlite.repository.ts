@@ -56,14 +56,14 @@ export class SessionSqliteRepository implements ISessionRepository {
    */
   saveSession(session: SessionEntity): SessionEntity {
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, project_id, status, message_count, file_mtime, file_size, updated_at)
-      VALUES (@id, @projectId, @status, @messageCount, @fileMtime, @fileSize, CURRENT_TIMESTAMP)
+      INSERT INTO sessions (id, project_id, status, message_count, file_mtime, file_size, created_at, updated_at)
+      VALUES (@id, @projectId, @status, @messageCount, @fileMtime, @fileSize, @createdAt, @updatedAt)
       ON CONFLICT(id) DO UPDATE SET
         status = excluded.status,
         message_count = excluded.message_count,
         file_mtime = excluded.file_mtime,
         file_size = excluded.file_size,
-        updated_at = CURRENT_TIMESTAMP
+        updated_at = @updatedAt
       RETURNING *
     `);
 
@@ -74,6 +74,8 @@ export class SessionSqliteRepository implements ISessionRepository {
       messageCount: session.messageCount,
       fileMtime: session.fileMtime ?? null,
       fileSize: session.fileSize ?? null,
+      createdAt: session.createdAt?.toISOString() ?? new Date().toISOString(),
+      updatedAt: session.updatedAt?.toISOString() ?? new Date().toISOString(),
     }) as SessionRow;
 
     return this.sessionRowToEntity(row);

@@ -337,6 +337,31 @@ export class CollectorService {
     }
 
     // 4. 先保存/更新会话（消息有外键指向会话）
+    // 从消息中提取会话时间
+    let sessionCreatedAt: Date | undefined;
+    let sessionUpdatedAt: Date | undefined;
+
+    if (parseResult.messages.length > 0) {
+      // 第一条消息的时间作为会话创建时间
+      const firstMsg = parseResult.messages[0];
+      if (firstMsg.timestamp) {
+        sessionCreatedAt = firstMsg.timestamp;
+      }
+      // 最后一条消息的时间作为会话更新时间
+      const lastMsg = parseResult.messages[parseResult.messages.length - 1];
+      if (lastMsg.timestamp) {
+        sessionUpdatedAt = lastMsg.timestamp;
+      }
+    }
+
+    // 如果没有从消息获取到时间，使用文件 mtime
+    if (!sessionCreatedAt) {
+      sessionCreatedAt = new Date(fileMtime);
+    }
+    if (!sessionUpdatedAt) {
+      sessionUpdatedAt = new Date(fileMtime);
+    }
+
     const sessionEntity = new SessionEntity({
       id: sessionMeta.id,
       projectId,
@@ -344,6 +369,8 @@ export class CollectorService {
       messageCount: parseResult.messages.length,
       fileMtime,
       fileSize,
+      createdAt: sessionCreatedAt,
+      updatedAt: sessionUpdatedAt,
     });
 
     this.sessionRepository.saveSession(sessionEntity);
