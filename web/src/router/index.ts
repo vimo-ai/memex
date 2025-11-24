@@ -3,9 +3,9 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    name: 'search',
-    component: () => import('@/views/SearchView.vue'),
-    meta: { title: '搜索' },
+    name: 'home',
+    component: () => import('../views/SearchView.vue'),
+    meta: { title: 'Oracle' },
   },
   {
     path: '/projects',

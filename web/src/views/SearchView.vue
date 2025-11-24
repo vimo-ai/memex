@@ -1,29 +1,23 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { search, getStats, type SearchResult, type Stats } from '@/api'
+import GlitchText from '@/components/ui/GlitchText.vue'
 
 const router = useRouter()
 
-// 搜索关键词
+// State
 const query = ref('')
-// 搜索结果
 const results = ref<SearchResult[]>([])
-// 加载状态
 const loading = ref(false)
-// 统计信息
 const stats = ref<Stats | null>(null)
-// 是否已搜索过
 const hasSearched = ref(false)
 
-// 防抖定时器
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
-// 监听搜索输入，实现防抖搜索
+// Watchers
 watch(query, (newQuery) => {
-  if (debounceTimer) {
-    clearTimeout(debounceTimer)
-  }
+  if (debounceTimer) clearTimeout(debounceTimer)
 
   if (!newQuery.trim()) {
     results.value = []
@@ -36,148 +30,158 @@ watch(query, (newQuery) => {
   }, 300)
 })
 
-// 执行搜索
+// Actions
 async function performSearch(q: string) {
   if (!q.trim()) return
-
   loading.value = true
   hasSearched.value = true
 
   try {
     results.value = await search(q)
   } catch (error) {
-    console.error('搜索失败:', error)
+    console.error('Search failed:', error)
     results.value = []
   } finally {
     loading.value = false
   }
 }
 
-// 加载统计信息
 async function loadStats() {
   try {
     stats.value = await getStats()
   } catch (error) {
-    console.error('加载统计信息失败:', error)
+    console.error('Failed to load stats:', error)
   }
 }
 
-// 跳转到会话详情
 function goToSession(result: SearchResult) {
   router.push(`/sessions/${result.sessionId}`)
 }
 
-// 高亮关键词
 function highlightKeyword(text: string, keyword: string): string {
   if (!keyword.trim()) return text
   const regex = new RegExp(`(${escapeRegex(keyword)})`, 'gi')
-  return text.replace(regex, '<mark class="bg-yellow-500/30 text-yellow-200 px-0.5 rounded">$1</mark>')
+  return text.replace(regex, '<mark class="bg-neon-cyan/20 text-neon-cyan px-0.5 rounded font-medium shadow-[0_0_10px_rgba(0,243,255,0.2)]">$1</mark>')
 }
 
-// 转义正则特殊字符
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-// 截取内容预览
 function truncateContent(content: string, maxLength = 200): string {
   if (content.length <= maxLength) return content
   return content.slice(0, maxLength) + '...'
 }
 
-// 格式化时间
 function formatTime(timestamp: string): string {
-  const date = new Date(timestamp)
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  return new Date(timestamp).toLocaleString()
 }
 
-// 初始化加载统计
-loadStats()
+onMounted(() => {
+  loadStats()
+})
 </script>
 
 <template>
-  <div class="flex flex-col items-center">
-    <!-- 搜索区域 -->
-    <div class="w-full max-w-2xl mt-20 mb-8">
-      <!-- Logo 和标题 -->
-      <div class="flex flex-col items-center mb-8">
-        <div class="i-carbon-data-base text-6xl text-blue-400 mb-4" />
-        <h1 class="text-3xl font-bold text-gray-100">Memex</h1>
-        <p class="text-gray-400 mt-2">Claude Code 会话历史管理</p>
+  <div class="h-full flex flex-col items-center justify-center relative transition-all duration-700" :class="{ 'justify-start pt-20': hasSearched }">
+    
+    <!-- The Core (Animated Background) -->
+    <div 
+      class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-neon-cyan/5 rounded-full blur-[100px] pointer-events-none transition-all duration-1000"
+      :class="{ 'w-[800px] h-[300px] -translate-y-full opacity-20': hasSearched }"
+    />
+
+    <!-- Search Container -->
+    <div class="w-full max-w-4xl px-6 z-10 flex flex-col items-center">
+      
+      <!-- Title -->
+      <div class="mb-12 text-center transition-all duration-500" :class="{ 'opacity-0 h-0 overflow-hidden mb-0': hasSearched }">
+        <div class="mb-4">
+          <GlitchText text="MEMEX ORACLE" class="text-5xl font-bold text-white" />
+        </div>
+        <p class="text-gray-500 font-mono text-sm tracking-widest">ACCESSING NEURAL ARCHIVES...</p>
       </div>
 
-      <!-- 搜索框 -->
-      <div class="relative">
-        <div class="absolute left-4 top-1/2 -translate-y-1/2 i-carbon-search text-xl text-gray-400" />
-        <input
-          v-model="query"
-          type="text"
-          placeholder="搜索会话内容..."
-          class="w-full h-14 pl-12 pr-4 bg-gray-800 border border-gray-700 rounded-xl text-lg text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
-        />
-        <!-- 加载指示器 -->
-        <div
-          v-if="loading"
-          class="absolute right-4 top-1/2 -translate-y-1/2 i-carbon-circle-dash animate-spin text-xl text-blue-400"
-        />
+      <!-- Search Input -->
+      <div class="w-full relative group">
+        <div class="absolute inset-0 bg-gradient-to-r from-neon-cyan/20 to-neon-violet/20 rounded-none blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+        <div class="relative flex items-center bg-surface-100/80 backdrop-blur-xl border border-white/10 group-hover:border-neon-cyan/30 transition-colors">
+          <div class="pl-6 text-neon-cyan">
+            <div class="i-carbon-search text-2xl" />
+          </div>
+          <input
+            v-model="query"
+            type="text"
+            placeholder="ENTER QUERY COMMAND..."
+            class="w-full bg-transparent border-none focus:ring-0 text-xl font-mono text-white placeholder-gray-600 px-6 py-6 uppercase tracking-wider"
+            autofocus
+          />
+          <div v-if="loading" class="pr-6">
+            <div class="i-carbon-circle-dash animate-spin text-2xl text-neon-cyan" />
+          </div>
+        </div>
+        
+        <!-- Corner Accents -->
+        <div class="absolute top-0 left-0 w-2 h-2 border-t border-l border-neon-cyan opacity-50" />
+        <div class="absolute top-0 right-0 w-2 h-2 border-t border-r border-neon-cyan opacity-50" />
+        <div class="absolute bottom-0 left-0 w-2 h-2 border-b border-l border-neon-cyan opacity-50" />
+        <div class="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-neon-cyan opacity-50" />
       </div>
 
-      <!-- 统计信息 -->
-      <div v-if="stats && !hasSearched" class="flex justify-center gap-8 mt-6 text-sm text-gray-500">
-        <span>{{ stats.projectCount }} 个项目</span>
-        <span>{{ stats.sessionCount }} 个会话</span>
-        <span>{{ stats.messageCount }} 条消息</span>
+      <!-- Stats (Hidden when searching) -->
+      <div v-if="stats && !hasSearched" class="flex gap-12 mt-16 font-mono text-xs text-gray-500">
+        <div class="flex flex-col items-center gap-2">
+          <span class="text-2xl text-white font-display">{{ stats.projectCount }}</span>
+          <span class="tracking-widest">NODES</span>
+        </div>
+        <div class="flex flex-col items-center gap-2">
+          <span class="text-2xl text-white font-display">{{ stats.sessionCount }}</span>
+          <span class="tracking-widest">LINKS</span>
+        </div>
+        <div class="flex flex-col items-center gap-2">
+          <span class="text-2xl text-white font-display">{{ stats.messageCount }}</span>
+          <span class="tracking-widest">DATA</span>
+        </div>
       </div>
     </div>
 
-    <!-- 搜索结果 -->
-    <div class="w-full max-w-3xl">
-      <!-- 无结果提示 -->
-      <div v-if="hasSearched && !loading && results.length === 0" class="text-center text-gray-500 py-8">
-        <div class="i-carbon-search text-4xl mb-4 mx-auto opacity-50" />
-        <p>没有找到相关结果</p>
+    <!-- Results Stream -->
+    <div v-if="hasSearched" class="w-full max-w-4xl px-6 mt-8 pb-32 overflow-y-auto scroll-smooth h-full">
+      <div v-if="!loading && results.length === 0" class="text-center py-20 opacity-50">
+        <div class="font-mono text-neon-cyan mb-2">NO MATCHES FOUND</div>
+        <div class="text-xs text-gray-600">TRY ADJUSTING QUERY PARAMETERS</div>
       </div>
 
-      <!-- 结果列表 -->
       <div v-else class="space-y-4">
         <div
           v-for="result in results"
           :key="result.messageId"
-          class="p-4 bg-gray-800 rounded-lg border border-gray-700 hover:border-gray-600 cursor-pointer transition-colors"
+          class="group relative bg-surface-100/50 border border-white/5 p-6 cursor-pointer hover:bg-surface-200/50 hover:border-neon-cyan/30 transition-all duration-300"
           @click="goToSession(result)"
         >
-          <!-- 会话 ID 和时间 -->
-          <div class="flex items-center justify-between text-sm text-gray-500 mb-2">
-            <span class="flex items-center gap-1 truncate max-w-[70%]">
-              <div class="i-carbon-chat" />
-              {{ result.sessionId.slice(0, 8) }}...
-            </span>
-            <span>{{ formatTime(result.timestamp) }}</span>
-          </div>
+          <!-- Hover Glow -->
+          <div class="absolute inset-0 bg-neon-cyan/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
 
-          <!-- 角色标签 -->
-          <div class="flex items-center gap-2 mb-2">
-            <span
-              class="px-2 py-0.5 rounded text-xs"
-              :class="result.type === 'user' ? 'bg-green-900 text-green-300' : 'bg-blue-900 text-blue-300'"
-            >
-              {{ result.type === 'user' ? '用户' : 'Claude' }}
-            </span>
-          </div>
+          <div class="relative z-10">
+            <div class="flex items-center justify-between mb-3 font-mono text-xs">
+              <div class="flex items-center gap-3">
+                <span :class="result.type === 'user' ? 'text-neon-cyan' : 'text-neon-violet'">
+                  {{ result.type === 'user' ? 'USER' : 'SYSTEM' }}
+                </span>
+                <span class="text-gray-600">::</span>
+                <span class="text-gray-500">{{ result.sessionId.slice(0, 8) }}</span>
+              </div>
+              <span class="text-gray-600">{{ formatTime(result.timestamp) }}</span>
+            </div>
 
-          <!-- 内容预览（高亮关键词） -->
-          <p
-            class="text-gray-300 text-sm leading-relaxed"
-            v-html="highlightKeyword(truncateContent(result.snippet || result.content), query)"
-          />
+            <div 
+              class="font-mono text-sm text-gray-300 leading-relaxed line-clamp-3"
+              v-html="highlightKeyword(truncateContent(result.snippet || result.content), query)"
+            />
+          </div>
         </div>
       </div>
     </div>
+
   </div>
 </template>

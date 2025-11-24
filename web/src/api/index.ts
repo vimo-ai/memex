@@ -28,9 +28,9 @@ export interface Project {
 
 // 会话相关类型
 export interface Session {
-  id: number
-  uuid: string
+  id: string // UUID 字符串
   projectId: number
+  status: string
   messageCount: number
   createdAt: string
   updatedAt: string
@@ -39,10 +39,12 @@ export interface Session {
 // 消息相关类型
 export interface Message {
   id: number
-  sessionId: number
-  role: 'user' | 'assistant'
+  uuid: string
+  sessionId: string
+  type: 'user' | 'assistant'
   content: string
   timestamp: string
+  createdAt: string
 }
 
 // 搜索结果类型
@@ -88,6 +90,18 @@ interface ProjectsResponse {
   projects: Project[]
 }
 
+// 会话列表响应类型
+interface SessionsResponse {
+  total: number
+  sessions: Session[]
+}
+
+// 消息列表响应类型
+interface MessagesResponse {
+  total: number
+  messages: Message[]
+}
+
 /**
  * 获取项目列表
  */
@@ -110,13 +124,14 @@ export async function getProjectSessions(
   projectId: number,
   limit = 50
 ): Promise<Session[]> {
-  return request<Session[]>(`/projects/${projectId}/sessions?limit=${limit}`)
+  const response = await request<SessionsResponse>(`/projects/${projectId}/sessions?limit=${limit}`)
+  return response.sessions
 }
 
 /**
  * 获取单个会话
  */
-export async function getSession(id: number): Promise<Session> {
+export async function getSession(id: string): Promise<Session> {
   return request<Session>(`/sessions/${id}`)
 }
 
@@ -124,13 +139,19 @@ export async function getSession(id: number): Promise<Session> {
  * 获取会话的消息列表
  */
 export async function getSessionMessages(
-  sessionId: number,
+  sessionId: string,
   limit = 100,
   offset = 0
 ): Promise<PaginatedResponse<Message>> {
-  return request<PaginatedResponse<Message>>(
+  const response = await request<MessagesResponse>(
     `/sessions/${sessionId}/messages?limit=${limit}&offset=${offset}`
   )
+  return {
+    data: response.messages,
+    total: response.total,
+    limit,
+    offset,
+  }
 }
 
 /**
