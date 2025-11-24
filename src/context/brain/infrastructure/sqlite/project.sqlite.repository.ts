@@ -76,11 +76,23 @@ export class ProjectSqliteRepository implements IProjectRepository {
 
   /**
    * 获取所有项目
+   * 通过 JOIN sessions 表获取每个项目的最新活动时间
    */
   findAll(): ProjectEntity[] {
-    const stmt = this.db.prepare('SELECT * FROM projects ORDER BY updated_at DESC');
-    const rows = stmt.all() as ProjectRow[];
-    return rows.map((row) => this.rowToEntity(row));
+    const stmt = this.db.prepare(`
+      SELECT
+        p.*,
+        COALESCE(MAX(s.updated_at), p.updated_at) as latest_activity
+      FROM projects p
+      LEFT JOIN sessions s ON s.project_id = p.id
+      GROUP BY p.id
+      ORDER BY latest_activity DESC
+    `);
+    const rows = stmt.all() as (ProjectRow & { latest_activity: string })[];
+    return rows.map((row) => this.rowToEntity({
+      ...row,
+      updated_at: row.latest_activity,
+    }));
   }
 
   /**
