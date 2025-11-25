@@ -1,7 +1,6 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { MCPTool } from '../../mcp/decorators/mcp-tool.decorator';
-import { HybridSearchService, HybridSearchResult } from './hybrid-search.service';
-import { RagService, RagResponse } from './rag.service';
+import { HybridSearchService } from './hybrid-search.service';
 import {
   ISessionRepository,
   SESSION_REPOSITORY,
@@ -10,7 +9,6 @@ import {
   IProjectRepository,
   PROJECT_REPOSITORY,
 } from '../../domain/repositories/project.repository.interface';
-import { SessionEntity } from '../../domain/entities/session.entity';
 import { MessageEntity } from '../../domain/entities/message.entity';
 
 /**
@@ -23,7 +21,6 @@ export class MCPToolsService {
 
   constructor(
     private readonly hybridSearchService: HybridSearchService,
-    private readonly ragService: RagService,
     @Inject(SESSION_REPOSITORY)
     private readonly sessionRepository: ISessionRepository,
     @Inject(PROJECT_REPOSITORY)
@@ -354,37 +351,6 @@ export class MCPToolsService {
       projects: results,
       total: results.length,
     };
-  }
-
-  /**
-   * 基于历史对话回答问题
-   */
-  @MCPTool({
-    name: 'ask_history',
-    description: '基于 Claude Code 历史对话回答问题。使用 RAG 技术检索相关对话并生成答案',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        question: { type: 'string', description: '要问的问题' },
-        cwd: { type: 'string', description: '当前工作目录，用于匹配项目过滤结果' },
-        contextWindow: { type: 'number', description: '前后消息数，用于提供上下文，默认 3' },
-        maxSources: { type: 'number', description: '最大引用数，默认 5' },
-      },
-      required: ['question'],
-    },
-  })
-  async askHistory(
-    question: string,
-    cwd?: string,
-    contextWindow?: number,
-    maxSources?: number,
-  ): Promise<RagResponse> {
-    return this.ragService.ask({
-      question,
-      cwd,
-      contextWindow,
-      maxSources,
-    });
   }
 
   /**
