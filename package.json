@@ -7,12 +7,19 @@
   "license": "MIT",
   "scripts": {
     "build": "nest build",
+    "build:mcp": "tsc src/mcp/index.ts --outDir dist/mcp --module nodenext --moduleResolution nodenext --target es2022 --lib es2022 --skipLibCheck",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main"
+    "start:prod": "node dist/main",
+    "mcp": "node dist/mcp/index.js"
+  },
+  "bin": {
+    "memex-mcp": "./dist/mcp/index.js"
   },
   "dependencies": {
+    "@lancedb/lancedb": "^0.22.3",
+    "@modelcontextprotocol/sdk": "^1.0.4",
     "@nestjs/common": "^10.4.0",
     "@nestjs/core": "^10.4.0",
     "@nestjs/platform-express": "^10.4.0",

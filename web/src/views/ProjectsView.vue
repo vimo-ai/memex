@@ -70,8 +70,8 @@ onMounted(() => {
 <template>
   <div class="h-full flex flex-col px-8 pt-8">
     <!-- Header -->
-    <div class="flex flex-wrap items-end justify-between mb-8 border-b border-white/5 pb-6 gap-4">
-      <div class="max-w-full flex-1 min-w-[200px]">
+    <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] items-end mb-8 border-b border-white/5 pb-6 gap-4">
+      <div class="min-w-0">
         <div class="relative group inline-block text-4xl font-bold text-white mb-2 max-w-full overflow-hidden text-ellipsis">
           <GlitchText text="ARCHIVES" />
         </div>
@@ -81,7 +81,7 @@ onMounted(() => {
       </div>
 
       <!-- Filter -->
-      <div class="relative group w-full md:w-64 max-w-full flex-shrink-0">
+      <div class="relative group md:w-64">
         <div class="absolute inset-0 bg-neon-cyan/20 blur-md opacity-0 group-hover:opacity-100 transition-opacity"></div>
         <input 
           v-model="searchQuery"

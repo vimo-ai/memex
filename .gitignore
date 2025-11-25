@@ -25,3 +25,6 @@ logs/
 
 # 数据目录（可选，默认在 ~/memex-data/）
 data/
+
+# Vlaude 临时文件
+.vlaude/

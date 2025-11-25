@@ -76,11 +76,131 @@ Claude Code 的对话历史存储在 `~/.claude/projects/` 目录下，存在以
 - 混合检索（关键词 + 语义）
 - RRF 融合排序
 
+#### Phase 2 详细设计
+
+**增量 Embedding 策略**：
+
+当前采用 **方案 C（定时批量）**，简单可靠：
+- 定时任务扫描 `embedded_at IS NULL` 的消息
+- 批量生成 embedding 并存入 LanceDB
+- 启动时 + 定时（如每小时）触发
+
+**未来优化方向 - 方案 B（Claude Hooks 集成）**：
+
+Claude Code 支持 [hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) 机制，可实现近实时索引：
+
+```json
+// ~/.claude/settings.json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "TodoWrite",
+        "commands": ["curl -X POST http://localhost:10013/api/embedding/trigger"]
+      }
+    ],
+    "Stop": [
+      {
+        "commands": ["curl -X POST http://localhost:10013/api/embedding/session/$SESSION_ID"]
+      }
+    ]
+  }
+}
+```
+
+优势：
+- 会话结束时自动触发 embedding
+- 无需轮询，减少资源消耗
+- 用户无感知，后台异步处理
+
+**混合检索架构**：
+
+```
+查询 "如何部署"
+    │
+    ├──────────────────────┬──────────────────────┐
+    ▼                      ▼                      │
+┌─────────┐          ┌──────────┐                 │
+│  FTS5   │          │ LanceDB  │                 │
+│ 关键词  │          │  向量    │                 │
+└────┬────┘          └────┬─────┘                 │
+     │                    │                       │
+     ▼                    ▼                       │
+[id1, id2, id3]    [id4, id2, id5]               │
+     │                    │                       │
+     └────────┬───────────┘                       │
+              ▼                                   │
+        ┌──────────┐                              │
+        │ RRF 融合  │  Reciprocal Rank Fusion    │
+        └────┬─────┘                              │
+             ▼                                    │
+     [id2, id1, id4, id3, id5]  ← 融合排序       │
+             │                                    │
+             ▼                                    │
+     SQLite 补全详情 (session/project/context)   │
+             │                                    │
+             ▼                                    │
+        返回结果                                   │
+```
+
+**RRF 公式**：`score(d) = Σ 1/(k + rank_i(d))`，k=60
+
+**API 设计**：
+
+```
+GET /api/search/semantic?q=xxx&limit=10
+    → 混合检索，返回融合排序结果
+
+POST /api/embedding/build
+    → 全量构建向量索引
+
+POST /api/embedding/trigger
+    → 触发增量 embedding（供 hooks 调用）
+
+GET /api/embedding/stats
+    → 索引状态（总数/已索引/待处理）
+```
+
 ### Phase 3: MCP 集成
 
-- 暴露 MCP 工具
-- 集成到 Claude Code 工作流
-- 无缝查询历史
+✅ **已完成**
+
+实现了 MCP (Model Context Protocol) Server，让 Claude Code 可以直接查询历史对话。
+
+**实现的工具**：
+
+1. `search_history` - 全文搜索历史对话
+   - 支持 FTS 搜索（向量搜索待 Ollama 集成后支持）
+   - 自动通过 cwd 匹配项目
+   - 返回 messageIndex 方便定位
+
+2. `get_session` - 获取会话详情
+   - 支持 ID 前缀匹配
+   - 支持分页
+   - 支持会话内搜索，自动定位到匹配位置
+
+3. `get_recent_sessions` - 最近会话列表
+   - 可按项目过滤
+   - 显示预览和基本信息
+
+4. `list_projects` - 列出所有项目
+   - 显示会话数统计
+
+**配置方式**：
+
+在 `~/.claude/settings.json` 中添加：
+```json
+{
+  "mcpServers": {
+    "memex": {
+      "command": "node",
+      "args": ["/path/to/memex/dist/mcp/index.js"]
+    }
+  }
+}
+```
+
+详见 [MCP.md](./MCP.md)
 
 ### Phase 4: RAG 问答
 
@@ -230,13 +350,13 @@ memex/
 
 | Phase | 内容 | 状态 |
 |-------|------|------|
-| **前置** | 重构 shared-core，抽出公共代码 | 待开始 |
-| 0 | 项目初始化 + 数据采集 + 备份 | 待开始 |
-| 1 | SQLite + FTS5 + HTTP API | 待开始 |
-| 2 | Embedding + LanceDB + 混合搜索 | - |
-| 3 | MCP 集成 | - |
-| 4 | RAG 问答 | - |
-| 5 | 知识提炼 | - |
+| **前置** | 重构 shared-core，抽出公共代码 | ✅ 完成 |
+| 0 | 项目初始化 + 数据采集 + 备份 | ✅ 完成 |
+| 1 | SQLite + FTS5 + HTTP API | ✅ 完成 |
+| 2 | Embedding + LanceDB + 混合搜索 | ✅ 完成 |
+| 3 | MCP 集成 | ✅ 完成 |
+| 4 | RAG 问答 | 待开始 |
+| 5 | 知识提炼 | 待开始 |
 
 ---
 
