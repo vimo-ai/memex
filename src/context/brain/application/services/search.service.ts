@@ -18,6 +18,10 @@ export interface SearchOptions {
   query: string;
   /** 项目 ID（可选，限定搜索范围） */
   projectId?: number;
+  /** 开始时间（ISO 格式字符串，可选） */
+  startDate?: string;
+  /** 结束时间（ISO 格式字符串，可选） */
+  endDate?: string;
   /** 返回数量限制 */
   limit?: number;
 }
@@ -53,18 +57,10 @@ export class SearchService {
    * @returns 搜索结果列表（包含项目信息）
    */
   search(options: SearchOptions): SearchResultWithContext[] {
-    const { query, projectId, limit = 50 } = options;
+    const { query, projectId, startDate, endDate, limit = 50 } = options;
 
-    // 执行基础搜索
-    let results = this.sessionRepository.searchMessages(query, limit);
-
-    // 如果指定了项目 ID，过滤结果
-    if (projectId !== undefined) {
-      const sessions = this.sessionRepository.findSessionsByProjectId(projectId);
-      const sessionIds = new Set(sessions.map((s) => s.id));
-
-      results = results.filter((r) => sessionIds.has(r.message.sessionId));
-    }
+    // 执行基础搜索（带时间范围和项目过滤）
+    const results = this.sessionRepository.searchMessages(query, limit, startDate, endDate, projectId);
 
     // 为每个结果添加项目信息
     return results.map((result) => {

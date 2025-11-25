@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsInt, Min, Max } from 'class-validator';
+import { IsString, IsOptional, IsInt, Min, Max, IsDateString } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
 /**
@@ -15,6 +15,16 @@ export class SearchQueryDto {
   @IsInt()
   @Min(1)
   project_id?: number;
+
+  /** 开始时间（ISO 格式，可选） */
+  @IsOptional()
+  @IsDateString()
+  start_date?: string;
+
+  /** 结束时间（ISO 格式，可选） */
+  @IsOptional()
+  @IsDateString()
+  end_date?: string;
 
   /** 返回数量限制 */
   @IsOptional()

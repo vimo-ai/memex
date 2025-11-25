@@ -14,13 +14,15 @@ export class SearchController {
   /**
    * 全文搜索
    *
-   * GET /api/search?q=keyword&project_id=1&limit=20
+   * GET /api/search?q=keyword&project_id=1&start_date=2024-01-01&end_date=2024-12-31&limit=20
    */
   @Get()
   search(@Query() query: SearchQueryDto): SearchResponseDto {
     const results = this.searchService.search({
       query: query.q,
       projectId: query.project_id,
+      startDate: query.start_date,
+      endDate: query.end_date,
       limit: query.limit,
     });
 
