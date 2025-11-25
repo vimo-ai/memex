@@ -182,9 +182,106 @@ export async function getStats(): Promise<Stats> {
   return request<Stats>('/admin/stats')
 }
 
+// ========== 语义搜索 API ==========
+
+/** 语义搜索模式 */
+export type SemanticSearchMode = 'fts' | 'vector' | 'hybrid'
+
+/** 语义搜索结果类型 */
+export interface SemanticSearchResult {
+  messageId: number
+  uuid: string
+  content: string
+  messageType: 'user' | 'assistant'
+  sessionId: string
+  projectId: number
+  projectName: string
+  timestamp: string
+  snippet?: string
+  score: number
+  sources: {
+    fts: boolean
+    vector: boolean
+  }
+  ftsRank?: number
+  vectorSimilarity?: number
+}
+
+/** 语义搜索响应 */
+export interface SemanticSearchResponse {
+  results: SemanticSearchResult[]
+  total: number
+  mode: SemanticSearchMode
+}
+
+/** 索引状态 */
+export interface EmbeddingStats {
+  totalMessages: number
+  indexedMessages: number
+  pendingMessages: number
+  failedMessages?: number
+  isIndexing: boolean
+  ollamaAvailable: boolean
+  progress: number
+}
+
+/**
+ * 语义搜索
+ */
+export async function semanticSearch(
+  query: string,
+  options?: {
+    limit?: number
+    projectId?: number
+    mode?: SemanticSearchMode
+    startDate?: string
+    endDate?: string
+  }
+): Promise<SemanticSearchResult[]> {
+  const params = new URLSearchParams({ q: query })
+
+  if (options?.limit) params.append('limit', String(options.limit))
+  if (options?.projectId) params.append('projectId', String(options.projectId))
+  if (options?.mode) params.append('mode', options.mode)
+  if (options?.startDate) params.append('startDate', options.startDate)
+  if (options?.endDate) params.append('endDate', options.endDate)
+
+  const response = await request<SemanticSearchResponse>(`/search/semantic?${params.toString()}`)
+  return response.results
+}
+
+/**
+ * 获取索引状态
+ */
+export async function getEmbeddingStats(): Promise<EmbeddingStats> {
+  return request<EmbeddingStats>('/embedding/stats')
+}
+
 /**
  * 触发数据采集
  */
 export async function triggerCollect(): Promise<{ success: boolean; message: string }> {
   return request('/admin/collect', { method: 'POST' })
+}
+
+/**
+ * 根据 ID 前缀搜索会话
+ */
+export async function searchSessionsByIdPrefix(
+  idPrefix: string,
+  limit = 20
+): Promise<Session[]> {
+  const params = new URLSearchParams({
+    idPrefix,
+    limit: String(limit),
+  })
+
+  interface SearchResponse {
+    query: string
+    total: number
+    sessions: Session[]
+  }
+
+  const response = await request<SearchResponse>(`/sessions/search?${params.toString()}`)
+  return response.sessions
 }
