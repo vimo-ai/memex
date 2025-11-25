@@ -1,168 +1,155 @@
+[English](README.md) | [中文](/.github/README_zh-CN.md)
+
 # Memex
 
-Claude Code 会话历史管理系统，让你的对话永不过期。
+A session history management system for Claude Code. Never lose your conversations again.
 
-## 为什么需要 Memex？
+## Why Memex?
 
-Claude Code 的本地对话数据会在 30 天后过期，导致：
-- 重要的技术决策记录丢失
-- 历史对话难以检索
-- 知识无法沉淀和复用
+Claude Code's local conversation data expires after 30 days, causing:
+- Loss of important technical decision records
+- Difficulty searching historical conversations
+- Knowledge cannot be accumulated and reused
 
-Memex 解决这些问题：
-- ✅ 自动备份所有 Claude Code 会话
-- ✅ 强大的全文和语义搜索
-- ✅ MCP 协议支持，在 Claude 中直接搜索历史
-- ✅ Web UI 浏览和管理会话
+Memex solves these problems:
+- ✅ Automatic backup of all Claude Code sessions
+- ✅ Powerful full-text and semantic search
+- ✅ MCP protocol support for searching history directly in Claude
+- ✅ Web UI for browsing and managing sessions
 
-## 功能特性
+## Features
 
-### 数据采集与备份
-- 自动扫描 `~/.claude/projects/` 下所有会话
-- 解析 JSONL 格式对话内容
-- 存储到 SQLite 数据库
-- 支持每日增量备份
+### Data Collection & Backup
+- Automatically scans all sessions under `~/.claude/projects/`
+- Parses JSONL format conversation content
+- Stores in SQLite database
+- Supports daily incremental backups
 
-### 搜索能力
-- **全文搜索**: 基于 SQLite FTS5，快速关键词检索
-- **语义搜索**: 使用 Ollama + LanceDB 实现语义理解
-- **混合检索**: RRF 融合排序，同时利用关键词和语义相关性
-- **高级过滤**: 按项目、时间范围、Session ID 前缀过滤
+### Search Capabilities
+- **Full-text Search**: Fast keyword search based on SQLite FTS5
+- **Semantic Search**: Semantic understanding using Ollama + LanceDB
+- **Hybrid Retrieval**: RRF fusion ranking combining keyword and semantic relevance
+- **Advanced Filtering**: Filter by project, time range, Session ID prefix
 
-### MCP 集成
-支持在 Claude Code 中通过 MCP 协议搜索历史对话：
-- `search_history` - 搜索历史对话
-- `get_session` - 获取会话详情（支持分页和会话内搜索）
-- `get_recent_sessions` - 获取最近的会话
-- `list_projects` - 列出所有项目
+### MCP Integration
+Search historical conversations in Claude Code via MCP protocol:
+- `search_history` - Search historical conversations
+- `get_session` - Get session details (supports pagination and in-session search)
+- `get_recent_sessions` - Get recent sessions
+- `list_projects` - List all projects
 
 ### Web UI
-- Cyberpunk 风格界面
-- 项目列表和会话浏览
-- Session ID 前缀快速查找
-- 支持全文/语义/混合搜索
+- Cyberpunk-style interface
+- Project list and session browsing
+- Quick lookup by Session ID prefix
+- Supports full-text/semantic/hybrid search
 
-## 技术栈
+## Tech Stack
 
-- **后端**: NestJS (DDD 架构)
-- **数据库**: SQLite + FTS5 (全文搜索)
-- **向量存储**: LanceDB
-- **Embedding**: Ollama (nomic-embed-text 模型)
-- **前端**: Vue 3
-- **通信**: HTTP + JSON-RPC (MCP)
+- **Backend**: NestJS (DDD architecture)
+- **Database**: SQLite + FTS5 (full-text search)
+- **Vector Store**: LanceDB
+- **Embedding**: Ollama (nomic-embed-text model)
+- **Frontend**: Vue 3
+- **Communication**: HTTP + JSON-RPC (MCP)
 
-## 安装
+## Installation
 
-### 前置要求
+### Prerequisites
 
 1. Node.js >= 18
-2. pnpm (推荐)
-3. Ollama (用于语义搜索，可选)
+2. pnpm (recommended)
+3. Ollama (for semantic search, optional)
 
 ```bash
-# 安装 Ollama
+# Install Ollama
 curl -fsSL https://ollama.com/install.sh | sh
 
-# 拉取 embedding 模型
+# Pull embedding model
 ollama pull nomic-embed-text
 ```
 
-### 安装项目
+### Install Project
 
 ```bash
-# 克隆项目
+# Clone project
 git clone <repository-url>
 cd memex
 
-# 安装依赖
+# Install dependencies
 pnpm install
 
-# Web UI 依赖
+# Web UI dependencies
 cd web
 pnpm install
 cd ..
 ```
 
-## 配置
+## Configuration
 
-复制并编辑配置文件：
+Copy and edit the configuration file:
 
 ```bash
 cp .env.example .env
 ```
 
-主要配置项：
+Main configuration options:
 
 ```bash
-# 服务端口
+# Server port
 PORT=10013
 
-# 数据存储目录
+# Data storage directory
 MEMEX_DATA_DIR=~/memex-data
 
-# 备份目录
+# Backup directory
 MEMEX_BACKUP_DIR=~/memex-data/backups
 
-# Claude Code 数据源路径
+# Claude Code data source path
 CLAUDE_PROJECTS_PATH=~/.claude/projects
 
-# Ollama API 地址
+# Ollama API address
 OLLAMA_API=http://localhost:11434/api
 
-# Embedding 模型
+# Embedding model
 EMBEDDING_MODEL=nomic-embed-text
 ```
 
-## 运行
+## Running
 
-### 开发模式
+### Development Mode
 
 ```bash
-# 启动后端
+# Start backend
 pnpm dev
 
-# 启动前端 (新终端)
+# Start frontend (new terminal)
 cd web
 pnpm dev
 ```
 
-### 生产模式
+### Production Mode
 
 ```bash
-# 构建后端
+# Build backend
 pnpm build
 
-# 构建前端
+# Build frontend
 cd web
 pnpm build
 cd ..
 
-# 启动服务
+# Start service
 pnpm start:prod
 ```
 
-## MCP 配置
+## MCP Configuration
 
-Memex 通过 HTTP 协议提供 MCP 服务，配置简单。
+Memex provides MCP service via HTTP protocol with simple configuration.
 
-### 方式一：mcp-router 配置（推荐）
+### Option 1: mcp-router Configuration (Recommended)
 
-编辑 mcp-router 配置文件：
-
-```json
-{
-  "mcpServers": {
-    "memex": {
-      "type": "http",
-      "url": "http://127.0.0.1:10013/api/mcp"
-    }
-  }
-}
-```
-
-### 方式二：Claude Code 直接配置
-
-在 Claude Code 的 MCP 设置中添加：
+Edit mcp-router configuration file:
 
 ```json
 {
@@ -175,173 +162,183 @@ Memex 通过 HTTP 协议提供 MCP 服务，配置简单。
 }
 ```
 
-### 验证 MCP 连接
+### Option 2: Claude Code Direct Configuration
 
-启动 Claude Code 后，可以通过以下方式验证：
+Add to Claude Code's MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "memex": {
+      "type": "http",
+      "url": "http://127.0.0.1:10013/api/mcp"
+    }
+  }
+}
+```
+
+### Verify MCP Connection
+
+After starting Claude Code, verify with:
 
 ```
-搜索我最近关于 DDD 架构的讨论
+Search for my recent discussions about DDD architecture
 ```
 
-如果 MCP 配置正确，Claude 会调用 `memex/search_history` 工具进行搜索。
+If MCP is configured correctly, Claude will call the `memex/search_history` tool.
 
-## API 端点
+## API Endpoints
 
-### 项目管理
-- `GET /api/projects` - 获取所有项目列表
-- `GET /api/projects/:id` - 获取项目详情（包含会话列表）
+### Project Management
+- `GET /api/projects` - Get all projects list
+- `GET /api/projects/:id` - Get project details (including session list)
 
-### 会话管理
-- `GET /api/sessions/:id` - 获取会话详情（完整对话内容）
-- `GET /api/sessions/search?idPrefix=xxx` - 通过 Session ID 前缀搜索
+### Session Management
+- `GET /api/sessions/:id` - Get session details (full conversation content)
+- `GET /api/sessions/search?idPrefix=xxx` - Search by Session ID prefix
 
-### 搜索
-- `GET /api/search?q=xxx&projectId=yyy` - 全文搜索
-  - 查询参数：
-    - `q`: 搜索关键词
-    - `projectId`: 项目筛选（可选）
-    - `startDate`: 开始日期（可选）
-    - `endDate`: 结束日期（可选）
-    - `limit`: 返回数量限制，默认 20
+### Search
+- `GET /api/search?q=xxx&projectId=yyy` - Full-text search
+  - Query parameters:
+    - `q`: Search keywords
+    - `projectId`: Project filter (optional)
+    - `startDate`: Start date (optional)
+    - `endDate`: End date (optional)
+    - `limit`: Result limit, default 20
 
-- `GET /api/search/semantic?q=xxx&mode=hybrid` - 语义搜索
-  - 查询参数：
-    - `q`: 搜索内容
-    - `mode`: 搜索模式
-      - `semantic`: 纯语义搜索
-      - `hybrid`: 混合搜索（关键词 + 语义）
-    - `projectId`: 项目筛选（可选）
-    - `limit`: 返回数量限制，默认 10
+- `GET /api/search/semantic?q=xxx&mode=hybrid` - Semantic search
+  - Query parameters:
+    - `q`: Search content
+    - `mode`: Search mode
+      - `semantic`: Pure semantic search
+      - `hybrid`: Hybrid search (keyword + semantic)
+    - `projectId`: Project filter (optional)
+    - `limit`: Result limit, default 10
 
 ### MCP
-- `POST /api/mcp` - MCP JSON-RPC 端点
-- `GET /api/mcp/info` - 获取 MCP 工具信息
+- `POST /api/mcp` - MCP JSON-RPC endpoint
+- `GET /api/mcp/info` - Get MCP tools information
 
-## 使用示例
+## Usage Examples
 
 ### Web UI
 
-访问 `http://localhost:10013` 即可使用 Web 界面。
+Visit `http://localhost:10013` to use the web interface.
 
-主要功能：
-- 浏览所有项目和会话
-- 通过 Session ID 前缀快速定位
-- 全文搜索对话内容
-- 语义搜索相关讨论
-- 按项目和时间筛选
+Main features:
+- Browse all projects and sessions
+- Quick lookup by Session ID prefix
+- Full-text search conversation content
+- Semantic search related discussions
+- Filter by project and time
 
-### 命令行搜索
+### Command Line Search
 
 ```bash
-# 全文搜索
-curl "http://localhost:10013/api/search?q=DDD架构"
+# Full-text search
+curl "http://localhost:10013/api/search?q=authentication"
 
-# 语义搜索
-curl "http://localhost:10013/api/search/semantic?q=如何设计领域模型&mode=hybrid"
+# Semantic search
+curl "http://localhost:10013/api/search/semantic?q=how+to+design+domain+models&mode=hybrid"
 
-# 按项目搜索
+# Search by project
 curl "http://localhost:10013/api/search?q=bug&projectId=xxx"
 ```
 
-### MCP 使用
+### MCP Usage
 
-在 Claude Code 中直接问：
+Ask directly in Claude Code:
 
 ```
-帮我搜索之前讨论过的关于 NestJS 依赖注入的对话
+Search for previous discussions about NestJS dependency injection
 
-找一下最近一周的会话，看看我们都做了什么
+Find sessions from the last week and see what we worked on
 
-获取关于数据库设计的完整会话内容
+Get the full session content about database design
 ```
 
-## 数据目录结构
+## Data Directory Structure
 
 ```
 ~/memex-data/
-├── memex.db              # SQLite 数据库
-├── lancedb/              # LanceDB 向量存储
+├── memex.db              # SQLite database
+├── vectors/              # LanceDB vector storage
 │   └── messages/
-└── backups/              # 备份文件
+└── backups/              # Backup files
     └── memex-2025-01-15.db
 ```
 
-## 常见问题
+## FAQ
 
-### Q: 如何触发初始数据导入？
+### Q: How to trigger initial data import?
 
-A: 服务启动时会自动扫描 `~/.claude/projects/` 并导入所有会话。你也可以通过 API 手动触发：
+A: The service automatically scans `~/.claude/projects/` and imports all sessions on startup. You can also trigger manually via API:
 
 ```bash
 curl -X POST http://localhost:10013/api/backup
 ```
 
-### Q: 语义搜索不工作？
+### Q: Semantic search not working?
 
-A: 确保：
-1. Ollama 服务正在运行：`ollama serve`
-2. 已下载模型：`ollama pull nomic-embed-text`
-3. `.env` 中 `OLLAMA_API` 配置正确
+A: Ensure:
+1. Ollama service is running: `ollama serve`
+2. Model is downloaded: `ollama pull nomic-embed-text`
+3. `OLLAMA_API` is configured correctly in `.env`
 
-### Q: 如何清理和重建索引？
+### Q: How to clear and rebuild index?
 
-A: 删除数据目录后重启服务：
+A: Delete the data directory and restart the service:
 
 ```bash
 rm -rf ~/memex-data
 pnpm start
 ```
 
-### Q: MCP 连接失败？
+### Q: MCP connection failed?
 
-A: 检查：
-1. Memex 服务是否运行在 `http://localhost:10013`
-2. MCP 配置中的路径是否正确
-3. Node.js 版本是否 >= 18
+A: Check:
+1. Memex service is running at `http://localhost:10013`
+2. MCP configuration path is correct
+3. Node.js version is >= 18
 
-## 开发
+## Development
 
-### 项目结构
+### Project Structure
 
 ```
 memex/
 ├── src/
-│   ├── context/                 # DDD 上下文
-│   │   └── brain/              # 核心上下文
-│   │       ├── api/            # API 层
-│   │       ├── application/    # 应用服务
-│   │       ├── domain/         # 领域模型
-│   │       └── infrastructure/ # 基础设施
-│   ├── mcp-server.ts           # MCP 服务入口
-│   └── main.ts                 # 应用入口
-├── web/                        # Vue 前端
-└── DESIGN.md                   # 架构设计文档
+│   ├── context/                 # DDD contexts
+│   │   └── brain/              # Core context
+│   │       ├── api/            # API layer
+│   │       ├── application/    # Application services
+│   │       ├── domain/         # Domain models
+│   │       └── infrastructure/ # Infrastructure
+│   └── main.ts                 # Application entry
+├── web/                        # Vue frontend
+└── DESIGN.md                   # Architecture design document
 ```
 
-### 运行测试
+### Running Tests
 
 ```bash
 pnpm test
 ```
 
-## 路线图
+## Roadmap
 
-- [x] Phase 0: 数据采集和备份
-- [x] Phase 1: SQLite + FTS5 全文搜索
-- [x] Phase 2: 语义搜索 (Ollama + LanceDB)
-- [x] Phase 3: MCP 集成
+- [x] Phase 0: Data collection and backup
+- [x] Phase 1: SQLite + FTS5 full-text search
+- [x] Phase 2: Semantic search (Ollama + LanceDB)
+- [x] Phase 3: MCP integration
 - [x] Web UI
-- [ ] Phase 4: RAG 问答
-- [ ] Phase 5: 知识提炼
+- [ ] Phase 4: RAG Q&A
+- [ ] Phase 5: Knowledge distillation
 
-## 许可证
+## License
 
 MIT
 
-## 相关项目
+## Acknowledgments
 
-- [Vlaude](https://github.com/...) - 共享 Claude Code 解析核心代码
-
-## 致谢
-
-感谢 Claude Code 提供了如此优秀的开发体验。
+Thanks to Claude Code for providing such an excellent development experience.
