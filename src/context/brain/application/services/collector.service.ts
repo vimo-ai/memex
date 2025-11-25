@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import * as os from 'os';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -45,9 +46,11 @@ export interface CollectStats {
  * 数据采集服务
  *
  * 负责扫描 Claude Code 会话目录，解析并存储到数据库
+ * - 服务启动时自动采集
+ * - 每日凌晨 2:30 定时采集
  */
 @Injectable()
-export class CollectorService {
+export class CollectorService implements OnModuleInit {
   private readonly logger = new Logger(CollectorService.name);
 
   /** Claude projects 目录路径 */
@@ -64,6 +67,47 @@ export class CollectorService {
     this.claudeProjectsPath =
       process.env.CLAUDE_PROJECTS_PATH ||
       path.join(os.homedir(), '.claude', 'projects');
+  }
+
+  /**
+   * 服务启动时执行采集
+   */
+  async onModuleInit(): Promise<void> {
+    this.logger.log('服务启动，开始执行初始数据采集...');
+
+    try {
+      const stats = await this.collectAll();
+      this.logger.log(
+        `启动采集完成: ${stats.projectsProcessed} 项目, ` +
+          `${stats.sessionsUpdated} 会话已更新, ` +
+          `${stats.sessionsSkipped} 会话已跳过, ` +
+          `${stats.messagesCreated} 消息已保存, ` +
+          `耗时 ${stats.duration}ms`,
+      );
+    } catch (error) {
+      this.logger.error('启动采集失败，但不影响服务启动', error);
+    }
+  }
+
+  /**
+   * 每日定时任务：凌晨 2:30 执行数据采集
+   */
+  @Cron('30 2 * * *')
+  async handleDailyCollectCron(): Promise<void> {
+    this.logger.log('开始执行每日定时采集任务...');
+
+    try {
+      const stats = await this.collectAll();
+      this.logger.log(
+        `每日采集完成: ${stats.projectsProcessed} 项目, ` +
+          `${stats.sessionsUpdated} 会话已更新, ` +
+          `${stats.sessionsSkipped} 会话已跳过, ` +
+          `${stats.messagesCreated} 消息已保存, ` +
+          `耗时 ${stats.duration}ms`,
+      );
+    } catch (error) {
+      this.logger.error('每日采集任务失败', error);
+    }
   }
 
   /**
