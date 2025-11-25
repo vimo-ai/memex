@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { MemexConfigService } from './config';
 
 /**
  * 应用启动入口
@@ -20,7 +21,10 @@ async function bootstrap() {
   // 全局前缀
   app.setGlobalPrefix('api');
 
-  const port = process.env.PORT ?? 10013;
+  // 从配置服务获取端口
+  const configService = app.get(MemexConfigService);
+  const port = configService.port;
+
   await app.listen(port);
 
   console.log(`Memex 服务已启动: http://localhost:${port}`);

@@ -1,8 +1,6 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import * as os from 'os';
 import * as fs from 'fs/promises';
-import * as path from 'path';
 import {
   scanProjects,
   scanSessions,
@@ -10,6 +8,7 @@ import {
   type ClaudeProjectInfo,
   type ClaudeSessionMeta,
 } from '@vlaude/shared-core';
+import { MemexConfigService } from '../../../../config';
 import {
   IProjectRepository,
   PROJECT_REPOSITORY,
@@ -62,11 +61,9 @@ export class CollectorService implements OnModuleInit {
     @Inject(SESSION_REPOSITORY)
     private readonly sessionRepository: ISessionRepository,
     private readonly parserService: ParserService,
+    private readonly configService: MemexConfigService,
   ) {
-    // 默认使用用户目录下的 .claude/projects
-    this.claudeProjectsPath =
-      process.env.CLAUDE_PROJECTS_PATH ||
-      path.join(os.homedir(), '.claude', 'projects');
+    this.claudeProjectsPath = this.configService.claudeProjectsPath;
   }
 
   /**

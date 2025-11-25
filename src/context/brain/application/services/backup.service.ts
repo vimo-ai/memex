@@ -1,9 +1,9 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import * as os from 'os';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { scanProjects, scanSessions, buildSessionPath } from '@vlaude/shared-core';
+import { MemexConfigService } from '../../../../config';
 
 /**
  * 备份统计结果
@@ -40,14 +40,9 @@ export class BackupService implements OnModuleInit {
   /** 备份保留天数 */
   private readonly retentionDays = 30;
 
-  constructor() {
-    this.claudeProjectsPath =
-      process.env.CLAUDE_PROJECTS_PATH ||
-      path.join(os.homedir(), '.claude', 'projects');
-
-    this.backupBasePath =
-      process.env.MEMEX_BACKUP_PATH ||
-      path.join(os.homedir(), 'memex-data', 'backups');
+  constructor(private readonly configService: MemexConfigService) {
+    this.claudeProjectsPath = this.configService.claudeProjectsPath;
+    this.backupBasePath = this.configService.backupDir;
   }
 
   /**
@@ -210,7 +205,7 @@ export class BackupService implements OnModuleInit {
         // 保持原始文件的修改时间
         await fs.utimes(backupPath, sourceStat.atime, sourceStat.mtime);
 
-        this.logger.debug(`已备份会话: ${sessionId} (${projectPath})`);
+        this.logger.verbose(`已备份会话: ${sessionId} (${projectPath})`);
         result.backedUp = true;
       }
     } catch (error) {

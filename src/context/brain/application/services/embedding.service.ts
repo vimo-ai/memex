@@ -1,10 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-
-/** Ollama API 地址 */
-const OLLAMA_API = process.env.OLLAMA_API || 'http://localhost:11434/api';
-
-/** 默认 Embedding 模型 */
-const DEFAULT_MODEL = 'bge-m3';
+import { MemexConfigService } from '../../../../config';
 
 /** Embedding 向量维度 (bge-m3 = 1024) */
 export const EMBEDDING_DIMENSION = 1024;
@@ -24,9 +19,11 @@ const MAX_TEXT_LENGTH = 4000;
 export class EmbeddingService {
   private readonly logger = new Logger(EmbeddingService.name);
   private readonly model: string;
+  private readonly ollamaApi: string;
 
-  constructor() {
-    this.model = process.env.EMBEDDING_MODEL || DEFAULT_MODEL;
+  constructor(private readonly configService: MemexConfigService) {
+    this.model = this.configService.embeddingModel;
+    this.ollamaApi = this.configService.ollamaApi;
     this.logger.log(`Embedding 模型: ${this.model}`);
   }
 
@@ -37,7 +34,7 @@ export class EmbeddingService {
     const truncated = this.truncateText(text);
 
     try {
-      const response = await fetch(`${OLLAMA_API}/embeddings`, {
+      const response = await fetch(`${this.ollamaApi}/embeddings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -99,7 +96,7 @@ export class EmbeddingService {
    */
   async isAvailable(): Promise<boolean> {
     try {
-      const response = await fetch(`${OLLAMA_API.replace('/api', '')}/api/tags`, {
+      const response = await fetch(`${this.ollamaApi.replace('/api', '')}/api/tags`, {
         method: 'GET',
         signal: AbortSignal.timeout(5000),
       });
@@ -114,7 +111,7 @@ export class EmbeddingService {
    */
   async isModelAvailable(): Promise<boolean> {
     try {
-      const response = await fetch(`${OLLAMA_API.replace('/api', '')}/api/tags`);
+      const response = await fetch(`${this.ollamaApi.replace('/api', '')}/api/tags`);
       if (!response.ok) return false;
 
       const data = (await response.json()) as { models: Array<{ name: string }> };
@@ -177,7 +174,7 @@ export class EmbeddingService {
   async unloadModel(): Promise<void> {
     try {
       // 1. 卸载模型
-      await fetch(`${OLLAMA_API}/embeddings`, {
+      await fetch(`${this.ollamaApi}/embeddings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

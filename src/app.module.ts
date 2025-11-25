@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { MemexConfigModule } from './config';
 import { BrainContext } from './context/brain/brain.context';
 
 /**
@@ -6,6 +7,6 @@ import { BrainContext } from './context/brain/brain.context';
  * 组织所有 Bounded Context
  */
 @Module({
-  imports: [BrainContext],
+  imports: [MemexConfigModule, BrainContext],
 })
 export class AppModule {}

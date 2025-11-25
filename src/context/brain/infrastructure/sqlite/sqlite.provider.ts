@@ -1,21 +1,15 @@
-import { Provider, Logger } from '@nestjs/common';
+import { Provider, Logger, Inject } from '@nestjs/common';
 import Database from 'better-sqlite3';
-import { homedir } from 'os';
-import { join } from 'path';
 import { mkdirSync, existsSync } from 'fs';
+import { dirname } from 'path';
 import { ALL_SCHEMA_STATEMENTS } from './sqlite.schema';
+import { MemexConfigService } from '../../../../config';
 
 /** SQLite 数据库注入 Token */
 export const SQLITE_DB = Symbol('SQLITE_DB');
 
 /** 数据库类型导出 */
 export type SqliteDatabase = Database.Database;
-
-/** 默认数据目录 */
-const DATA_DIR = join(homedir(), 'memex-data');
-
-/** 默认数据库文件名 */
-const DB_FILE = 'memex.db';
 
 /**
  * 创建 SQLite 数据库 Provider
@@ -28,16 +22,19 @@ const DB_FILE = 'memex.db';
  */
 export const SqliteProvider: Provider = {
   provide: SQLITE_DB,
-  useFactory: (): SqliteDatabase => {
+  inject: [MemexConfigService],
+  useFactory: (configService: MemexConfigService): SqliteDatabase => {
     const logger = new Logger('SqliteProvider');
 
+    const dbPath = configService.dbPath;
+    const dataDir = dirname(dbPath);
+
     // 确保数据目录存在
-    if (!existsSync(DATA_DIR)) {
-      mkdirSync(DATA_DIR, { recursive: true });
-      logger.log(`创建数据目录: ${DATA_DIR}`);
+    if (!existsSync(dataDir)) {
+      mkdirSync(dataDir, { recursive: true });
+      logger.log(`创建数据目录: ${dataDir}`);
     }
 
-    const dbPath = join(DATA_DIR, DB_FILE);
     logger.log(`连接数据库: ${dbPath}`);
 
     // 创建数据库连接
