@@ -60,10 +60,14 @@ export class MemexConfigService implements MemexConfig {
    * 嵌入模型名称
    */
   get embeddingModel(): string {
-    return this.nestConfigService.get<string>(
-      'EMBEDDING_MODEL',
-      'nomic-embed-text',
-    );
+    return this.nestConfigService.get<string>('EMBEDDING_MODEL', 'bge-m3');
+  }
+
+  /**
+   * 聊天模型名称
+   */
+  get chatModel(): string {
+    return this.nestConfigService.get<string>('CHAT_MODEL', 'qwen3:8b');
   }
 
   /**

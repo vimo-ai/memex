@@ -49,7 +49,7 @@ Memex 解决这些问题：
 - **后端**: NestJS (DDD 架构)
 - **数据库**: SQLite + FTS5 (全文搜索)
 - **向量存储**: LanceDB
-- **Embedding**: Ollama (nomic-embed-text 模型)
+- **Embedding**: Ollama (bge-m3 模型)
 - **前端**: Vue 3
 - **通信**: HTTP + JSON-RPC (MCP)
 
@@ -66,7 +66,7 @@ Memex 解决这些问题：
 curl -fsSL https://ollama.com/install.sh | sh
 
 # 拉取 embedding 模型
-ollama pull nomic-embed-text
+ollama pull bge-m3
 ```
 
 ### 安装项目
@@ -112,7 +112,7 @@ CLAUDE_PROJECTS_PATH=~/.claude/projects
 OLLAMA_API=http://localhost:11434/api
 
 # Embedding 模型
-EMBEDDING_MODEL=nomic-embed-text
+EMBEDDING_MODEL=bge-m3
 ```
 
 ## 运行
@@ -282,7 +282,7 @@ curl -X POST http://localhost:10013/api/backup
 
 A: 确保：
 1. Ollama 服务正在运行：`ollama serve`
-2. 已下载模型：`ollama pull nomic-embed-text`
+2. 已下载模型：`ollama pull bge-m3`
 3. `.env` 中 `OLLAMA_API` 配置正确
 
 ### Q: 如何清理和重建索引？

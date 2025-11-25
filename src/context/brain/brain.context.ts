@@ -16,6 +16,7 @@ import { EmbeddingService } from './application/services/embedding.service';
 import { ChunkingService } from './application/services/chunking.service';
 import { HybridSearchService } from './application/services/hybrid-search.service';
 import { VectorIndexerService } from './application/services/vector-indexer.service';
+import { RagService } from './application/services/rag.service';
 import { MCPToolsService } from './application/services/mcp-tools.service';
 import { MCPRegistryService } from './mcp/services/mcp-registry.service';
 import { ProjectController } from './api/controllers/project.controller';
@@ -23,6 +24,7 @@ import { SessionController } from './api/controllers/session.controller';
 import { SearchController } from './api/controllers/search.controller';
 import { AdminController } from './api/controllers/admin.controller';
 import { SemanticSearchController, EmbeddingController } from './api/controllers/semantic-search.controller';
+import { RagController } from './api/controllers/rag.controller';
 import { MCPController } from './api/controllers/mcp.controller';
 
 /**
@@ -51,6 +53,7 @@ import { MCPController } from './api/controllers/mcp.controller';
     AdminController,
     SemanticSearchController,
     EmbeddingController,
+    RagController,
     MCPController,
   ],
   providers: [
@@ -79,6 +82,7 @@ import { MCPController } from './api/controllers/mcp.controller';
     ChunkingService,
     HybridSearchService,
     VectorIndexerService,
+    RagService,
     // MCP 相关服务
     MCPRegistryService,
     MCPToolsService,

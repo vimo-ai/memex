@@ -49,7 +49,7 @@ Search historical conversations in Claude Code via MCP protocol:
 - **Backend**: NestJS (DDD architecture)
 - **Database**: SQLite + FTS5 (full-text search)
 - **Vector Store**: LanceDB
-- **Embedding**: Ollama (nomic-embed-text model)
+- **Embedding**: Ollama (bge-m3 model)
 - **Frontend**: Vue 3
 - **Communication**: HTTP + JSON-RPC (MCP)
 
@@ -66,7 +66,7 @@ Search historical conversations in Claude Code via MCP protocol:
 curl -fsSL https://ollama.com/install.sh | sh
 
 # Pull embedding model
-ollama pull nomic-embed-text
+ollama pull bge-m3
 ```
 
 ### Install Project
@@ -112,7 +112,7 @@ CLAUDE_PROJECTS_PATH=~/.claude/projects
 OLLAMA_API=http://localhost:11434/api
 
 # Embedding model
-EMBEDDING_MODEL=nomic-embed-text
+EMBEDDING_MODEL=bge-m3
 ```
 
 ## Running
@@ -282,7 +282,7 @@ curl -X POST http://localhost:10013/api/backup
 
 A: Ensure:
 1. Ollama service is running: `ollama serve`
-2. Model is downloaded: `ollama pull nomic-embed-text`
+2. Model is downloaded: `ollama pull bge-m3`
 3. `OLLAMA_API` is configured correctly in `.env`
 
 ### Q: How to clear and rebuild index?

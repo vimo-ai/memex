@@ -21,4 +21,6 @@ export interface MemexConfig {
   ollamaApi: string;
   /** 嵌入模型名称 */
   embeddingModel: string;
+  /** 聊天模型名称 */
+  chatModel: string;
 }

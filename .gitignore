@@ -28,3 +28,4 @@ data/
 
 # Vlaude 临时文件
 .vlaude/
+memex.db
