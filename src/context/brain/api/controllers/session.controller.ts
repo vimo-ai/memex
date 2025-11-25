@@ -1,4 +1,4 @@
-import { Controller, Get, Param, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Param, Query, NotFoundException } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
 import {
   ISessionRepository,
@@ -8,6 +8,7 @@ import {
   SessionResponseDto,
   MessageResponseDto,
   MessageListResponseDto,
+  SessionSearchResponseDto,
 } from '../dto/session.dto';
 import { SessionEntity } from '../../domain/entities/session.entity';
 import { MessageEntity } from '../../domain/entities/message.entity';
@@ -23,6 +24,37 @@ export class SessionController {
     @Inject(SESSION_REPOSITORY)
     private readonly sessionRepository: ISessionRepository,
   ) {}
+
+  /**
+   * 根据 ID 前缀搜索会话
+   *
+   * GET /api/sessions/search?idPrefix=xxx&limit=20
+   */
+  @Get('search')
+  searchSessions(
+    @Query('idPrefix') idPrefix: string,
+    @Query('limit') limitStr?: string,
+  ): SessionSearchResponseDto {
+    if (!idPrefix || idPrefix.trim().length === 0) {
+      return {
+        query: '',
+        total: 0,
+        sessions: [],
+      };
+    }
+
+    const limit = limitStr ? parseInt(limitStr, 10) : 20;
+    const sessions = this.sessionRepository.searchSessionsByIdPrefix(
+      idPrefix.trim(),
+      limit,
+    );
+
+    return {
+      query: idPrefix,
+      total: sessions.length,
+      sessions: sessions.map((s) => this.toSessionDto(s)),
+    };
+  }
 
   /**
    * 获取会话详情

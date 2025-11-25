@@ -88,6 +88,22 @@ export interface ISessionRepository {
    * 全文搜索消息
    * @param query 搜索关键词
    * @param limit 返回数量限制
+   * @param startDate 开始时间（ISO 格式字符串，可选）
+   * @param endDate 结束时间（ISO 格式字符串，可选）
+   * @param projectId 项目 ID（可选，用于过滤特定项目）
    */
-  searchMessages(query: string, limit?: number): SearchResult[];
+  searchMessages(
+    query: string,
+    limit?: number,
+    startDate?: string,
+    endDate?: string,
+    projectId?: number,
+  ): SearchResult[];
+
+  /**
+   * 根据 ID 前缀搜索会话
+   * @param idPrefix 会话 ID 前缀（如 "16b9dfba"）
+   * @param limit 返回数量限制
+   */
+  searchSessionsByIdPrefix(idPrefix: string, limit?: number): SessionEntity[];
 }

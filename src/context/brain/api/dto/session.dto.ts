@@ -33,6 +33,20 @@ export class SessionListResponseDto {
 }
 
 /**
+ * 会话搜索响应 DTO
+ */
+export class SessionSearchResponseDto {
+  /** 搜索关键词 */
+  query!: string;
+
+  /** 匹配总数 */
+  total!: number;
+
+  /** 会话列表 */
+  sessions!: SessionResponseDto[];
+}
+
+/**
  * 消息响应 DTO
  */
 export class MessageResponseDto {

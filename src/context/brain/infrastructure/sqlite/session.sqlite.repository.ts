@@ -196,10 +196,45 @@ export class SessionSqliteRepository implements ISessionRepository {
 
   /**
    * 全文搜索消息
+   *
+   * @param query 搜索关键词
+   * @param limit 返回数量限制
+   * @param startDate 开始时间（ISO 格式）
+   * @param endDate 结束时间（ISO 格式）
+   * @param projectId 项目 ID（可选，用于过滤特定项目）
    */
-  searchMessages(query: string, limit: number = 50): SearchResult[] {
+  searchMessages(
+    query: string,
+    limit: number = 50,
+    startDate?: string,
+    endDate?: string,
+    projectId?: number,
+  ): SearchResult[] {
     // 使用 FTS5 snippet 函数高亮匹配内容
     // -1 表示 content 列，'[' ']' 是高亮标记，'...' 是省略号，64 是 snippet 最大长度
+
+    // 构建 WHERE 条件
+    const conditions = ['messages_fts MATCH ?'];
+    const params: any[] = [query];
+
+    // 添加时间范围过滤
+    if (startDate) {
+      conditions.push('m.timestamp >= ?');
+      params.push(startDate);
+    }
+    if (endDate) {
+      conditions.push('m.timestamp <= ?');
+      params.push(endDate);
+    }
+
+    // 添加项目过滤
+    if (projectId !== undefined) {
+      conditions.push('s.project_id = ?');
+      params.push(projectId);
+    }
+
+    const whereClause = conditions.join(' AND ');
+
     const stmt = this.db.prepare(`
       SELECT
         m.*,
@@ -207,18 +242,34 @@ export class SessionSqliteRepository implements ISessionRepository {
         rank
       FROM messages_fts
       JOIN messages m ON messages_fts.rowid = m.id
-      WHERE messages_fts MATCH ?
+      JOIN sessions s ON m.session_id = s.id
+      WHERE ${whereClause}
       ORDER BY rank
       LIMIT ?
     `);
 
-    const rows = stmt.all(query, limit) as FtsSearchRow[];
+    params.push(limit);
+    const rows = stmt.all(...params) as FtsSearchRow[];
 
     return rows.map((row) => ({
       message: this.messageRowToEntity(row),
       snippet: row.snippet,
       rank: row.rank,
     }));
+  }
+
+  /**
+   * 根据 ID 前缀搜索会话
+   */
+  searchSessionsByIdPrefix(idPrefix: string, limit: number = 20): SessionEntity[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM sessions
+      WHERE id LIKE ?
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `);
+    const rows = stmt.all(`${idPrefix}%`, limit) as SessionRow[];
+    return rows.map((row) => this.sessionRowToEntity(row));
   }
 
   // ========== 私有方法 ==========
