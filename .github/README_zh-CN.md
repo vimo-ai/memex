@@ -215,6 +215,15 @@ Memex 通过 HTTP 协议提供 MCP 服务，配置简单。
     - `projectId`: 项目筛选（可选）
     - `limit`: 返回数量限制，默认 10
 
+### RAG 问答
+- `POST /api/ask` - 基于历史对话回答问题
+  - 请求参数：
+    - `question`: 要问的问题
+    - `cwd`: 当前工作目录，用于项目过滤（可选）
+    - `contextWindow`: 上下文消息数，默认 3（可选）
+    - `maxSources`: 最大引用数，默认 5（可选）
+  - 响应: `{ answer, sources, model, tokensUsed }`
+
 ### MCP
 - `POST /api/mcp` - MCP JSON-RPC 端点
 - `GET /api/mcp/info` - 获取 MCP 工具信息
@@ -332,7 +341,7 @@ pnpm test
 - [x] Phase 2: 语义搜索 (Ollama + LanceDB)
 - [x] Phase 3: MCP 集成
 - [x] Web UI
-- [ ] Phase 4: RAG 问答
+- [x] Phase 4: RAG 问答
 - [ ] Phase 5: 知识提炼
 
 ## 许可证

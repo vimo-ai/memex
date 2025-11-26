@@ -215,6 +215,15 @@ If MCP is configured correctly, Claude will call the `memex/search_history` tool
     - `projectId`: Project filter (optional)
     - `limit`: Result limit, default 10
 
+### RAG Q&A
+- `POST /api/ask` - Ask questions based on history
+  - Request body:
+    - `question`: The question to ask
+    - `cwd`: Current working directory for project filtering (optional)
+    - `contextWindow`: Context messages before/after, default 3 (optional)
+    - `maxSources`: Max source references, default 5 (optional)
+  - Response: `{ answer, sources, model, tokensUsed }`
+
 ### MCP
 - `POST /api/mcp` - MCP JSON-RPC endpoint
 - `GET /api/mcp/info` - Get MCP tools information
@@ -332,7 +341,7 @@ pnpm test
 - [x] Phase 2: Semantic search (Ollama + LanceDB)
 - [x] Phase 3: MCP integration
 - [x] Web UI
-- [ ] Phase 4: RAG Q&A
+- [x] Phase 4: RAG Q&A
 - [ ] Phase 5: Knowledge distillation
 
 ## License
