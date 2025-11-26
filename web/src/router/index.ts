@@ -25,6 +25,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/SessionDetailView.vue'),
     meta: { title: '会话详情' },
   },
+  {
+    path: '/ask',
+    name: 'ask',
+    component: () => import('@/views/AskView.vue'),
+    meta: { title: 'Ask AI' },
+  },
 ]
 
 const router = createRouter({

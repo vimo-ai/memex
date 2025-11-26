@@ -5,6 +5,7 @@ const route = useRoute()
 
 const links = [
   { name: 'Home', path: '/', icon: 'i-carbon-home' },
+  { name: 'Ask AI', path: '/ask', icon: 'i-carbon-ibm-watson-discovery' },
   { name: 'Archives', path: '/projects', icon: 'i-carbon-data-base' },
 ]
 </script>

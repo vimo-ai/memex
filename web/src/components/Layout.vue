@@ -10,7 +10,7 @@ import Dock from './layout/Dock.vue'
     
     <TopBar />
     
-    <main class="h-screen pt-10 pb-24 overflow-hidden">
+    <main class="h-screen pt-10 pb-32 overflow-hidden">
       <router-view v-slot="{ Component }">
         <transition name="fade" mode="out-in">
           <component :is="Component" />

@@ -4,8 +4,9 @@ import { useRoute } from 'vue-router'
 const route = useRoute()
 
 const links = [
-  { name: 'Projects', path: '/', icon: 'i-carbon-ibm-cloud-projects' },
-  { name: 'Search', path: '/search', icon: 'i-carbon-search' },
+  { name: 'Oracle', path: '/', icon: 'i-carbon-search' },
+  { name: 'Projects', path: '/projects', icon: 'i-carbon-ibm-cloud-projects' },
+  { name: 'Ask AI', path: '/ask', icon: 'i-carbon-ibm-watson-discovery' },
 ]
 </script>
 

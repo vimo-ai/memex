@@ -285,3 +285,35 @@ export async function searchSessionsByIdPrefix(
   const response = await request<SearchResponse>(`/sessions/search?${params.toString()}`)
   return response.sessions
 }
+
+// ========== RAG 问答 API ==========
+
+export interface RagRequest {
+  question: string
+  cwd?: string
+  contextWindow?: number
+  maxSources?: number
+}
+
+export interface RagResponse {
+  answer: string
+  sources: Array<{
+    sessionId: string
+    projectName: string
+    messageIndex: number
+    snippet: string
+    score: number
+  }>
+  model: string
+  tokensUsed?: number
+}
+
+/**
+ * RAG 问答
+ */
+export async function ask(data: RagRequest): Promise<RagResponse> {
+  return request<RagResponse>('/ask', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
