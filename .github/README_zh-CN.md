@@ -355,7 +355,13 @@ pnpm test
 - [x] Phase 3: MCP 集成
 - [x] Web UI
 - [x] Phase 4: RAG 问答
-- [ ] Phase 5: 知识提炼
+- ~~Phase 5: 知识提炼~~ (暂不计划 - RAG 已覆盖大部分使用场景)
+
+### 可能的未来增强
+
+- Session 导出功能 (Markdown/PDF)
+- 书签/标签系统
+- Claude Hooks 集成（近实时索引）
 
 ## 许可证
 

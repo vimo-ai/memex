@@ -355,7 +355,13 @@ pnpm test
 - [x] Phase 3: MCP integration
 - [x] Web UI
 - [x] Phase 4: RAG Q&A
-- [ ] Phase 5: Knowledge distillation
+- ~~Phase 5: Knowledge distillation~~ (Not planned - RAG already covers most use cases)
+
+### Possible Future Enhancements
+
+- Session export (Markdown/PDF)
+- Bookmark/tagging system
+- Claude Hooks integration (near real-time indexing)
 
 ## License
 
