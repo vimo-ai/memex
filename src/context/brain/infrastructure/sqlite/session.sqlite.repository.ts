@@ -210,55 +210,63 @@ export class SessionSqliteRepository implements ISessionRepository {
     endDate?: string,
     projectId?: number,
   ): SearchResult[] {
-    // 使用 FTS5 snippet 函数高亮匹配内容
-    // -1 表示 content 列，'[' ']' 是高亮标记，'...' 是省略号，64 是 snippet 最大长度
-
     // 清理 FTS5 特殊字符，防止语法错误
     const sanitizedQuery = this.sanitizeFts5Query(query);
 
-    // 构建 WHERE 条件
-    const conditions = ['messages_fts MATCH ?'];
-    const params: any[] = [sanitizedQuery];
-
-    // 添加时间范围过滤
-    if (startDate) {
-      conditions.push('m.timestamp >= ?');
-      params.push(startDate);
-    }
-    if (endDate) {
-      conditions.push('m.timestamp <= ?');
-      params.push(endDate);
+    // 如果清理后为空，返回空结果
+    if (!sanitizedQuery) {
+      return [];
     }
 
-    // 添加项目过滤
-    if (projectId !== undefined) {
-      conditions.push('s.project_id = ?');
-      params.push(projectId);
+    try {
+      // 构建 WHERE 条件
+      const conditions = ['messages_fts MATCH ?'];
+      const params: (string | number)[] = [sanitizedQuery];
+
+      // 添加时间范围过滤
+      if (startDate) {
+        conditions.push('m.timestamp >= ?');
+        params.push(startDate);
+      }
+      if (endDate) {
+        conditions.push('m.timestamp <= ?');
+        params.push(endDate);
+      }
+
+      // 添加项目过滤
+      if (projectId !== undefined) {
+        conditions.push('s.project_id = ?');
+        params.push(projectId);
+      }
+
+      const whereClause = conditions.join(' AND ');
+
+      const stmt = this.db.prepare(`
+        SELECT
+          m.*,
+          snippet(messages_fts, 0, '[', ']', '...', 64) as snippet,
+          rank
+        FROM messages_fts
+        JOIN messages m ON messages_fts.rowid = m.id
+        JOIN sessions s ON m.session_id = s.id
+        WHERE ${whereClause}
+        ORDER BY rank
+        LIMIT ?
+      `);
+
+      params.push(limit);
+      const rows = stmt.all(...params) as FtsSearchRow[];
+
+      return rows.map((row) => ({
+        message: this.messageRowToEntity(row),
+        snippet: row.snippet,
+        rank: row.rank,
+      }));
+    } catch (error) {
+      // FTS 查询失败时返回空数组，让向量搜索兜底
+      console.error(`[FTS] 查询失败: query="${query}", sanitized="${sanitizedQuery}"`, error);
+      return [];
     }
-
-    const whereClause = conditions.join(' AND ');
-
-    const stmt = this.db.prepare(`
-      SELECT
-        m.*,
-        snippet(messages_fts, 0, '[', ']', '...', 64) as snippet,
-        rank
-      FROM messages_fts
-      JOIN messages m ON messages_fts.rowid = m.id
-      JOIN sessions s ON m.session_id = s.id
-      WHERE ${whereClause}
-      ORDER BY rank
-      LIMIT ?
-    `);
-
-    params.push(limit);
-    const rows = stmt.all(...params) as FtsSearchRow[];
-
-    return rows.map((row) => ({
-      message: this.messageRowToEntity(row),
-      snippet: row.snippet,
-      rank: row.rank,
-    }));
   }
 
   /**
@@ -278,29 +286,40 @@ export class SessionSqliteRepository implements ISessionRepository {
   // ========== 私有方法 ==========
 
   /**
-   * 清理 FTS5 查询字符串，移除或转义特殊字符
+   * 清理 FTS5 查询字符串，移除特殊字符并用 OR 连接
    *
-   * FTS5 特殊字符包括：" - ( ) * : < > = 以及 AND OR NOT NEAR 等操作符
-   * 为了避免语法错误，我们采取以下策略：
-   * 1. 移除特殊操作符字符：- : * ( ) < > = "
-   * 2. 分词后用空格连接（FTS5 会自动用 AND 连接多个词）
+   * FTS5 特殊字符包括：" - ( ) * : < > = . [ ] { } ^ ~ ! @ # $ % & ? / \ 等
+   * 策略：
+   * 1. 移除所有特殊字符
+   * 2. 分词后用 OR 连接（宽松匹配，让调用方自行筛选）
    *
    * @param query 原始查询字符串
-   * @returns 清理后的查询字符串
+   * @returns 清理后的 FTS5 查询字符串
    */
   private sanitizeFts5Query(query: string): string {
-    // 移除或替换 FTS5 特殊字符
-    let sanitized = query
-      .replace(/["()*:<>=\-]/g, ' ')  // 移除特殊操作符
-      .replace(/\s+/g, ' ')            // 多个空格合并为一个
-      .trim();                         // 去除首尾空格
+    // 移除 FTS5 特殊字符和标点符号
+    const sanitized = query
+      .replace(/["()*:<>=\-.\[\]{}^~!@#$%&?/\\,;'`|+]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
 
-    // 如果清理后为空，返回通配符（匹配所有）
+    // 如果清理后为空，返回空（调用方会处理）
     if (!sanitized) {
-      return '*';
+      return '';
     }
 
-    return sanitized;
+    // 分词并用 OR 连接
+    const terms = sanitized.split(' ').filter((t) => t.length > 0);
+    if (terms.length === 0) {
+      return '';
+    }
+
+    // 单个词直接返回，多个词用 OR 连接
+    if (terms.length === 1) {
+      return terms[0];
+    }
+
+    return terms.join(' OR ');
   }
 
   /**
