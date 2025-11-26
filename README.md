@@ -49,7 +49,7 @@ Search historical conversations in Claude Code via MCP protocol:
 - **Backend**: NestJS (DDD architecture)
 - **Database**: SQLite + FTS5 (full-text search)
 - **Vector Store**: LanceDB
-- **Embedding**: Ollama (bge-m3 model)
+- **LLM Runtime**: Ollama (local)
 - **Frontend**: Vue 3
 - **Communication**: HTTP + JSON-RPC (MCP)
 
@@ -59,15 +59,25 @@ Search historical conversations in Claude Code via MCP protocol:
 
 1. Node.js >= 18
 2. pnpm (recommended)
-3. Ollama (for semantic search, optional)
+3. Ollama (required for semantic search and RAG)
+
+### Ollama Models
+
+| Model | Size | Purpose | Required |
+|-------|------|---------|----------|
+| `bge-m3` | 1.2 GB | Embedding (1024 dim) | Yes, for semantic search |
+| `qwen3:8b` | 5.2 GB | Chat / RAG Q&A | Yes, for Ask AI feature |
 
 ```bash
 # Install Ollama
 curl -fsSL https://ollama.com/install.sh | sh
 
-# Pull embedding model
-ollama pull bge-m3
+# Pull required models
+ollama pull bge-m3      # Embedding model
+ollama pull qwen3:8b    # Chat model for RAG
 ```
+
+> **Note**: Without Ollama models, full-text search still works. Semantic search and RAG require the models above.
 
 ### Install Project
 
@@ -113,6 +123,9 @@ OLLAMA_API=http://localhost:11434/api
 
 # Embedding model
 EMBEDDING_MODEL=bge-m3
+
+# Chat model for RAG
+CHAT_MODEL=qwen3:8b
 ```
 
 ## Running

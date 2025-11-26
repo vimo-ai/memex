@@ -49,7 +49,7 @@ Memex 解决这些问题：
 - **后端**: NestJS (DDD 架构)
 - **数据库**: SQLite + FTS5 (全文搜索)
 - **向量存储**: LanceDB
-- **Embedding**: Ollama (bge-m3 模型)
+- **LLM 运行时**: Ollama (本地)
 - **前端**: Vue 3
 - **通信**: HTTP + JSON-RPC (MCP)
 
@@ -59,15 +59,25 @@ Memex 解决这些问题：
 
 1. Node.js >= 18
 2. pnpm (推荐)
-3. Ollama (用于语义搜索，可选)
+3. Ollama (语义搜索和 RAG 必需)
+
+### Ollama 模型
+
+| 模型 | 大小 | 用途 | 是否必需 |
+|------|------|------|----------|
+| `bge-m3` | 1.2 GB | Embedding (1024 维) | 是，用于语义搜索 |
+| `qwen3:8b` | 5.2 GB | 聊天 / RAG 问答 | 是，用于 Ask AI 功能 |
 
 ```bash
 # 安装 Ollama
 curl -fsSL https://ollama.com/install.sh | sh
 
-# 拉取 embedding 模型
-ollama pull bge-m3
+# 拉取所需模型
+ollama pull bge-m3      # Embedding 模型
+ollama pull qwen3:8b    # RAG 聊天模型
 ```
+
+> **注意**: 没有 Ollama 模型时，全文搜索仍可使用。语义搜索和 RAG 需要上述模型。
 
 ### 安装项目
 
@@ -113,6 +123,9 @@ OLLAMA_API=http://localhost:11434/api
 
 # Embedding 模型
 EMBEDDING_MODEL=bge-m3
+
+# RAG 聊天模型
+CHAT_MODEL=qwen3:8b
 ```
 
 ## 运行
