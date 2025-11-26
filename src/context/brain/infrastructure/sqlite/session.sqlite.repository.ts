@@ -213,9 +213,12 @@ export class SessionSqliteRepository implements ISessionRepository {
     // 使用 FTS5 snippet 函数高亮匹配内容
     // -1 表示 content 列，'[' ']' 是高亮标记，'...' 是省略号，64 是 snippet 最大长度
 
+    // 清理 FTS5 特殊字符，防止语法错误
+    const sanitizedQuery = this.sanitizeFts5Query(query);
+
     // 构建 WHERE 条件
     const conditions = ['messages_fts MATCH ?'];
-    const params: any[] = [query];
+    const params: any[] = [sanitizedQuery];
 
     // 添加时间范围过滤
     if (startDate) {
@@ -273,6 +276,32 @@ export class SessionSqliteRepository implements ISessionRepository {
   }
 
   // ========== 私有方法 ==========
+
+  /**
+   * 清理 FTS5 查询字符串，移除或转义特殊字符
+   *
+   * FTS5 特殊字符包括：" - ( ) * : < > = 以及 AND OR NOT NEAR 等操作符
+   * 为了避免语法错误，我们采取以下策略：
+   * 1. 移除特殊操作符字符：- : * ( ) < > = "
+   * 2. 分词后用空格连接（FTS5 会自动用 AND 连接多个词）
+   *
+   * @param query 原始查询字符串
+   * @returns 清理后的查询字符串
+   */
+  private sanitizeFts5Query(query: string): string {
+    // 移除或替换 FTS5 特殊字符
+    let sanitized = query
+      .replace(/["()*:<>=\-]/g, ' ')  // 移除特殊操作符
+      .replace(/\s+/g, ' ')            // 多个空格合并为一个
+      .trim();                         // 去除首尾空格
+
+    // 如果清理后为空，返回通配符（匹配所有）
+    if (!sanitized) {
+      return '*';
+    }
+
+    return sanitized;
+  }
 
   /**
    * 会话数据行转换为实体
