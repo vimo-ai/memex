@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { scanProjects, scanSessions, buildSessionPath } from '@vlaude/shared-core';
+import { scanProjects, scanSessions, buildSessionPath } from '@vimo-ai/vlaude-shared-core';
 import { MemexConfigService } from '../../../../config';
 
 /**

@@ -7,7 +7,7 @@ import {
   buildSessionPath,
   type ClaudeProjectInfo,
   type ClaudeSessionMeta,
-} from '@vlaude/shared-core';
+} from '@vimo-ai/vlaude-shared-core';
 import { MemexConfigService } from '../../../../config';
 import {
   IProjectRepository,

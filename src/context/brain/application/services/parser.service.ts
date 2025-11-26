@@ -3,7 +3,7 @@ import {
   readSessionMessages,
   buildSessionPath,
   type SessionMessagesResult,
-} from '@vlaude/shared-core';
+} from '@vimo-ai/vlaude-shared-core';
 import { MessageEntity, MessageType } from '../../domain/entities/message.entity';
 
 /**

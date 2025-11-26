@@ -29,9 +29,9 @@ importers:
       '@nestjs/schedule':
         specifier: ^6.0.1
         version: 6.0.1(@nestjs/common@10.4.20(class-transformer@0.5.1)(class-validator@0.14.2)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@10.4.20)
-      '@vlaude/shared-core':
-        specifier: file:../../hi/小工具/claude/packages/shared-core
-        version: file:../../hi/小工具/claude/packages/shared-core
+      '@vimo-ai/vlaude-shared-core':
+        specifier: ^0.0.1-beta.1
+        version: 0.0.1-beta.1
       better-sqlite3:
         specifier: ^11.5.0
         version: 11.10.0
@@ -328,8 +328,8 @@ packages:
   '@types/validator@13.15.10':
     resolution: {integrity: sha512-T8L6i7wCuyoK8A/ZeLYt1+q0ty3Zb9+qbSSvrIVitzT3YjZqkTZ40IbRsPanlB4h1QB3JVL1SYCdR6ngtFYcuA==}
 
-  '@vlaude/shared-core@file:../../hi/小工具/claude/packages/shared-core':
-    resolution: {directory: ../../hi/小工具/claude/packages/shared-core, type: directory}
+  '@vimo-ai/vlaude-shared-core@0.0.1-beta.1':
+    resolution: {integrity: sha512-kwWnvhQ2yZXGchXZRBgkcs4w13PfO6mp5j4wO0JOgaQkaEQiK9wVZ6WQi3GXri40ngNUfIFLBINes3ZJbl7qtw==}
 
   '@webassemblyjs/ast@1.14.1':
     resolution: {integrity: sha512-nuBEDgQfm1ccRp/8bCQrx1frohyufl4JlbMMZ4P1wpeOfDhF6FQkxZJ1b/e+PLwr6X1Nhw6OLme5usuBWYBvuQ==}
@@ -2193,7 +2193,7 @@ snapshots:
 
   '@types/validator@13.15.10': {}
 
-  '@vlaude/shared-core@file:../../hi/小工具/claude/packages/shared-core': {}
+  '@vimo-ai/vlaude-shared-core@0.0.1-beta.1': {}
 
   '@webassemblyjs/ast@1.14.1':
     dependencies:
