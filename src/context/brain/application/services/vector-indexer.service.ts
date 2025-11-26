@@ -308,7 +308,7 @@ export class VectorIndexerService implements OnModuleInit {
         fullContent: msg.content,
         messageType: msg.type,
         chunkType: chunk.type,
-        timestamp: msg.timestamp,
+        // timestamp: msg.timestamp,  // MVP 阶段暂不使用
         vector: embedding,
       });
     }

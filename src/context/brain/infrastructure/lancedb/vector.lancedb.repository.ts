@@ -105,7 +105,7 @@ export class VectorLanceDbRepository implements OnModuleInit {
   async upsertBatch(records: VectorRecord[]): Promise<void> {
     if (records.length === 0) return;
 
-    // 转换为 LanceDB 格式
+    // 转换为 LanceDB 格式（暂不使用 timestamp，保持向后兼容）
     const data = records.map((r) => ({
       message_id: r.messageId,
       chunk_index: r.chunkIndex,
@@ -116,7 +116,7 @@ export class VectorLanceDbRepository implements OnModuleInit {
       full_content: r.fullContent || null,
       message_type: r.messageType,
       chunk_type: r.chunkType,
-      timestamp: r.timestamp || null,
+      // timestamp: r.timestamp || null,  // MVP 阶段暂不使用，避免 schema 不兼容
       vector: r.vector,
     }));
 
