@@ -19,6 +19,9 @@ import { VectorIndexerService } from './application/services/vector-indexer.serv
 import { RagService } from './application/services/rag.service';
 import { MCPToolsService } from './application/services/mcp-tools.service';
 import { MCPRegistryService } from './mcp/services/mcp-registry.service';
+import { AdapterRegistryService } from './application/services/adapters/adapter-registry.service';
+import { ClaudeAdapter } from './application/services/adapters/claude.adapter';
+import { CodexAdapter } from './application/services/adapters/codex.adapter';
 import { ProjectController } from './api/controllers/project.controller';
 import { SessionController } from './api/controllers/session.controller';
 import { SearchController } from './api/controllers/search.controller';
@@ -26,6 +29,7 @@ import { AdminController } from './api/controllers/admin.controller';
 import { SemanticSearchController, EmbeddingController } from './api/controllers/semantic-search.controller';
 import { RagController } from './api/controllers/rag.controller';
 import { MCPController } from './api/controllers/mcp.controller';
+import { TestEmbeddingController } from './api/controllers/test-embedding.controller';
 
 /**
  * Brain 上下文模块
@@ -55,6 +59,7 @@ import { MCPController } from './api/controllers/mcp.controller';
     EmbeddingController,
     RagController,
     MCPController,
+    TestEmbeddingController,
   ],
   providers: [
     // SQLite 数据库连接
@@ -82,6 +87,9 @@ import { MCPController } from './api/controllers/mcp.controller';
     ChunkingService,
     HybridSearchService,
     VectorIndexerService,
+    AdapterRegistryService,
+    ClaudeAdapter,
+    CodexAdapter,
     RagService,
     // MCP 相关服务
     MCPRegistryService,

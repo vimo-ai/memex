@@ -16,6 +16,12 @@ export interface MemexConfig {
   /** Claude Code 项目目录路径 */
   claudeProjectsPath: string;
 
+  // Codex CLI 配置
+  /** Codex 历史摘要文件路径 (history.jsonl) */
+  codexHistoryPath: string;
+  /** Codex 会话事件目录根路径 (sessions/...) */
+  codexSessionsRoot: string;
+
   // Ollama 配置
   /** Ollama API 地址 */
   ollamaApi: string;

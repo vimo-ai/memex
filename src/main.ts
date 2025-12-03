@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, LogLevel } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { MemexConfigService } from './config';
 
@@ -8,7 +8,13 @@ import { MemexConfigService } from './config';
  * Memex - Claude Code 会话历史管理系统
  */
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const logLevels = process.env.MEMEX_LOG_LEVELS
+    ? (process.env.MEMEX_LOG_LEVELS.split(',').map((l) => l.trim()) as LogLevel[])
+    : (['error', 'warn', 'log'] as LogLevel[]);
+
+  const app = await NestFactory.create(AppModule, {
+    logger: logLevels,
+  });
 
   // 全局验证管道
   app.useGlobalPipes(

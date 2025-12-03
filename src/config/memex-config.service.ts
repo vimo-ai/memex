@@ -47,6 +47,28 @@ export class MemexConfigService implements MemexConfig {
   }
 
   /**
+   * Codex 历史摘要文件路径
+   */
+  get codexHistoryPath(): string {
+    const defaultPath = join(homedir(), '.codex', 'history.jsonl');
+    return this.nestConfigService.get<string>(
+      'CODEX_HISTORY_PATH',
+      defaultPath,
+    );
+  }
+
+  /**
+   * Codex 会话事件目录根路径
+   */
+  get codexSessionsRoot(): string {
+    const defaultPath = join(homedir(), '.codex', 'sessions');
+    return this.nestConfigService.get<string>(
+      'CODEX_SESSIONS_ROOT',
+      defaultPath,
+    );
+  }
+
+  /**
    * Ollama API 地址
    */
   get ollamaApi(): string {
