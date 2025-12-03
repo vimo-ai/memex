@@ -98,4 +98,101 @@ export class AdminController {
       messageCount: this.sessionRepository.countMessages(),
     };
   }
+
+  /**
+   * 修复缺失的 cwd 和 model
+   *
+   * POST /api/admin/fix-metadata
+   *
+   * 将 cwd 为空的会话标记为需要重新采集，然后自动触发全量采集
+   */
+  @Post('fix-metadata')
+  async fixMetadata(): Promise<{
+    sessionsReset: number;
+    collectStats: CollectResponseDto;
+  }> {
+    // 1. 重置 cwd 为空的会话的 file_mtime
+    const sessionsReset = this.sessionRepository.resetFileMtime(
+      "cwd IS NULL OR cwd = ''",
+    );
+
+    // 2. 触发全量采集
+    const stats = await this.collectorService.collectAll();
+
+    return {
+      sessionsReset,
+      collectStats: {
+        projectsProcessed: stats.projectsProcessed,
+        projectsCreated: stats.projectsCreated,
+        sessionsProcessed: stats.sessionsProcessed,
+        sessionsUpdated: stats.sessionsUpdated,
+        sessionsSkipped: stats.sessionsSkipped,
+        messagesCreated: stats.messagesCreated,
+        duration: stats.duration,
+      },
+    };
+  }
+
+  /**
+   * 合并重复的项目
+   *
+   * POST /api/admin/merge-projects
+   *
+   * 自动检测相同路径的项目并合并（保留 claude 来源的项目，合并其他来源的会话）
+   */
+  @Post('merge-projects')
+  mergeDuplicateProjects(): {
+    mergedCount: number;
+    details: Array<{ from: number; to: number; sessionsMoved: number }>;
+  } {
+    const allProjects = this.projectRepository.findAll();
+    const pathMap = new Map<string, { claude?: number; others: number[] }>();
+
+    // 按路径分组项目
+    for (const project of allProjects) {
+      if (!pathMap.has(project.path)) {
+        pathMap.set(project.path, { others: [] });
+      }
+      const group = pathMap.get(project.path)!;
+      if (project.source === 'claude') {
+        group.claude = project.id!;
+      } else {
+        group.others.push(project.id!);
+      }
+    }
+
+    const details: Array<{ from: number; to: number; sessionsMoved: number }> =
+      [];
+
+    // 合并相同路径的项目
+    for (const [path, group] of pathMap) {
+      // 如果只有一个项目，跳过
+      if (!group.claude && group.others.length <= 1) continue;
+      if (group.claude && group.others.length === 0) continue;
+
+      // 确定目标项目（优先 claude，否则用第一个）
+      const targetId = group.claude ?? group.others[0];
+      const sourceIds = group.claude
+        ? group.others
+        : group.others.slice(1);
+
+      // 合并会话
+      for (const sourceId of sourceIds) {
+        const sessionsMoved = this.sessionRepository.updateProjectId(
+          sourceId,
+          targetId,
+        );
+        if (sessionsMoved > 0) {
+          details.push({ from: sourceId, to: targetId, sessionsMoved });
+        }
+        // 删除源项目
+        this.projectRepository.delete(sourceId);
+      }
+    }
+
+    return {
+      mergedCount: details.length,
+      details,
+    };
+  }
 }
