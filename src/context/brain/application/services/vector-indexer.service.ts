@@ -9,6 +9,9 @@ import { MessageType } from '../../domain/entities/message.entity';
 /** 批量处理大小 */
 const BATCH_SIZE = 50;
 
+/** 累积文本长度阈值（保守设置，实测 2836 会崩溃，降到 2500） */
+const ACCUMULATION_THRESHOLD = 2500;
+
 /**
  * 向量索引构建服务
  *
@@ -44,7 +47,7 @@ export class VectorIndexerService implements OnModuleInit {
     if (available) {
       this.logger.log('Ollama 服务可用，向量索引功能已启用');
 
-      // 启动 10 秒后执行增量索引
+      // 启动 10 秒后自动进行增量索引
       setTimeout(async () => {
         try {
           await this.buildIncremental();
@@ -222,11 +225,26 @@ export class VectorIndexerService implements OnModuleInit {
     let processedCount = 0;
     let failedCount = 0;
 
-    // 并发处理消息，每批 50 条
-    const CONCURRENCY = 50;
+    // 串行处理消息（Ollama embedding worker 不稳定，避免并发导致 EOF）
+    const CONCURRENCY = 1;
+
+    // 追踪累积文本长度（智能卸载策略）
+    let accumulatedLength = 0;
 
     for (let i = 0; i < messages.length; i += CONCURRENCY) {
       const batch = messages.slice(i, i + CONCURRENCY);
+
+      // 【临时禁用卸载策略，测试性能】
+      // // 在处理每条消息前判断是否需要卸载
+      // for (const msg of batch) {
+      //   if (accumulatedLength + msg.content.length > ACCUMULATION_THRESHOLD) {
+      //     this.logger.log(
+      //       `累积 ${accumulatedLength} + 当前 ${msg.content.length} = ${accumulatedLength + msg.content.length} 将超阈值，先卸载`,
+      //     );
+      //     await this.embeddingService.unloadModel();
+      //     accumulatedLength = 0;
+      //   }
+      // }
 
       // 并发处理这批消息
       const results = await Promise.allSettled(
@@ -239,6 +257,8 @@ export class VectorIndexerService implements OnModuleInit {
         if (result.status === 'fulfilled' && result.value.length > 0) {
           successRecords.push(...result.value);
           processedCount++;
+          // 处理成功后累加长度
+          accumulatedLength += batch[index].content.length;
         } else {
           if (result.status === 'rejected') {
             // 记录失败
@@ -252,12 +272,6 @@ export class VectorIndexerService implements OnModuleInit {
           }
           failedCount++;
         }
-      }
-
-      // 在批次之间卸载（确保上一批完全处理完）
-      const currentTotal = (alreadyProcessed || 0) + processedCount;
-      if (currentTotal > 0 && currentTotal % 500 < CONCURRENCY && currentTotal >= 500) {
-        await this.embeddingService.unloadModel();
       }
     }
 

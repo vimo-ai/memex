@@ -44,8 +44,9 @@ export class EmbeddingService {
       });
 
       if (!response.ok) {
+        const errorBody = await response.text().catch(() => 'unable to read body');
         throw new Error(
-          `Ollama API 错误: ${response.status} ${response.statusText} (文本长度: ${truncated.length})`,
+          `Ollama API 错误: ${response.status} ${response.statusText} (文本长度: ${truncated.length}, body: ${errorBody})`,
         );
       }
 
@@ -187,11 +188,7 @@ export class EmbeddingService {
 
       // 2. 发探测请求，等模型重新加载完成
       await this.embed('ping');
-
-      // 3. 额外等待 5 秒，让 GPU 完全准备好处理并发请求
-      this.logger.log('模型已加载，等待 5 秒预热...');
-      await new Promise((resolve) => setTimeout(resolve, 5000));
-      this.logger.log('模型预热完成，继续处理');
+      this.logger.log('模型已重载，继续处理');
     } catch (error) {
       this.logger.warn(`卸载/重载模型失败: ${error}`);
     }
