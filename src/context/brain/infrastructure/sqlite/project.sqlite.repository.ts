@@ -10,7 +10,8 @@ interface ProjectRow {
   id: number;
   path: string;
   name: string;
-  encoded_dir_name: string;
+  encoded_dir_name: string | null;
+  source: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -24,12 +25,13 @@ export class ProjectSqliteRepository implements IProjectRepository {
 
   /**
    * 保存项目（UPSERT）
+   * 根据 path + source 组合唯一约束进行插入或更新
    */
   save(project: ProjectEntity): ProjectEntity {
     const stmt = this.db.prepare(`
-      INSERT INTO projects (path, name, encoded_dir_name, updated_at)
-      VALUES (@path, @name, @encodedDirName, CURRENT_TIMESTAMP)
-      ON CONFLICT(path) DO UPDATE SET
+      INSERT INTO projects (path, name, encoded_dir_name, source, updated_at)
+      VALUES (@path, @name, @encodedDirName, @source, CURRENT_TIMESTAMP)
+      ON CONFLICT(path, source) DO UPDATE SET
         name = excluded.name,
         encoded_dir_name = excluded.encoded_dir_name,
         updated_at = CURRENT_TIMESTAMP
@@ -39,7 +41,8 @@ export class ProjectSqliteRepository implements IProjectRepository {
     const row = stmt.get({
       path: project.path,
       name: project.name,
-      encodedDirName: project.encodedDirName,
+      encodedDirName: project.encodedDirName ?? null,
+      source: project.source ?? 'claude',
     }) as ProjectRow;
 
     return this.rowToEntity(row);
@@ -121,7 +124,8 @@ export class ProjectSqliteRepository implements IProjectRepository {
       id: row.id,
       path: row.path,
       name: row.name,
-      encodedDirName: row.encoded_dir_name,
+      encodedDirName: row.encoded_dir_name ?? undefined,
+      source: row.source ?? undefined,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     });

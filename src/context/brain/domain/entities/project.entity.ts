@@ -14,7 +14,10 @@ export class ProjectEntity {
   name: string;
 
   /** 编码的目录名（Claude Code 存储使用的目录名） */
-  encodedDirName: string;
+  encodedDirName?: string;
+
+  /** 数据来源（claude/codex/其他） */
+  source?: string;
 
   /** 创建时间 */
   createdAt?: Date;
@@ -26,7 +29,8 @@ export class ProjectEntity {
     id?: number;
     path: string;
     name: string;
-    encodedDirName: string;
+    encodedDirName?: string;
+    source?: string;
     createdAt?: Date;
     updatedAt?: Date;
   }) {
@@ -34,6 +38,7 @@ export class ProjectEntity {
     this.path = props.path;
     this.name = props.name;
     this.encodedDirName = props.encodedDirName;
+    this.source = props.source;
     this.createdAt = props.createdAt;
     this.updatedAt = props.updatedAt;
   }
@@ -43,7 +48,7 @@ export class ProjectEntity {
    * @param path 项目真实路径
    * @param encodedDirName Claude Code 编码的目录名
    */
-  static fromPath(path: string, encodedDirName: string): ProjectEntity {
+  static fromPath(path: string, encodedDirName?: string, source?: string): ProjectEntity {
     // 从路径提取项目名称（最后一个目录名）
     const name = path.split('/').filter(Boolean).pop() || path;
 
@@ -51,6 +56,7 @@ export class ProjectEntity {
       path,
       name,
       encodedDirName,
+      source,
     });
   }
 }

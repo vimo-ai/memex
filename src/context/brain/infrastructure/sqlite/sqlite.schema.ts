@@ -12,11 +12,13 @@
 export const CREATE_PROJECTS_TABLE = `
 CREATE TABLE IF NOT EXISTS projects (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  path TEXT NOT NULL UNIQUE,           -- 真实项目路径
+  path TEXT NOT NULL,                  -- 真实项目路径
   name TEXT NOT NULL,                  -- 项目名称
-  encoded_dir_name TEXT NOT NULL,      -- 编码的目录名（Claude Code 使用的目录名）
+  encoded_dir_name TEXT,               -- 编码的目录名（Claude Code 使用的目录名，可为空）
+  source TEXT DEFAULT 'claude',        -- 数据来源
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(path, source)                 -- path + source 组合唯一
 )`;
 
 /** 项目表索引 */
@@ -29,6 +31,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,                 -- session uuid
   project_id INTEGER NOT NULL,
   status TEXT DEFAULT 'active',        -- active/closed/archived
+  source TEXT DEFAULT 'claude',        -- 数据来源
+  channel TEXT,                        -- 渠道/子来源
+  cwd TEXT,                            -- 工作目录
+  model TEXT,                          -- 默认模型
+  meta TEXT,                           -- 额外元信息（JSON 字符串）
   message_count INTEGER DEFAULT 0,
   file_mtime INTEGER,                  -- 文件修改时间戳（用于增量检测）
   file_size INTEGER,                   -- 文件大小（用于增量检测）
@@ -47,7 +54,15 @@ CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   uuid TEXT NOT NULL,
   session_id TEXT NOT NULL,
-  type TEXT NOT NULL,                  -- user/assistant
+  type TEXT NOT NULL,                  -- user/assistant/tool
+  source TEXT DEFAULT 'claude',        -- 数据来源
+  channel TEXT,                        -- 渠道/子来源
+  model TEXT,                          -- 模型名称
+  tool_call_id TEXT,                   -- 工具调用 ID
+  tool_name TEXT,                      -- 工具名称
+  tool_args TEXT,                      -- 工具参数
+  raw TEXT,                            -- 原始内容
+  meta TEXT,                           -- 额外元信息（JSON）
   content TEXT NOT NULL,               -- 消息内容
   timestamp TEXT,                      -- 消息时间戳
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,

@@ -58,6 +58,21 @@ export interface ISessionRepository {
    */
   countSessions(): number;
 
+  /**
+   * 重置指定条件的会话的 file_mtime（用于强制重新采集）
+   * @param condition 条件（如 'cwd IS NULL OR cwd = ""'）
+   * @returns 受影响的行数
+   */
+  resetFileMtime(condition?: string): number;
+
+  /**
+   * 批量更新会话的 project_id（用于合并项目）
+   * @param fromProjectId 源项目 ID
+   * @param toProjectId 目标项目 ID
+   * @returns 受影响的行数
+   */
+  updateProjectId(fromProjectId: number, toProjectId: number): number;
+
   // ========== 消息操作 ==========
 
   /**

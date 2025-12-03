@@ -14,6 +14,11 @@ interface SessionRow {
   id: string;
   project_id: number;
   status: string;
+  source: string | null;
+  channel: string | null;
+  cwd: string | null;
+  model: string | null;
+  meta: string | null;
   message_count: number;
   file_mtime: number | null;
   file_size: number | null;
@@ -29,6 +34,14 @@ interface MessageRow {
   uuid: string;
   session_id: string;
   type: string;
+  source: string | null;
+  channel: string | null;
+  model: string | null;
+  tool_call_id: string | null;
+  tool_name: string | null;
+  tool_args: string | null;
+  raw: string | null;
+  meta: string | null;
   content: string;
   timestamp: string | null;
   created_at: string;
@@ -56,10 +69,15 @@ export class SessionSqliteRepository implements ISessionRepository {
    */
   saveSession(session: SessionEntity): SessionEntity {
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, project_id, status, message_count, file_mtime, file_size, created_at, updated_at)
-      VALUES (@id, @projectId, @status, @messageCount, @fileMtime, @fileSize, @createdAt, @updatedAt)
+      INSERT INTO sessions (id, project_id, status, source, channel, cwd, model, meta, message_count, file_mtime, file_size, created_at, updated_at)
+      VALUES (@id, @projectId, @status, @source, @channel, @cwd, @model, @meta, @messageCount, @fileMtime, @fileSize, @createdAt, @updatedAt)
       ON CONFLICT(id) DO UPDATE SET
         status = excluded.status,
+        source = excluded.source,
+        channel = excluded.channel,
+        cwd = excluded.cwd,
+        model = excluded.model,
+        meta = excluded.meta,
         message_count = excluded.message_count,
         file_mtime = excluded.file_mtime,
         file_size = excluded.file_size,
@@ -71,6 +89,11 @@ export class SessionSqliteRepository implements ISessionRepository {
       id: session.id,
       projectId: session.projectId,
       status: session.status,
+      source: session.source,
+      channel: session.channel ?? null,
+      cwd: session.cwd ?? null,
+      model: session.model ?? null,
+      meta: session.meta ? JSON.stringify(session.meta) : null,
       messageCount: session.messageCount,
       fileMtime: session.fileMtime ?? null,
       fileSize: session.fileSize ?? null,
@@ -128,6 +151,30 @@ export class SessionSqliteRepository implements ISessionRepository {
     return result.count;
   }
 
+  /**
+   * 重置指定条件的会话的 file_mtime（用于强制重新采集）
+   */
+  resetFileMtime(condition?: string): number {
+    let sql = 'UPDATE sessions SET file_mtime = NULL';
+    if (condition) {
+      sql += ` WHERE ${condition}`;
+    }
+    const stmt = this.db.prepare(sql);
+    const result = stmt.run();
+    return result.changes;
+  }
+
+  /**
+   * 批量更新会话的 project_id（用于合并项目）
+   */
+  updateProjectId(fromProjectId: number, toProjectId: number): number {
+    const stmt = this.db.prepare(
+      'UPDATE sessions SET project_id = ? WHERE project_id = ?',
+    );
+    const result = stmt.run(toProjectId, fromProjectId);
+    return result.changes;
+  }
+
   // ========== 消息操作 ==========
 
   /**
@@ -138,8 +185,8 @@ export class SessionSqliteRepository implements ISessionRepository {
     if (messages.length === 0) return 0;
 
     const stmt = this.db.prepare(`
-      INSERT INTO messages (uuid, session_id, type, content, timestamp)
-      VALUES (@uuid, @sessionId, @type, @content, @timestamp)
+      INSERT INTO messages (uuid, session_id, type, source, channel, model, tool_call_id, tool_name, tool_args, raw, meta, content, timestamp)
+      VALUES (@uuid, @sessionId, @type, @source, @channel, @model, @toolCallId, @toolName, @toolArgs, @raw, @meta, @content, @timestamp)
       ON CONFLICT(session_id, uuid) DO NOTHING
     `);
 
@@ -150,6 +197,14 @@ export class SessionSqliteRepository implements ISessionRepository {
           uuid: msg.uuid,
           sessionId: msg.sessionId,
           type: msg.type,
+          source: msg.source ?? null,
+          channel: msg.channel ?? null,
+          model: msg.model ?? null,
+          toolCallId: msg.toolCallId ?? null,
+          toolName: msg.toolName ?? null,
+          toolArgs: msg.toolArgs ?? null,
+          raw: msg.raw ?? null,
+          meta: msg.meta ? JSON.stringify(msg.meta) : null,
           content: msg.content,
           timestamp: msg.timestamp?.toISOString() ?? null,
         });
@@ -330,6 +385,11 @@ export class SessionSqliteRepository implements ISessionRepository {
       id: row.id,
       projectId: row.project_id,
       status: row.status as SessionStatus,
+      source: row.source ?? 'claude',
+      channel: row.channel ?? undefined,
+      cwd: row.cwd ?? undefined,
+      model: row.model ?? undefined,
+      meta: row.meta ? JSON.parse(row.meta) : undefined,
       messageCount: row.message_count,
       fileMtime: row.file_mtime ?? undefined,
       fileSize: row.file_size ?? undefined,
@@ -347,6 +407,14 @@ export class SessionSqliteRepository implements ISessionRepository {
       uuid: row.uuid,
       sessionId: row.session_id,
       type: row.type as MessageType,
+      source: row.source ?? 'claude',
+      channel: row.channel ?? undefined,
+      model: row.model ?? undefined,
+      toolCallId: row.tool_call_id ?? undefined,
+      toolName: row.tool_name ?? undefined,
+      toolArgs: row.tool_args ?? undefined,
+      raw: row.raw ?? undefined,
+      meta: row.meta ? JSON.parse(row.meta) : undefined,
       content: row.content,
       timestamp: row.timestamp ? new Date(row.timestamp) : undefined,
       createdAt: new Date(row.created_at),

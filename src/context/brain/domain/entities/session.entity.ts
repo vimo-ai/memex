@@ -22,6 +22,21 @@ export class SessionEntity {
   /** 关联的项目 ID */
   projectId: number;
 
+  /** 数据来源（claude/codex/其他） */
+  source: string;
+
+  /** 渠道/子来源（可选，例如 cli/gui） */
+  channel?: string;
+
+  /** 会话所在工作目录 */
+  cwd?: string;
+
+  /** 默认模型 */
+  model?: string;
+
+  /** 额外元信息（序列化 JSON） */
+  meta?: Record<string, any>;
+
   /** 会话状态 */
   status: SessionStatus;
 
@@ -49,9 +64,19 @@ export class SessionEntity {
     fileSize?: number;
     createdAt?: Date;
     updatedAt?: Date;
+    source?: string;
+    channel?: string;
+    cwd?: string;
+    model?: string;
+    meta?: Record<string, any>;
   }) {
     this.id = props.id;
     this.projectId = props.projectId;
+    this.source = props.source ?? 'claude';
+    this.channel = props.channel;
+    this.cwd = props.cwd;
+    this.model = props.model;
+    this.meta = props.meta;
     this.status = props.status ?? SessionStatus.ACTIVE;
     this.messageCount = props.messageCount ?? 0;
     this.fileMtime = props.fileMtime;
