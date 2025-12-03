@@ -143,6 +143,14 @@ function formatTime(timestamp: string): string {
   return new Date(timestamp).toLocaleString()
 }
 
+function sourceLabel(result: any): string {
+  return result.source ? result.source.toUpperCase() : 'CLAUDE'
+}
+
+function channelLabel(result: any): string | null {
+  return result.channel ? result.channel.toUpperCase() : null
+}
+
 onMounted(() => {
   loadStats()
   loadProjects()
@@ -384,10 +392,16 @@ function clearFilters() {
           <div class="absolute inset-0 bg-neon-cyan/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
 
           <div class="relative z-10">
-            <div class="flex items-center justify-between mb-3 font-mono text-xs">
+              <div class="flex items-center justify-between mb-3 font-mono text-xs">
               <div class="flex items-center gap-3">
                 <span :class="(('messageType' in result ? result.messageType : result.type)) === 'user' ? 'text-neon-cyan' : 'text-neon-violet'">
                   {{ (('messageType' in result ? result.messageType : result.type)) === 'user' ? 'USER' : 'SYSTEM' }}
+                </span>
+                <span class="text-gray-600">::</span>
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/5 border border-white/10 text-[10px] uppercase tracking-wide">
+                  <span class="text-neon-cyan">{{ sourceLabel(result) }}</span>
+                  <span v-if="channelLabel(result)" class="text-gray-500">/</span>
+                  <span v-if="channelLabel(result)" class="text-gray-400">{{ channelLabel(result) }}</span>
                 </span>
                 <span class="text-gray-600">::</span>
                 <span class="text-gray-500">{{ result.sessionId.slice(0, 8) }}</span>
@@ -426,9 +440,15 @@ function clearFilters() {
           <div class="absolute inset-0 bg-neon-cyan/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
 
           <div class="relative z-10">
-            <div class="flex items-center justify-between mb-3 font-mono text-xs">
+              <div class="flex items-center justify-between mb-3 font-mono text-xs">
               <div class="flex items-center gap-3">
                 <span class="text-neon-cyan">SESSION</span>
+                <span class="text-gray-600">::</span>
+                <span class="inline-flex items-center px-2 py-0.5 rounded bg-white/5 border border-white/10 text-[10px] uppercase tracking-wide">
+                  <span :style="{ color: (session.source || 'claude').toLowerCase() === 'claude' ? '#D97757' : '#00f3ff' }">
+                    {{ session.source ? session.source.toUpperCase() : 'CLAUDE' }}
+                  </span>
+                </span>
                 <span class="text-gray-600">::</span>
                 <span class="text-white font-bold" v-html="highlightKeyword(session.id, query)"></span>
               </div>

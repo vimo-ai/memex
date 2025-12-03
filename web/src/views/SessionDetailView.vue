@@ -113,6 +113,14 @@ onUnmounted(() => {
       <div class="flex items-center gap-4">
         <button @click="goBack" class="hover:text-neon-cyan transition-colors">[BACK]</button>
         <span class="text-neon-cyan">SESSION: {{ session?.id }}</span>
+        <span v-if="session" class="inline-flex items-center px-2 py-0.5 rounded bg-white/5 border border-white/10 text-[10px] uppercase tracking-wide">
+          <span :style="{ color: (session.source || 'claude').toLowerCase() === 'claude' ? '#D97757' : '#00f3ff' }">
+            {{ (session.source || 'claude').toUpperCase() }}
+          </span>
+        </span>
+        <span v-if="session?.cwd" class="text-[10px] text-gray-500 bg-white/5 border border-white/5 px-2 py-0.5 rounded">
+          {{ session.cwd }}
+        </span>
       </div>
       <div class="flex gap-4 text-xs text-gray-500">
         <span>STATUS: READ_ONLY</span>

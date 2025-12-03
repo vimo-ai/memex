@@ -21,6 +21,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 export interface Project {
   id: number
   path: string
+  source?: string
   sessionCount: number
   createdAt: string
   updatedAt: string
@@ -31,6 +32,10 @@ export interface Session {
   id: string // UUID 字符串
   projectId: number
   status: string
+  source?: string
+  channel?: string
+  cwd?: string
+  model?: string
   messageCount: number
   createdAt: string
   updatedAt: string
@@ -41,7 +46,14 @@ export interface Message {
   id: number
   uuid: string
   sessionId: string
-  type: 'user' | 'assistant'
+  type: 'user' | 'assistant' | 'tool'
+  source?: string
+  channel?: string
+  model?: string
+  toolCallId?: string
+  toolName?: string
+  toolArgs?: string
+  raw?: string
   content: string
   timestamp: string
   createdAt: string
@@ -52,7 +64,9 @@ export interface SearchResult {
   messageId: number
   sessionId: string
   messageUuid: string
-  type: 'user' | 'assistant'
+  type: 'user' | 'assistant' | 'tool'
+  source?: string
+  channel?: string
   content: string
   snippet: string
   rank: number
@@ -192,10 +206,13 @@ export interface SemanticSearchResult {
   messageId: number
   uuid: string
   content: string
-  messageType: 'user' | 'assistant'
+  messageType: 'user' | 'assistant' | 'tool'
   sessionId: string
   projectId: number
   projectName: string
+  source?: string
+  channel?: string
+  model?: string
   timestamp: string
   snippet?: string
   score: number

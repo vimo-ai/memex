@@ -148,13 +148,18 @@ onMounted(() => {
               @click="goToSession(session)"
             >
               <div class="flex items-center justify-between mb-2">
-                <div class="flex items-center gap-3">
-                  <span class="font-mono text-neon-cyan text-sm">ID: {{ shortUuid(session.id) }}</span>
-                  <span 
-                    class="text-xs px-1.5 py-0.5 rounded border"
-                    :class="session.messageCount > 0 
-                      ? 'border-neon-cyan/30 text-neon-cyan bg-neon-cyan/5' 
-                      : 'border-gray-700 text-gray-500'"
+              <div class="flex items-center gap-3">
+                <span class="font-mono text-neon-cyan text-sm">ID: {{ shortUuid(session.id) }}</span>
+                <span class="inline-flex items-center px-2 py-0.5 rounded bg-white/5 border border-white/10 text-[10px] uppercase tracking-wide">
+                  <span :style="{ color: (session.source || 'claude').toLowerCase() === 'claude' ? '#D97757' : '#00f3ff' }">
+                    {{ (session.source || 'claude').toUpperCase() }}
+                  </span>
+                </span>
+                <span
+                  class="text-xs px-1.5 py-0.5 rounded border"
+                  :class="session.messageCount > 0
+                    ? 'border-neon-cyan/30 text-neon-cyan bg-neon-cyan/5'
+                    : 'border-gray-700 text-gray-500'"
                   >
                     {{ session.messageCount > 0 ? 'ACTIVE' : 'EMPTY' }}
                   </span>

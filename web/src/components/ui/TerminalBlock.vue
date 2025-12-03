@@ -4,7 +4,7 @@ import { renderMarkdown } from '@/utils/markdown'
 
 const props = defineProps<{
   content: string
-  type: 'user' | 'assistant'
+  type: 'user' | 'assistant' | 'tool'
   timestamp: string
 }>()
 
@@ -27,8 +27,8 @@ const renderedContent = computed(() => renderMarkdown(props.content))
       class="flex items-center gap-2 mb-1 opacity-50 group-hover:opacity-100 transition-opacity select-none"
       :class="{ 'flex-row-reverse': type === 'user' }"
     >
-      <span :class="type === 'user' ? 'text-neon-cyan' : 'text-neon-violet'">
-        {{ type === 'user' ? 'root@user' : 'memex@ai' }}
+      <span :class="type === 'user' ? 'text-neon-cyan' : type === 'assistant' ? 'text-neon-violet' : 'text-orange-400'">
+        {{ type === 'user' ? 'root@user' : type === 'assistant' ? 'memex@ai' : 'tool@call' }}
       </span>
       <span class="text-gray-600">::</span>
       <span class="text-gray-500">[{{ formatTime(timestamp) }}]</span>
