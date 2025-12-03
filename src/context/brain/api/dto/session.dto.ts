@@ -11,6 +11,21 @@ export class SessionResponseDto {
   /** 会话状态 */
   status!: string;
 
+  /** 数据来源 */
+  source?: string;
+
+  /** 渠道/子来源 */
+  channel?: string;
+
+  /** 工作目录 */
+  cwd?: string;
+
+  /** 模型 */
+  model?: string;
+
+  /** 额外元信息 */
+  meta?: Record<string, any>;
+
   /** 消息数量 */
   messageCount!: number;
 
@@ -61,6 +76,30 @@ export class MessageResponseDto {
 
   /** 消息类型 (user/assistant) */
   type!: string;
+
+  /** 数据来源 */
+  source?: string;
+
+  /** 渠道/子来源 */
+  channel?: string;
+
+  /** 模型 */
+  model?: string;
+
+  /** 工具调用 ID */
+  toolCallId?: string;
+
+  /** 工具名称 */
+  toolName?: string;
+
+  /** 工具参数 */
+  toolArgs?: string;
+
+  /** 原始内容 */
+  raw?: string;
+
+  /** 额外元信息 */
+  meta?: Record<string, any>;
 
   /** 消息内容 */
   content!: string;

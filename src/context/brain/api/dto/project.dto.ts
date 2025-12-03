@@ -12,7 +12,10 @@ export class ProjectResponseDto {
   path!: string;
 
   /** 编码目录名 */
-  encodedDirName!: string;
+  encodedDirName?: string;
+
+  /** 数据来源 */
+  source?: string;
 
   /** 创建时间 */
   createdAt!: string;
