@@ -22,6 +22,13 @@ interface JsonlMessageEntry {
   };
   timestamp?: string;
 
+  // 会话级别元数据（顶层字段）
+  cwd?: string;
+  model?: string;
+  sessionId?: string;
+  version?: string;
+  gitBranch?: string;
+
   // User 消息的特殊标记字段
   /** 工具执行结果（占 80% 的 user 消息） */
   toolUseResult?: {
@@ -60,6 +67,8 @@ interface ContentBlock {
 export interface ParseSessionResult {
   messages: MessageEntity[];
   total: number;
+  cwd?: string;
+  model?: string;
 }
 
 /**
@@ -98,7 +107,7 @@ export class ParserService {
    *
    * @param sessionPath 会话文件完整路径
    * @param sessionId 会话 ID
-   * @returns 解析后的消息实体列表
+   * @returns 解析后的消息实体列表和元数据
    */
   async parseSessionByPath(
     sessionPath: string,
@@ -111,32 +120,46 @@ export class ParserService {
       return null;
     }
 
-    const messages = this.convertToEntities(result, sessionId);
+    const { entities, cwd, model } = this.convertToEntities(result, sessionId);
 
     return {
-      messages,
+      messages: entities,
       total: result.total,
+      cwd,
+      model,
     };
   }
 
   /**
    * 将 shared-core 返回的消息转换为 MessageEntity
+   * 同时提取会话级别的元数据（cwd, model）
    */
   private convertToEntities(
     result: SessionMessagesResult,
     sessionId: string,
-  ): MessageEntity[] {
+  ): { entities: MessageEntity[]; cwd?: string; model?: string } {
     const entities: MessageEntity[] = [];
+    let cwd: string | undefined;
+    let model: string | undefined;
 
     for (const rawMessage of result.messages) {
       const entry = rawMessage as JsonlMessageEntry;
+
+      // 提取会话元数据（从第一条包含这些字段的消息中获取）
+      if (!cwd && entry.cwd) {
+        cwd = entry.cwd;
+      }
+      if (!model && entry.model) {
+        model = entry.model;
+      }
+
       const entity = this.convertSingleMessage(entry, sessionId);
       if (entity) {
         entities.push(entity);
       }
     }
 
-    return entities;
+    return { entities, cwd, model };
   }
 
   /**
@@ -178,6 +201,8 @@ export class ParserService {
       sessionId,
       type: messageType,
       content,
+      source: 'claude',
+      channel: 'code',
       timestamp,
     });
   }

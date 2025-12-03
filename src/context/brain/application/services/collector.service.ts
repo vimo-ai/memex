@@ -2,14 +2,6 @@ import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import * as fs from 'fs/promises';
 import {
-  scanProjects,
-  scanSessions,
-  buildSessionPath,
-  type ClaudeProjectInfo,
-  type ClaudeSessionMeta,
-} from '@vimo-ai/vlaude-shared-core';
-import { MemexConfigService } from '../../../../config';
-import {
   IProjectRepository,
   PROJECT_REPOSITORY,
 } from '../../domain/repositories/project.repository.interface';
@@ -19,7 +11,8 @@ import {
 } from '../../domain/repositories/session.repository.interface';
 import { ProjectEntity } from '../../domain/entities/project.entity';
 import { SessionEntity, SessionStatus } from '../../domain/entities/session.entity';
-import { ParserService } from './parser.service';
+import { AdapterRegistryService } from './adapters/adapter-registry.service';
+import { AdapterSessionMeta, ConversationAdapter } from './adapters/conversation-adapter.interface';
 
 /**
  * 采集统计结果
@@ -52,25 +45,19 @@ export interface CollectStats {
 export class CollectorService implements OnModuleInit {
   private readonly logger = new Logger(CollectorService.name);
 
-  /** Claude projects 目录路径 */
-  private readonly claudeProjectsPath: string;
-
   constructor(
     @Inject(PROJECT_REPOSITORY)
     private readonly projectRepository: IProjectRepository,
     @Inject(SESSION_REPOSITORY)
     private readonly sessionRepository: ISessionRepository,
-    private readonly parserService: ParserService,
-    private readonly configService: MemexConfigService,
-  ) {
-    this.claudeProjectsPath = this.configService.claudeProjectsPath;
-  }
+    private readonly adapterRegistry: AdapterRegistryService,
+  ) {}
 
   /**
    * 服务启动时执行采集
    */
   async onModuleInit(): Promise<void> {
-    this.logger.log('服务启动，开始执行初始数据采集...');
+    this.logger.log('服务启动，开始自动采集...');
 
     try {
       const stats = await this.collectAll();
@@ -124,21 +111,17 @@ export class CollectorService implements OnModuleInit {
       duration: 0,
     };
 
-    this.logger.log(`开始全量采集，扫描目录: ${this.claudeProjectsPath}`);
+    const adapters = this.adapterRegistry.getAdapters();
+    this.logger.log(`开始全量采集，适配器数量: ${adapters.length}`);
 
-    // 1. 扫描所有项目
-    const projects = await scanProjects(this.claudeProjectsPath);
-    this.logger.log(`发现 ${projects.length} 个项目`);
-
-    // 2. 处理每个项目
-    for (const projectInfo of projects) {
-      const projectStats = await this.collectProjectInternal(projectInfo);
-      stats.projectsProcessed++;
-      stats.projectsCreated += projectStats.projectsCreated;
-      stats.sessionsProcessed += projectStats.sessionsProcessed;
-      stats.sessionsUpdated += projectStats.sessionsUpdated;
-      stats.sessionsSkipped += projectStats.sessionsSkipped;
-      stats.messagesCreated += projectStats.messagesCreated;
+    for (const adapter of adapters) {
+      const adapterStats = await this.collectAdapter(adapter);
+      stats.projectsProcessed += adapterStats.projectsProcessed;
+      stats.projectsCreated += adapterStats.projectsCreated;
+      stats.sessionsProcessed += adapterStats.sessionsProcessed;
+      stats.sessionsUpdated += adapterStats.sessionsUpdated;
+      stats.sessionsSkipped += adapterStats.sessionsSkipped;
+      stats.messagesCreated += adapterStats.messagesCreated;
     }
 
     stats.duration = Date.now() - startTime;
@@ -154,41 +137,12 @@ export class CollectorService implements OnModuleInit {
   }
 
   /**
-   * 采集单个项目
-   *
-   * @param projectPath 项目的真实路径
+   * 采集单个项目（按 projectPath 过滤）
    */
   async collectProject(projectPath: string): Promise<CollectStats> {
     const startTime = Date.now();
-    const stats: CollectStats = {
-      projectsProcessed: 1,
-      projectsCreated: 0,
-      sessionsProcessed: 0,
-      sessionsUpdated: 0,
-      sessionsSkipped: 0,
-      messagesCreated: 0,
-      duration: 0,
-    };
-
-    this.logger.log(`采集项目: ${projectPath}`);
-
-    // 扫描项目列表并查找匹配的项目
-    const projects = await scanProjects(this.claudeProjectsPath);
-    const projectInfo = projects.find((p) => p.path === projectPath);
-
-    if (!projectInfo) {
-      this.logger.warn(`未找到项目: ${projectPath}`);
-      stats.duration = Date.now() - startTime;
-      return stats;
-    }
-
-    const projectStats = await this.collectProjectInternal(projectInfo);
-    Object.assign(stats, {
-      ...projectStats,
-      projectsProcessed: 1,
-      duration: Date.now() - startTime,
-    });
-
+    const stats = await this.collectAllWithFilter((meta) => meta.projectPath === projectPath);
+    stats.duration = Date.now() - startTime;
     return stats;
   }
 
@@ -211,63 +165,94 @@ export class CollectorService implements OnModuleInit {
 
     this.logger.log(`同步会话: ${sessionId}`);
 
-    // 先从数据库查找会话
-    const existingSession = this.sessionRepository.findSessionById(sessionId);
+    const adapters = this.adapterRegistry.getAdapters();
+    for (const adapter of adapters) {
+      const metas = await adapter.listSessions();
+      const targetMeta = metas.find((m) => m.id === sessionId);
+      if (!targetMeta) continue;
+      const sessionResult = await this.processAdapterSession(adapter, targetMeta);
+      stats.projectsProcessed += sessionResult.projectsProcessed;
+      stats.projectsCreated += sessionResult.projectsCreated;
+      stats.sessionsUpdated += sessionResult.sessionsUpdated;
+      stats.sessionsSkipped += sessionResult.sessionsSkipped;
+      stats.messagesCreated += sessionResult.messagesCreated;
+      break;
+    }
 
-    if (existingSession) {
-      // 已存在会话，从关联的项目获取信息
-      const project = this.projectRepository.findById(existingSession.projectId);
-      if (!project) {
-        this.logger.warn(`会话 ${sessionId} 关联的项目不存在`);
-        stats.duration = Date.now() - startTime;
-        return stats;
-      }
+    stats.duration = Date.now() - startTime;
+    return stats;
+  }
 
-      const sessionStats = await this.syncSessionInternal(
-        project.encodedDirName,
-        sessionId,
-        existingSession.projectId,
-      );
-      Object.assign(stats, sessionStats);
-    } else {
-      // 未找到会话，需要在所有项目中搜索
-      const projects = await scanProjects(this.claudeProjectsPath);
+  /**
+   * 针对指定适配器执行采集
+   */
+  private async collectAdapter(adapter: ConversationAdapter): Promise<Omit<CollectStats, 'duration'>> {
+    const stats = {
+      projectsProcessed: 0,
+      projectsCreated: 0,
+      sessionsProcessed: 0,
+      sessionsUpdated: 0,
+      sessionsSkipped: 0,
+      messagesCreated: 0,
+    };
 
-      for (const projectInfo of projects) {
-        // 检查会话文件是否存在于该项目
-        const sessionPath = buildSessionPath(
-          this.claudeProjectsPath,
-          projectInfo.encodedDirName,
-          sessionId,
-        );
+    const metas = await adapter.listSessions();
+    this.logger.log(`[${adapter.source}] 发现 ${metas.length} 个会话`);
 
-        try {
-          await fs.access(sessionPath);
+    const processedProjects = new Set<string>();
 
-          // 找到了，先确保项目存在
-          const savedProject = this.projectRepository.save(
-            ProjectEntity.fromPath(projectInfo.path, projectInfo.encodedDirName),
-          );
-          stats.projectsProcessed = 1;
+    for (const meta of metas) {
+      const result = await this.processAdapterSession(adapter, meta);
+      stats.sessionsProcessed++;
+      stats.sessionsUpdated += result.sessionsUpdated;
+      stats.sessionsSkipped += result.sessionsSkipped;
+      stats.messagesCreated += result.messagesCreated;
 
-          if (!this.projectRepository.findByPath(projectInfo.path)) {
-            stats.projectsCreated = 1;
-          }
-
-          const sessionStats = await this.syncSessionInternal(
-            projectInfo.encodedDirName,
-            sessionId,
-            savedProject.id!,
-          );
-          Object.assign(stats, {
-            ...sessionStats,
-            projectsProcessed: 1,
-            projectsCreated: stats.projectsCreated,
-          });
-          break;
-        } catch {
-          // 文件不存在，继续搜索下一个项目
+      if (!processedProjects.has(meta.projectPath)) {
+        stats.projectsProcessed++;
+        if (result.projectsCreated > 0) {
+          stats.projectsCreated += result.projectsCreated;
         }
+        processedProjects.add(meta.projectPath);
+      }
+    }
+
+    return stats;
+  }
+
+  /**
+   * 支持过滤的全量采集
+   */
+  private async collectAllWithFilter(
+    predicate: (meta: AdapterSessionMeta) => boolean,
+  ): Promise<CollectStats> {
+    const startTime = Date.now();
+    const stats: CollectStats = {
+      projectsProcessed: 0,
+      projectsCreated: 0,
+      sessionsProcessed: 0,
+      sessionsUpdated: 0,
+      sessionsSkipped: 0,
+      messagesCreated: 0,
+      duration: 0,
+    };
+
+    const adapters = this.adapterRegistry.getAdapters();
+    const processedProjects = new Set<string>();
+    for (const adapter of adapters) {
+      const metas = (await adapter.listSessions()).filter(predicate);
+      this.logger.log(`[${adapter.source}] 过滤后 ${metas.length} 个会话`);
+      for (const meta of metas) {
+        const result = await this.processAdapterSession(adapter, meta);
+        stats.sessionsProcessed++;
+        stats.sessionsUpdated += result.sessionsUpdated;
+        stats.sessionsSkipped += result.sessionsSkipped;
+        stats.messagesCreated += result.messagesCreated;
+        if (!processedProjects.has(meta.projectPath)) {
+          stats.projectsProcessed++;
+          processedProjects.add(meta.projectPath);
+        }
+        stats.projectsCreated += result.projectsCreated;
       }
     }
 
@@ -276,136 +261,86 @@ export class CollectorService implements OnModuleInit {
   }
 
   /**
-   * 内部方法：采集单个项目
+   * 处理单个适配器会话
    */
-  private async collectProjectInternal(
-    projectInfo: ClaudeProjectInfo,
-  ): Promise<Omit<CollectStats, 'duration'>> {
-    const stats = {
-      projectsProcessed: 1,
+  private async processAdapterSession(
+    adapter: ConversationAdapter,
+    meta: AdapterSessionMeta,
+  ): Promise<Omit<CollectStats, 'sessionsProcessed' | 'duration'>> {
+    const result = {
+      projectsProcessed: 0,
       projectsCreated: 0,
-      sessionsProcessed: 0,
       sessionsUpdated: 0,
       sessionsSkipped: 0,
       messagesCreated: 0,
     };
 
-    // 1. 保存/更新项目
-    const existingProject = this.projectRepository.findByPath(projectInfo.path);
+    // 1. 准备文件元信息
+    let fileMtime = meta.fileMtime;
+    let fileSize = meta.fileSize;
+    if ((!fileMtime || !fileSize) && meta.sessionPath) {
+      try {
+        const stat = await fs.stat(meta.sessionPath);
+        fileMtime = fileMtime ?? stat.mtimeMs;
+        fileSize = fileSize ?? stat.size;
+      } catch (error) {
+        this.logger.warn(`无法获取会话文件状态: ${meta.sessionPath}`, error as Error);
+      }
+    }
+
+    // 2. 准备项目
+    const projectPath = meta.projectPath || `${adapter.source}-default`;
+    const projectName = meta.projectName || projectPath.split('/').filter(Boolean).pop() || projectPath;
+    const existingProject = this.projectRepository.findByPath(projectPath);
     const savedProject = this.projectRepository.save(
-      ProjectEntity.fromPath(projectInfo.path, projectInfo.encodedDirName),
+      ProjectEntity.fromPath(projectPath, meta.encodedDirName, adapter.source),
     );
-
+    result.projectsProcessed = 1;
+    result.projectsCreated = existingProject ? 0 : 1;
     if (!existingProject) {
-      stats.projectsCreated = 1;
-      this.logger.debug(`新增项目: ${projectInfo.name}`);
+      this.logger.debug(`[${adapter.source}] 新增项目: ${projectName}`);
     }
 
-    // 2. 扫描会话
-    const sessions = await scanSessions(
-      this.claudeProjectsPath,
-      projectInfo.encodedDirName,
-      projectInfo.path,
-    );
-
-    // 3. 处理每个会话
-    for (const sessionMeta of sessions) {
-      stats.sessionsProcessed++;
-
-      const sessionStats = await this.processSession(
-        sessionMeta,
-        projectInfo.encodedDirName,
-        savedProject.id!,
-      );
-
-      stats.sessionsUpdated += sessionStats.updated ? 1 : 0;
-      stats.sessionsSkipped += sessionStats.skipped ? 1 : 0;
-      stats.messagesCreated += sessionStats.messagesCreated;
-    }
-
-    return stats;
-  }
-
-  /**
-   * 内部方法：处理单个会话
-   *
-   * 包含增量检测逻辑
-   */
-  private async processSession(
-    sessionMeta: ClaudeSessionMeta,
-    encodedDirName: string,
-    projectId: number,
-  ): Promise<{ updated: boolean; skipped: boolean; messagesCreated: number }> {
-    const result = { updated: false, skipped: false, messagesCreated: 0 };
-
-    // 1. 获取文件元信息
-    const sessionPath = buildSessionPath(
-      this.claudeProjectsPath,
-      encodedDirName,
-      sessionMeta.id,
-    );
-
-    let fileMtime: number;
-    let fileSize: number;
-
-    try {
-      const fileStat = await fs.stat(sessionPath);
-      fileMtime = fileStat.mtimeMs;
-      fileSize = fileStat.size;
-    } catch (error) {
-      this.logger.warn(`无法获取会话文件状态: ${sessionPath}`, error);
+    // 3. 增量检测
+    const existingSession = this.sessionRepository.findSessionById(meta.id);
+    if (
+      existingSession &&
+      fileMtime !== undefined &&
+      fileSize !== undefined &&
+      !existingSession.hasFileChanged(fileMtime, fileSize)
+    ) {
+      result.sessionsSkipped = 1;
       return result;
     }
 
-    // 2. 检查是否需要更新
-    const existingSession = this.sessionRepository.findSessionById(sessionMeta.id);
-
-    if (existingSession && !existingSession.hasFileChanged(fileMtime, fileSize)) {
-      result.skipped = true;
-      return result;
-    }
-
-    // 3. 解析消息
-    const parseResult = await this.parserService.parseSession(
-      this.claudeProjectsPath,
-      encodedDirName,
-      sessionMeta.id,
-    );
-
+    // 4. 解析会话
+    const parseResult = await adapter.parseSession(meta);
     if (!parseResult) {
-      this.logger.warn(`解析会话失败: ${sessionMeta.id}`);
+      this.logger.warn(`[${adapter.source}] 解析会话失败: ${meta.id}`);
       return result;
     }
 
-    // 4. 先保存/更新会话（消息有外键指向会话）
-    // 从消息中提取会话时间
-    let sessionCreatedAt: Date | undefined;
-    let sessionUpdatedAt: Date | undefined;
-
-    if (parseResult.messages.length > 0) {
-      // 第一条消息的时间作为会话创建时间
-      const firstMsg = parseResult.messages[0];
-      if (firstMsg.timestamp) {
-        sessionCreatedAt = firstMsg.timestamp;
-      }
-      // 最后一条消息的时间作为会话更新时间
-      const lastMsg = parseResult.messages[parseResult.messages.length - 1];
-      if (lastMsg.timestamp) {
-        sessionUpdatedAt = lastMsg.timestamp;
-      }
-    }
-
-    // 如果没有从消息获取到时间，使用文件 mtime
-    if (!sessionCreatedAt) {
-      sessionCreatedAt = new Date(fileMtime);
-    }
-    if (!sessionUpdatedAt) {
-      sessionUpdatedAt = new Date(fileMtime);
-    }
+    // 5. 构造 SessionEntity
+    const sessionCreatedAt =
+      parseResult.createdAt ??
+      meta.createdAt ??
+      (fileMtime ? new Date(fileMtime) : undefined);
+    const sessionUpdatedAt =
+      parseResult.updatedAt ??
+      meta.updatedAt ??
+      (fileMtime ? new Date(fileMtime) : undefined);
 
     const sessionEntity = new SessionEntity({
-      id: sessionMeta.id,
-      projectId,
+      id: meta.id,
+      projectId: savedProject.id!,
+      source: adapter.source,
+      channel: meta.channel,
+      cwd: parseResult.cwd ?? meta.cwd,
+      model: parseResult.model ?? meta.model,
+      meta: {
+        ...(meta.meta || {}),
+        ...(parseResult.meta || {}),
+      },
       status: SessionStatus.ACTIVE,
       messageCount: parseResult.messages.length,
       fileMtime,
@@ -416,49 +351,23 @@ export class CollectorService implements OnModuleInit {
 
     this.sessionRepository.saveSession(sessionEntity);
 
-    // 5. 保存消息
+    // 6. 保存消息
     if (parseResult.messages.length > 0) {
-      result.messagesCreated = this.sessionRepository.saveMessages(parseResult.messages);
+      const withSource = parseResult.messages.map((msg) => {
+        msg.source = msg.source ?? adapter.source;
+        msg.channel = msg.channel ?? meta.channel;
+        msg.sessionId = meta.id;
+        return msg;
+      });
+      result.messagesCreated = this.sessionRepository.saveMessages(withSource);
     }
 
-    result.updated = true;
+    result.sessionsUpdated = 1;
 
     this.logger.debug(
-      `会话 ${sessionMeta.id} 已更新: ${result.messagesCreated} 条消息`,
+      `[${adapter.source}] 会话 ${meta.id} 已更新: ${result.messagesCreated} 条消息`,
     );
 
     return result;
-  }
-
-  /**
-   * 内部方法：同步单个会话
-   */
-  private async syncSessionInternal(
-    encodedDirName: string,
-    sessionId: string,
-    projectId: number,
-  ): Promise<Omit<CollectStats, 'projectsProcessed' | 'projectsCreated' | 'duration'>> {
-    const stats = {
-      sessionsProcessed: 1,
-      sessionsUpdated: 0,
-      sessionsSkipped: 0,
-      messagesCreated: 0,
-    };
-
-    // 构造 sessionMeta（虽然不完整，但 processSession 只需要 id）
-    const sessionMeta: ClaudeSessionMeta = {
-      id: sessionId,
-      projectPath: '', // 不需要
-      createdAt: new Date(),
-      lastUpdated: new Date(),
-      messageCount: 0,
-    };
-
-    const result = await this.processSession(sessionMeta, encodedDirName, projectId);
-    stats.sessionsUpdated = result.updated ? 1 : 0;
-    stats.sessionsSkipped = result.skipped ? 1 : 0;
-    stats.messagesCreated = result.messagesCreated;
-
-    return stats;
   }
 }
