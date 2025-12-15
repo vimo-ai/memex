@@ -15,6 +15,7 @@ export default defineConfig({
     },
   },
   server: {
+    port: 10086,
     proxy: {
       // 代理 /api 到后端服务
       '/api': {

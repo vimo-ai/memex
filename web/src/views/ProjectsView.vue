@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+
+defineOptions({
+  name: 'ProjectsView'
+})
 import { getProjects, type Project } from '@/api'
 import { buildProjectTree, type TreeNode } from '@/utils/pathUtils'
 import GlitchText from '@/components/ui/GlitchText.vue'

@@ -84,3 +84,9 @@ body {
     transform: translate(0)
   }
 }
+
+/* Project Dropdown - Cyberpunk Style */
+#project-dropdown {
+  background-color: #030308 !important;
+  box-shadow: 0 4px 30px rgba(0,0,0,1), 0 0 20px rgba(0,243,255,0.25), inset 0 1px 0 rgba(0,243,255,0.2) !important;
+}

@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import { ref, nextTick, watch } from 'vue'
+
+defineOptions({
+  name: 'AskView'
+})
 import { useRouter } from 'vue-router'
 import { ask, type RagResponse } from '@/api'
 import { renderMarkdown } from '@/utils/markdown'
