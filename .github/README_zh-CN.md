@@ -53,7 +53,55 @@ Memex 解决这些问题：
 - **前端**: Vue 3
 - **通信**: HTTP + JSON-RPC (MCP)
 
-## 安装
+## 快速开始 (Docker)
+
+最快的启动方式 - 无需安装 Node.js 或构建工具。
+
+```bash
+# 一行命令启动
+docker run -d \
+  --name memex \
+  -p 3000:3000 \
+  -v ~/.claude/projects:/claude-sessions:ro \
+  -v memex-data:/data \
+  ghcr.io/vimo-ai/memex:latest
+
+# 或使用 docker-compose
+curl -sL https://raw.githubusercontent.com/vimo-ai/memex/main/docker-compose.yml -o docker-compose.yml
+docker-compose up -d
+```
+
+然后访问 **http://localhost:3000**
+
+### 包含功能
+
+- Web UI 浏览会话
+- 全文搜索 (FTS5)
+- MCP 端点 `/api/mcp`
+- 自动导入 `~/.claude/projects/`
+
+### 可选：启用语义搜索
+
+如需语义搜索和 RAG 功能，需要在宿主机运行 Ollama：
+
+```bash
+# 安装 Ollama 并拉取模型
+ollama pull bge-m3
+ollama pull qwen3:8b
+
+# 启动 Memex 并连接 Ollama
+docker run -d \
+  --name memex \
+  -p 3000:3000 \
+  -v ~/.claude/projects:/claude-sessions:ro \
+  -v memex-data:/data \
+  -e OLLAMA_API=http://host.docker.internal:11434/api \
+  ghcr.io/vimo-ai/memex:latest
+```
+
+## 从源码安装
+
+如果你想从源码构建或进行开发，请按以下步骤操作。
 
 ### 前置要求
 

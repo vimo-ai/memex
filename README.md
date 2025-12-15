@@ -53,7 +53,55 @@ Search historical conversations in Claude Code via MCP protocol:
 - **Frontend**: Vue 3
 - **Communication**: HTTP + JSON-RPC (MCP)
 
-## Installation
+## Quick Start (Docker)
+
+The fastest way to get started - no Node.js or build tools required.
+
+```bash
+# One command to start
+docker run -d \
+  --name memex \
+  -p 3000:3000 \
+  -v ~/.claude/projects:/claude-sessions:ro \
+  -v memex-data:/data \
+  ghcr.io/vimo-ai/memex:latest
+
+# Or use docker-compose
+curl -sL https://raw.githubusercontent.com/vimo-ai/memex/main/docker-compose.yml -o docker-compose.yml
+docker-compose up -d
+```
+
+Then visit **http://localhost:3000**
+
+### What's included
+
+- Web UI for browsing sessions
+- Full-text search (FTS5)
+- MCP endpoint at `/api/mcp`
+- Auto-import from `~/.claude/projects/`
+
+### Optional: Enable Semantic Search
+
+For semantic search and RAG, you need Ollama running on your host:
+
+```bash
+# Install Ollama and pull models
+ollama pull bge-m3
+ollama pull qwen3:8b
+
+# Run Memex with Ollama access
+docker run -d \
+  --name memex \
+  -p 3000:3000 \
+  -v ~/.claude/projects:/claude-sessions:ro \
+  -v memex-data:/data \
+  -e OLLAMA_API=http://host.docker.internal:11434/api \
+  ghcr.io/vimo-ai/memex:latest
+```
+
+## Installation (From Source)
+
+If you want to build from source or do development, follow these steps.
 
 ### Prerequisites
 
