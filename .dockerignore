@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+web/node_modules/
+
+# Build outputs
+dist/
+web/dist/
+
+# Development files
+.git/
+.github/
+.vscode/
+.vlaude/
+.claude/
+
+# Documentation
+*.md
+docs/
+research/
+
+# Local data
+*.db
+*.db-*
+*.log
+
+# Environment
+.env
+.env.*
+
+# IDE
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Test
+coverage/
+*.test.ts
+*.spec.ts
