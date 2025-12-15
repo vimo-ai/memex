@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted } from 'vue'
+
+defineOptions({
+  name: 'SearchView'
+})
 import { useRouter } from 'vue-router'
 import { semanticSearch, getStats, getEmbeddingStats, searchSessionsByIdPrefix, getProjects, type SearchResult, type Stats, type SemanticSearchResult, type SemanticSearchMode, type EmbeddingStats, type Session, type Project } from '@/api'
 import GlitchText from '@/components/ui/GlitchText.vue'
@@ -27,6 +31,8 @@ const selectedProjectId = ref<number | undefined>(undefined)
 const startDate = ref<string>('')
 const endDate = ref<string>('')
 const showProjectDropdown = ref(false)
+const projectButtonRef = ref<HTMLButtonElement | null>(null)
+const dropdownPosition = ref({ top: 0, left: 0 })
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -164,6 +170,13 @@ function handleClickOutside(event: MouseEvent) {
 
 // Helper methods for UI
 function toggleProjectDropdown() {
+  if (!showProjectDropdown.value && projectButtonRef.value) {
+    const rect = projectButtonRef.value.getBoundingClientRect()
+    dropdownPosition.value = {
+      top: rect.bottom + 8,
+      left: rect.left
+    }
+  }
   showProjectDropdown.value = !showProjectDropdown.value
 }
 
@@ -180,19 +193,25 @@ function clearFilters() {
 </script>
 
 <template>
-  <div class="h-full flex flex-col items-center justify-center relative transition-all duration-700" :class="{ 'justify-start pt-20': hasSearched }">
-    
+  <div class="h-full flex flex-col items-center relative">
+
     <!-- The Core (Animated Background) -->
-    <div 
-      class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-neon-cyan/5 rounded-full blur-[100px] pointer-events-none transition-all duration-1000"
-      :class="{ 'w-[800px] h-[300px] -translate-y-full opacity-20': hasSearched }"
+    <div
+      class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-neon-cyan/5 rounded-full blur-[100px] pointer-events-none transition-all duration-1000 ease-out"
+      :class="{ 'w-[800px] h-[300px] top-[100px] opacity-20': hasSearched }"
     />
 
     <!-- Search Container -->
-    <div class="w-full max-w-4xl px-6 z-10 flex flex-col items-center">
-      
+    <div
+      class="w-full max-w-4xl px-6 z-10 flex flex-col items-center transition-all duration-700 ease-out"
+      :class="hasSearched ? 'mt-20' : 'mt-[calc(50vh-150px)]'"
+    >
+
       <!-- Title -->
-      <div class="mb-12 text-center transition-all duration-500" :class="{ 'opacity-0 h-0 overflow-hidden mb-0': hasSearched }">
+      <div
+        class="text-center transition-all duration-500 ease-out overflow-hidden"
+        :class="hasSearched ? 'max-h-0 opacity-0 mb-0' : 'max-h-40 opacity-100 mb-12'"
+      >
         <div class="mb-4">
           <GlitchText text="MEMEX ORACLE" class="text-5xl font-bold text-white" />
         </div>
@@ -232,8 +251,8 @@ function clearFilters() {
           <input
             v-model="query"
             type="text"
-            :placeholder="searchType === 'content' ? 'ENTER QUERY COMMAND...' : 'ENTER SESSION ID PREFIX...'"
-            class="w-full bg-transparent border-none focus:ring-0 focus:outline-none focus-visible:outline-none text-xl font-mono text-white placeholder-gray-600 px-6 py-6 uppercase tracking-wider"
+            :placeholder="searchType === 'content' ? 'Enter query command...' : 'Enter session ID prefix...'"
+            class="w-full bg-transparent border-none focus:ring-0 focus:outline-none focus-visible:outline-none text-xl font-mono text-white placeholder-gray-600 px-6 py-6 tracking-wider"
             autofocus
           />
           <div v-if="loading" class="pr-6">
@@ -275,7 +294,8 @@ function clearFilters() {
           
           <!-- Project Filter (Custom Dropdown) -->
           <div class="relative group/project">
-            <button 
+            <button
+              ref="projectButtonRef"
               class="flex items-center gap-3 px-4 py-2 bg-black/40 border border-white/10 hover:border-neon-cyan/50 rounded transition-all min-w-[200px] justify-between group-hover/project:shadow-[0_0_15px_rgba(0,243,255,0.1)]"
               @click="toggleProjectDropdown"
             >
@@ -288,30 +308,37 @@ function clearFilters() {
               <div class="i-carbon-chevron-down text-gray-500 transition-transform group-hover/project:text-neon-cyan" />
             </button>
 
-            <!-- Dropdown Menu -->
-            <div 
-              v-if="showProjectDropdown"
-              class="absolute top-full left-0 mt-2 w-[300px] max-h-[400px] overflow-y-auto bg-surface-100 border border-neon-cyan/30 rounded shadow-[0_0_30px_rgba(0,0,0,0.8)] backdrop-blur-xl z-50 flex flex-col py-2"
-            >
-              <button
-                class="px-4 py-3 text-left hover:bg-neon-cyan/10 hover:text-neon-cyan transition-colors flex items-center gap-2 border-b border-white/5"
-                :class="{ 'text-neon-cyan bg-neon-cyan/5': selectedProjectId === undefined }"
-                @click="selectProject(undefined)"
+            <!-- Dropdown Menu (Teleport to body to avoid backdrop-blur inheritance) -->
+            <Teleport to="body">
+              <div
+                v-if="showProjectDropdown"
+                id="project-dropdown"
+                class="fixed w-[300px] max-h-[400px] overflow-y-auto border border-neon-cyan/50 rounded z-[9999] flex flex-col py-2 font-mono text-xs"
+                :style="{
+                  top: dropdownPosition.top + 'px',
+                  left: dropdownPosition.left + 'px'
+                }"
               >
-                <div class="i-carbon-apps" />
-                ALL PROJECTS
-              </button>
-              <button
-                v-for="project in projects"
-                :key="project.id"
-                class="px-4 py-3 text-left hover:bg-neon-cyan/10 hover:text-neon-cyan transition-colors flex items-center gap-2 text-gray-300"
-                :class="{ 'text-neon-cyan bg-neon-cyan/5': selectedProjectId === project.id }"
-                @click="selectProject(project.id)"
-              >
-                <div class="i-carbon-folder text-gray-500" />
-                <span class="truncate">{{ project.path.split('/').pop() || project.path }}</span>
-              </button>
-            </div>
+                <button
+                  class="px-4 py-3 text-left bg-transparent hover:bg-neon-cyan/10 hover:text-neon-cyan transition-colors flex items-center gap-2 border-none border-b border-b-white/5 outline-none focus:outline-none ring-0 focus:ring-0"
+                  :class="selectedProjectId === undefined ? 'text-neon-cyan' : 'text-gray-300'"
+                  @click="selectProject(undefined)"
+                >
+                  <div class="i-carbon-apps" />
+                  ALL PROJECTS
+                </button>
+                <button
+                  v-for="project in projects"
+                  :key="project.id"
+                  class="px-4 py-3 text-left bg-transparent hover:bg-neon-cyan/10 hover:text-neon-cyan transition-colors flex items-center gap-2 border-none outline-none focus:outline-none ring-0 focus:ring-0"
+                  :class="selectedProjectId === project.id ? 'text-neon-cyan' : 'text-gray-300'"
+                  @click="selectProject(project.id)"
+                >
+                  <div class="i-carbon-folder text-gray-500" />
+                  <span class="truncate">{{ project.path.split('/').pop() || project.path }}</span>
+                </button>
+              </div>
+            </Teleport>
           </div>
 
           <!-- Divider -->
