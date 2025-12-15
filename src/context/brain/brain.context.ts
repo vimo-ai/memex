@@ -30,6 +30,7 @@ import { SemanticSearchController, EmbeddingController } from './api/controllers
 import { RagController } from './api/controllers/rag.controller';
 import { MCPController } from './api/controllers/mcp.controller';
 import { TestEmbeddingController } from './api/controllers/test-embedding.controller';
+import { HealthController } from './api/controllers/health.controller';
 
 /**
  * Brain 上下文模块
@@ -60,6 +61,7 @@ import { TestEmbeddingController } from './api/controllers/test-embedding.contro
     RagController,
     MCPController,
     TestEmbeddingController,
+    HealthController,
   ],
   providers: [
     // SQLite 数据库连接
