@@ -25,6 +25,7 @@
     "@nestjs/core": "^10.4.0",
     "@nestjs/platform-express": "^10.4.0",
     "@nestjs/schedule": "^6.0.1",
+    "@nestjs/serve-static": "^4.0.2",
     "@vimo-ai/vlaude-shared-core": "^0.0.1-beta.1",
     "better-sqlite3": "^11.5.0",
     "class-transformer": "^0.5.1",
