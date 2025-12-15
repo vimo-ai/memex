@@ -11,9 +11,11 @@ import Dock from './layout/Dock.vue'
     <TopBar />
     
     <main class="h-screen pt-10 pb-32 overflow-hidden">
-      <router-view v-slot="{ Component }">
+      <router-view v-slot="{ Component, route }">
         <transition name="fade" mode="out-in">
-          <component :is="Component" />
+          <keep-alive :include="['SearchView', 'AskView', 'ProjectsView']">
+            <component :is="Component" :key="route.path" />
+          </keep-alive>
         </transition>
       </router-view>
     </main>
