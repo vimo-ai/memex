@@ -13,7 +13,7 @@ const sessions = ref<Session[]>([])
 const loading = ref(true)
 const error = ref<string | null>(null)
 
-const projectId = Number(route.params.id)
+const projectId = Number(route.params.projectId)
 
 // Computed
 const totalMessages = computed(() => {
@@ -47,7 +47,8 @@ async function loadData() {
 }
 
 function goToSession(session: Session) {
-  router.push(`/sessions/${session.id}`)
+  // 使用嵌套路由，保留项目上下文
+  router.push(`/projects/${projectId}/sessions/${session.id}`)
 }
 
 function getProjectName(path: string): string {

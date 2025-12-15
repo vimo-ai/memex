@@ -18,7 +18,12 @@ const offset = ref(0)
 const limit = 50
 const messagesContainer = ref<HTMLElement | null>(null)
 
-const sessionId = route.params.id as string
+// 支持两种路由模式
+const sessionId = (route.params.sessionId || route.params.id) as string
+const projectId = route.params.projectId as string | undefined
+
+// 判断来源：从项目页还是搜索页
+const isFromProject = !!projectId
 
 // Actions
 async function loadData() {
@@ -91,7 +96,13 @@ function scrollToBottom() {
 }
 
 function goBack() {
-  router.back()
+  if (isFromProject) {
+    // 从项目页进入，返回项目详情
+    router.push(`/projects/${projectId}`)
+  } else {
+    // 从搜索页进入，返回搜索页（保留搜索状态）
+    router.push('/search')
+  }
 }
 
 onMounted(() => {
@@ -111,7 +122,9 @@ onUnmounted(() => {
     <!-- Terminal Header -->
     <div class="flex items-center justify-between px-4 py-2 border-b border-white/10 bg-surface-100 select-none">
       <div class="flex items-center gap-4">
-        <button @click="goBack" class="hover:text-neon-cyan transition-colors">[BACK]</button>
+        <button @click="goBack" class="hover:text-neon-cyan transition-colors">
+          [{{ isFromProject ? 'PROJECT' : 'SEARCH' }}]
+        </button>
         <span class="text-neon-cyan">SESSION: {{ session?.id }}</span>
         <span v-if="session" class="inline-flex items-center px-2 py-0.5 rounded bg-white/5 border border-white/10 text-[10px] uppercase tracking-wide">
           <span :style="{ color: (session.source || 'claude').toLowerCase() === 'claude' ? '#D97757' : '#00f3ff' }">

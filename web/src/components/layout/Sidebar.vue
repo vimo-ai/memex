@@ -4,10 +4,18 @@ import { useRoute } from 'vue-router'
 const route = useRoute()
 
 const links = [
-  { name: 'Oracle', path: '/', icon: 'i-carbon-search' },
+  { name: 'Oracle', path: '/search', icon: 'i-carbon-search' },
   { name: 'Projects', path: '/projects', icon: 'i-carbon-ibm-cloud-projects' },
   { name: 'Ask AI', path: '/ask', icon: 'i-carbon-ibm-watson-discovery' },
 ]
+
+// 判断路由是否匹配（支持子路由高亮）
+function isActive(linkPath: string): boolean {
+  if (linkPath === '/search') {
+    return route.path === '/search' || route.path === '/'
+  }
+  return route.path.startsWith(linkPath)
+}
 </script>
 
 <template>
@@ -27,15 +35,15 @@ const links = [
         :key="link.path"
         :to="link.path"
         class="flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group"
-        :class="route.path === link.path 
-          ? 'bg-primary-500/10 text-primary-400' 
+        :class="isActive(link.path)
+          ? 'bg-primary-500/10 text-primary-400'
           : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'"
       >
         <div :class="link.icon" class="text-xl transition-transform group-hover:scale-110" />
         <span class="font-medium">{{ link.name }}</span>
-        
-        <div 
-          v-if="route.path === link.path"
+
+        <div
+          v-if="isActive(link.path)"
           class="ml-auto w-1.5 h-1.5 rounded-full bg-primary-400 shadow-[0_0_8px_currentColor]"
         />
       </router-link>

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { semanticSearch, getStats, getEmbeddingStats, searchSessionsByIdPrefix, getProjects, type SearchResult, type Stats, type SemanticSearchResult, type SemanticSearchMode, type EmbeddingStats, type Session, type Project } from '@/api'
 import GlitchText from '@/components/ui/GlitchText.vue'
 
 const router = useRouter()
+const route = useRoute()
 
 // State
 const query = ref('')
@@ -13,7 +14,6 @@ const sessionResults = ref<Session[]>([])
 const loading = ref(false)
 const stats = ref<Stats | null>(null)
 const embeddingStats = ref<EmbeddingStats | null>(null)
-const hasSearched = ref(false)
 
 // 搜索类型：content（全文搜索）、sessionId（Session ID 搜索）
 const searchType = ref<'content' | 'sessionId'>('content')
@@ -28,7 +28,52 @@ const startDate = ref<string>('')
 const endDate = ref<string>('')
 const showProjectDropdown = ref(false)
 
+// 是否已搜索（基于 URL 状态）
+const hasSearched = computed(() => !!query.value.trim())
+
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
+let isInitializing = true // 防止初始化时触发多次搜索
+
+// 从 URL query params 初始化状态
+function initFromRoute() {
+  const q = route.query
+
+  query.value = (q.q as string) || ''
+  searchType.value = (q.type as 'content' | 'sessionId') || 'content'
+  searchMode.value = (q.mode as SemanticSearchMode) || 'hybrid'
+  selectedProjectId.value = q.projectId ? Number(q.projectId) : undefined
+  startDate.value = (q.startDate as string) || ''
+  endDate.value = (q.endDate as string) || ''
+}
+
+// 更新 URL query params
+function updateRoute() {
+  if (isInitializing) return
+
+  const queryParams: Record<string, string> = {}
+
+  if (query.value.trim()) {
+    queryParams.q = query.value.trim()
+  }
+  if (searchType.value !== 'content') {
+    queryParams.type = searchType.value
+  }
+  if (searchMode.value !== 'hybrid' && searchType.value === 'content') {
+    queryParams.mode = searchMode.value
+  }
+  if (selectedProjectId.value !== undefined) {
+    queryParams.projectId = String(selectedProjectId.value)
+  }
+  if (startDate.value) {
+    queryParams.startDate = startDate.value
+  }
+  if (endDate.value) {
+    queryParams.endDate = endDate.value
+  }
+
+  // 使用 replace 避免产生过多历史记录
+  router.replace({ query: queryParams })
+}
 
 // Watchers
 watch(query, (newQuery) => {
@@ -37,11 +82,12 @@ watch(query, (newQuery) => {
   if (!newQuery.trim()) {
     results.value = []
     sessionResults.value = []
-    hasSearched.value = false
+    updateRoute()
     return
   }
 
   debounceTimer = setTimeout(async () => {
+    updateRoute()
     await performSearch(newQuery)
   }, 300)
 })
@@ -50,12 +96,13 @@ watch(query, (newQuery) => {
 watch(searchType, () => {
   results.value = []
   sessionResults.value = []
-  hasSearched.value = false
   query.value = ''
+  updateRoute()
 })
 
 // 切换模式时自动重新搜索
 watch(searchMode, () => {
+  updateRoute()
   if (query.value.trim() && searchType.value === 'content') {
     performSearch(query.value)
   }
@@ -63,6 +110,7 @@ watch(searchMode, () => {
 
 // 过滤器变化时自动重新搜索
 watch([selectedProjectId, startDate, endDate], () => {
+  updateRoute()
   if (query.value.trim() && searchType.value === 'content') {
     performSearch(query.value)
   }
@@ -72,7 +120,6 @@ watch([selectedProjectId, startDate, endDate], () => {
 async function performSearch(q: string) {
   if (!q.trim()) return
   loading.value = true
-  hasSearched.value = true
 
   try {
     if (searchType.value === 'content') {
@@ -151,9 +198,21 @@ function channelLabel(result: any): string | null {
   return result.channel ? result.channel.toUpperCase() : null
 }
 
-onMounted(() => {
-  loadStats()
-  loadProjects()
+onMounted(async () => {
+  // 先加载基础数据
+  await Promise.all([loadStats(), loadProjects()])
+
+  // 从 URL 初始化搜索状态
+  initFromRoute()
+
+  // 如果 URL 中有搜索词，自动执行搜索
+  if (query.value.trim()) {
+    await performSearch(query.value)
+  }
+
+  // 初始化完成后允许更新 URL
+  isInitializing = false
+
   document.addEventListener('click', handleClickOutside)
 })
 
@@ -184,6 +243,7 @@ function clearFilters() {
   selectedProjectId.value = undefined
   startDate.value = ''
   endDate.value = ''
+  // updateRoute 会在 watch 中自动调用
 }
 </script>
 
