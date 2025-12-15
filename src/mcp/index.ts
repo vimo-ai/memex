@@ -60,7 +60,7 @@ const TOOLS: Tool[] = [
   {
     name: 'get_session',
     description:
-      'Get session details and message list. Supports pagination and in-session search.',
+      'Get session details and message list. Supports pagination and in-session search. Note: Content is truncated (max 500 chars) when limit > 5. For full content, use limit ≤ 5 or fetch in batches.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -284,14 +284,25 @@ function getSession(args: {
   `);
   const messages = messagesStmt.all(sessionId, sessionId, limit, actualOffset) as any[];
 
+  // limit > 5 时截断内容
+  const shouldTruncate = limit > 5;
+  const maxContentLength = 500;
+
   // Mark matched messages
-  const messagesWithMatch = messages.map((msg) => ({
-    index: msg.messageIndex,
-    type: msg.type,
-    content: msg.content,
-    timestamp: msg.timestamp,
-    matched: searchMatchIndex !== undefined && msg.messageIndex === searchMatchIndex,
-  }));
+  const messagesWithMatch = messages.map((msg) => {
+    const content = shouldTruncate && msg.content.length > maxContentLength
+      ? msg.content.substring(0, maxContentLength) + '...'
+      : msg.content;
+    return {
+      index: msg.messageIndex,
+      type: msg.type,
+      content,
+      contentLength: msg.content.length,
+      truncated: shouldTruncate && msg.content.length > maxContentLength,
+      timestamp: msg.timestamp,
+      matched: searchMatchIndex !== undefined && msg.messageIndex === searchMatchIndex,
+    };
+  });
 
   return {
     sessionId: session.id,

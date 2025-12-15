@@ -112,7 +112,8 @@ export class MCPToolsService {
    */
   @MCPTool({
     name: 'get_session',
-    description: '获取会话详情，支持分页和会话内搜索。返回会话基本信息和消息列表',
+    description:
+      '获取会话详情，支持分页和会话内搜索。返回会话基本信息和消息列表。注意：limit > 5 时内容会被截断（最多 500 字符），如需完整内容请设置 limit ≤ 5 或分多次获取',
     inputSchema: {
       type: 'object',
       properties: {
@@ -194,6 +195,10 @@ export class MCPToolsService {
     const limitValue = limit || 10;
     messages = allMessages.slice(actualOffset, actualOffset + limitValue);
 
+    // limit > 5 时截断内容
+    const shouldTruncate = limitValue > 5;
+    const maxContentLength = 500;
+
     return {
       session: {
         id: session.id,
@@ -203,14 +208,21 @@ export class MCPToolsService {
         updatedAt: session.updatedAt?.toISOString() || new Date().toISOString(),
         messageCount: allMessages.length,
       },
-      messages: messages.map((msg, idx) => ({
-        id: msg.id!,
-        uuid: msg.uuid,
-        type: msg.type,
-        content: msg.content,
-        timestamp: msg.timestamp?.toISOString() || '',
-        index: actualOffset + idx,
-      })),
+      messages: messages.map((msg, idx) => {
+        const content = shouldTruncate && msg.content.length > maxContentLength
+          ? msg.content.slice(0, maxContentLength) + '...'
+          : msg.content;
+        return {
+          id: msg.id!,
+          uuid: msg.uuid,
+          type: msg.type,
+          content,
+          contentLength: msg.content.length,
+          truncated: shouldTruncate && msg.content.length > maxContentLength,
+          timestamp: msg.timestamp?.toISOString() || '',
+          index: actualOffset + idx,
+        };
+      }),
       pagination: {
         offset: actualOffset,
         limit: limitValue,
