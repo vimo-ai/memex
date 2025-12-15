@@ -462,7 +462,14 @@ function clearFilters() {
 
     <!-- Results Stream -->
     <div v-if="hasSearched" class="w-full max-w-4xl px-6 mt-8 pb-32 overflow-y-auto scroll-smooth h-full">
-      <div v-if="!loading && results.length === 0 && sessionResults.length === 0" class="text-center py-20 opacity-50">
+      <!-- Loading State -->
+      <div v-if="loading" class="text-center py-20">
+        <div class="i-carbon-circle-dash animate-spin text-4xl text-neon-cyan mx-auto mb-4" />
+        <div class="font-mono text-neon-cyan mb-2">SEARCHING...</div>
+        <div class="text-xs text-gray-600">SCANNING NEURAL ARCHIVES</div>
+      </div>
+
+      <div v-else-if="results.length === 0 && sessionResults.length === 0" class="text-center py-20 opacity-50">
         <div class="font-mono text-neon-cyan mb-2">NO MATCHES FOUND</div>
         <div class="text-xs text-gray-600">TRY ADJUSTING QUERY PARAMETERS</div>
       </div>
