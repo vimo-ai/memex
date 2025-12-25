@@ -34,6 +34,7 @@ async function bootstrap() {
   await app.listen(port);
 
   console.log(`Memex 服务已启动: http://localhost:${port}`);
+  console.log(`  - RAG 问答: ${configService.enableRag ? '✅ 已启用' : '❌ 未启用 (设置 ENABLE_RAG=true 启用)'}`);
 }
 
 bootstrap();

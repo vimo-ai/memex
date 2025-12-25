@@ -29,4 +29,8 @@ export interface MemexConfig {
   embeddingModel: string;
   /** 聊天模型名称 */
   chatModel: string;
+
+  // 功能开关
+  /** 是否启用 RAG 问答功能（需要 LLM） */
+  enableRag: boolean;
 }

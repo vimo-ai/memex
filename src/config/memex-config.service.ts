@@ -93,6 +93,15 @@ export class MemexConfigService implements MemexConfig {
   }
 
   /**
+   * 是否启用 RAG 问答功能
+   * 默认关闭，需要显式启用（因为需要额外的 LLM 模型）
+   */
+  get enableRag(): boolean {
+    const value = this.nestConfigService.get<string>('ENABLE_RAG', 'false');
+    return value === 'true' || value === '1';
+  }
+
+  /**
    * 获取 SQLite 数据库文件路径
    */
   get dbPath(): string {
