@@ -260,15 +260,25 @@ export class VectorIndexerService implements OnModuleInit {
           // 处理成功后累加长度
           accumulatedLength += batch[index].content.length;
         } else {
-          if (result.status === 'rejected') {
-            // 记录失败
-            if (this.failedRecords.length < 1000) {
-              this.failedRecords.push({
-                messageId: batch[index].id,
-                error: String(result.reason),
-                timestamp: new Date(),
-              });
+          // 记录失败详情
+          if (this.failedRecords.length < 1000) {
+            const msg = batch[index];
+            let errorMsg: string;
+            if (result.status === 'rejected') {
+              errorMsg = String(result.reason);
+            } else {
+              // fulfilled 但返回空数组（可能是空内容或 chunk 失败）
+              errorMsg = `空结果 (content.length=${msg.content?.length || 0})`;
             }
+            this.failedRecords.push({
+              messageId: msg.id,
+              error: errorMsg,
+              timestamp: new Date(),
+            });
+            // 打印失败详情便于调试
+            this.logger.warn(
+              `消息 ${msg.id} 处理失败: ${errorMsg}, sessionId=${msg.sessionId}`,
+            );
           }
           failedCount++;
         }

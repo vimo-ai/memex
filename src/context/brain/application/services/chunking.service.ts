@@ -23,7 +23,7 @@ interface ChunkingOptions {
 const DEFAULT_OPTIONS: Required<ChunkingOptions> = {
   maxLength: 2000,
   overlap: 200,
-  minLength: 800,
+  minLength: 100, // 降低阈值，避免过滤掉有意义的短段落
 };
 
 /**
@@ -79,6 +79,14 @@ export class ChunkingService {
         const textChunks = this.splitTextByParagraph(segment.content, opts);
         allChunks.push(...textChunks);
       }
+    }
+
+    // 安全回退：如果所有 chunk 都被过滤掉了，保留完整内容
+    if (allChunks.length === 0) {
+      this.logger.warn(
+        `分片结果为空，回退到完整内容 (length=${content.length})`,
+      );
+      return [{ index: 0, content: content.trim(), type: 'text' }];
     }
 
     // 重新编号
