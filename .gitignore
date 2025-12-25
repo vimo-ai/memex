@@ -29,3 +29,12 @@ data/
 # Vlaude 临时文件
 .vlaude/
 memex.db
+
+# 数据库备份
+memex.db.bak-*
+
+# MCP 配置（含 workspace token）
+.mcp.json
+
+# 研究数据（二进制样本）
+research/
