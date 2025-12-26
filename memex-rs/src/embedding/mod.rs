@@ -394,9 +394,18 @@ impl Chunker {
         while start < text.len() {
             let mut end = (start + self.max_length).min(text.len());
 
+            // 确保 end 在字符边界上
+            while end > start && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+
             // 尝试在句子边界切分
             if end < text.len() {
-                let search_start = (start + self.max_length).saturating_sub(100).max(start);
+                let mut search_start = (start + self.max_length).saturating_sub(100).max(start);
+                // 确保 search_start 在字符边界上
+                while search_start < end && !text.is_char_boundary(search_start) {
+                    search_start += 1;
+                }
                 let search_text = &text[search_start..end];
 
                 let boundaries = ['\n', '。', '！', '？', '.', '!', '?'];
@@ -411,7 +420,12 @@ impl Chunker {
                 }
 
                 if let Some(idx) = best {
-                    end = search_start + idx + 1;
+                    let mut new_end = search_start + idx + 1;
+                    // 确保新的 end 在字符边界上（边界字符可能是多字节的，如 '。'）
+                    while new_end < text.len() && !text.is_char_boundary(new_end) {
+                        new_end += 1;
+                    }
+                    end = new_end;
                 }
             }
 
@@ -422,6 +436,10 @@ impl Chunker {
 
             let prev_start = start;
             start = end.saturating_sub(self.overlap);
+            // 确保 start 在字符边界上
+            while start < text.len() && !text.is_char_boundary(start) {
+                start += 1;
+            }
             if start <= prev_start {
                 start = end;
             }
