@@ -45,19 +45,8 @@ impl IndexQueue {
         while let Some(ids) = rx.recv().await {
             tracing::debug!("📥 收到 {} 条消息待索引", ids.len());
 
-            match indexer.index_by_ids(&ids).await {
-                Ok(result) => {
-                    if result.indexed_messages > 0 {
-                        tracing::info!(
-                            "✅ 实时索引完成: {} 消息, {} chunks",
-                            result.indexed_messages,
-                            result.indexed_chunks
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("❌ 实时索引失败: {}", e);
-                }
+            if let Err(e) = indexer.index_by_ids(&ids).await {
+                tracing::error!("❌ 索引失败: {}", e);
             }
         }
 
@@ -130,12 +119,13 @@ impl VectorIndexer {
             }
         }
 
-        tracing::info!(
-            "索引完成: {} 消息, {} 块, {} 跳过",
-            result.indexed_messages,
-            result.indexed_chunks,
-            result.skipped
-        );
+        if result.indexed_messages > 0 {
+            tracing::info!(
+                "📊 索引: {} 消息, {} chunks",
+                result.indexed_messages,
+                result.indexed_chunks
+            );
+        }
 
         Ok(result)
     }

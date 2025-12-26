@@ -101,26 +101,18 @@ impl FileWatcher {
             return;
         }
 
-        tracing::info!("🔄 触发采集: session={}", session_id);
-
-        // 执行全量采集（简单起见，后续可以优化为单会话采集）
+        // 执行采集
         match self.collector.collect_all() {
             Ok(result) => {
+                // 异步触发向量索引
                 if result.messages_inserted > 0 {
-                    tracing::info!(
-                        "✅ 实时采集完成: {} 会话, {} 新消息",
-                        result.sessions_scanned,
-                        result.messages_inserted
-                    );
-
-                    // 异步触发向量索引
                     if let Some(queue) = &self.index_queue {
                         queue.enqueue(result.new_message_ids).await;
                     }
                 }
             }
             Err(e) => {
-                tracing::error!("❌ 实时采集失败: {}", e);
+                tracing::error!("❌ 采集失败: {}", e);
             }
         }
     }

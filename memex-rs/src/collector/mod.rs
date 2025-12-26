@@ -37,7 +37,6 @@ impl Collector {
         // 遍历所有适配器
         for adapter in self.registry.adapters() {
             let source = adapter.source();
-            tracing::info!("开始扫描: {:?}", source);
 
             // 列出所有会话
             let sessions = match adapter.list_sessions() {
@@ -119,12 +118,14 @@ impl Collector {
             result.projects_scanned += 1;
         }
 
-        tracing::info!(
-            "采集完成: {} 项目, {} 会话, {} 消息",
-            result.projects_scanned,
-            result.sessions_scanned,
-            result.messages_inserted
-        );
+        // 只在有新消息时打印
+        if result.messages_inserted > 0 {
+            tracing::info!(
+                "📥 采集: {} 会话, {} 新消息",
+                result.sessions_scanned,
+                result.messages_inserted
+            );
+        }
 
         Ok(result)
     }
