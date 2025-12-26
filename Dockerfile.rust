@@ -1,0 +1,69 @@
+# ============================================
+# Memex Rust Backend - 生产优化版
+# 目标: 最小镜像、快速启动、低资源占用
+# ============================================
+
+# Stage 1: Rust 编译 (需要 1.85+ 支持 edition2024)
+# 使用 Debian Trixie 保证 GLIBC 版本一致
+FROM rust:latest AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev build-essential protobuf-compiler libprotobuf-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 预编译依赖 (Docker 层缓存)
+COPY memex-rs/Cargo.toml memex-rs/Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs \
+    && cargo build --release \
+    && rm -rf src target/release/memex-rs* target/release/deps/memex_rs*
+
+# 编译应用
+COPY memex-rs/src ./src
+RUN cargo build --release && strip target/release/memex-rs
+
+
+# Stage 2: 前端构建
+FROM node:20-alpine AS web
+
+WORKDIR /build
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+COPY web/ ./
+RUN pnpm build
+
+
+# Stage 3: 最小运行时 (与构建环境 GLIBC 版本一致)
+FROM debian:trixie-slim
+
+# 单层安装 + 清理，最小化镜像
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+    && useradd -r -u 1000 -m memex \
+    && mkdir -p /data /claude-sessions /codex \
+    && chown -R memex:memex /data
+
+WORKDIR /app
+
+COPY --from=builder /build/target/release/memex-rs ./memex
+COPY --from=web /build/dist ./public
+
+RUN chown -R memex:memex /app
+
+USER memex
+
+ENV RUST_LOG=memex_rs=info \
+    PORT=3000 \
+    MEMEX_DATA_DIR=/data \
+    CLAUDE_PROJECTS_PATH=/claude-sessions \
+    CODEX_PATH=/codex \
+    ENABLE_RAG=false
+
+EXPOSE 3000
+
+ENTRYPOINT ["/app/memex"]

@@ -1,0 +1,30 @@
+services:
+  memex:
+    build:
+      context: .
+      dockerfile: Dockerfile.rust
+    image: memex-rs:latest
+    container_name: memex
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - memex-data:/data
+      - ~/.claude/projects:/claude-sessions:ro
+      - ~/.codex:/codex:ro
+    environment:
+      - RUST_LOG=memex_rs=info
+      - MEMEX_DATA_DIR=/data
+      - CLAUDE_PROJECTS_PATH=/claude-sessions
+      - CODEX_PATH=/codex
+      # Ollama 连接 (语义搜索核心功能)
+      - OLLAMA_API=http://host.docker.internal:11434
+      - EMBEDDING_MODEL=bge-m3
+      # AI 问答功能 (可选，需要 chat 模型)
+      - ENABLE_AI_CHAT=false
+      - CHAT_MODEL=qwen3:8b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  memex-data:

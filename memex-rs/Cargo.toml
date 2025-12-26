@@ -1,0 +1,52 @@
+[package]
+name = "memex-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Memex - Claude Code session history manager (Rust backend)"
+
+[dependencies]
+# HTTP 框架
+axum = "0.8"
+tokio = { version = "1", features = ["full", "sync"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+
+# HTTP 客户端 (Ollama)
+reqwest = { version = "0.12", features = ["json"] }
+
+# 数据库
+rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
+
+# 向量数据库
+lancedb = "0.15"
+arrow-array = "53"
+arrow-schema = "53"
+
+# 序列化
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 文件监听
+notify = "8"
+notify-debouncer-mini = "0.6"
+
+# 定时任务
+tokio-cron-scheduler = "0.13"
+
+# 工具
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "5"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+walkdir = "2"
+percent-encoding = "2"
+futures = "0.3"
+async-trait = "0.1"
+regex = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 16
+strip = true
