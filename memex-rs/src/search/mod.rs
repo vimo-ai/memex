@@ -1,5 +1,7 @@
 //! 混合检索模块 - FTS + 向量搜索 + RRF 融合
 
+#![allow(dead_code)] // 预留 API: is_semantic_available
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -67,6 +69,10 @@ pub struct HybridSearchOptions {
     /// 搜索模式: fts | vector | hybrid
     #[serde(default = "default_mode")]
     pub mode: SearchMode,
+    /// 开始日期 (YYYY-MM-DD)
+    pub start_date: Option<String>,
+    /// 结束日期 (YYYY-MM-DD)
+    pub end_date: Option<String>,
 }
 
 fn default_limit() -> usize {
@@ -113,6 +119,8 @@ impl HybridSearchService {
             limit,
             project_id,
             mode,
+            start_date,
+            end_date,
         } = options;
 
         if query.trim().is_empty() {
@@ -120,10 +128,12 @@ impl HybridSearchService {
         }
 
         tracing::info!(
-            "[混合检索] query=\"{}\", mode={:?}, limit={}",
+            "[混合检索] query=\"{}\", mode={:?}, limit={}, date_range={:?}~{:?}",
             query,
             mode,
-            limit
+            limit,
+            start_date,
+            end_date
         );
 
         // 根据模式执行搜索
@@ -168,8 +178,36 @@ impl HybridSearchService {
         // RRF 融合
         let fused = self.rrf_fusion(&fts_results, &vector_results, project_id);
 
+        // 日期过滤
+        let filtered: Vec<HybridSearchResult> = fused
+            .into_iter()
+            .filter(|r| {
+                // 检查开始日期
+                if let Some(ref start) = start_date {
+                    if let Some(ref ts) = r.timestamp {
+                        // timestamp 格式: "2025-12-26T12:35:42.123Z"
+                        // start_date 格式: "2025-12-26"
+                        let ts_date = &ts[..10]; // 取日期部分
+                        if ts_date < start.as_str() {
+                            return false;
+                        }
+                    }
+                }
+                // 检查结束日期
+                if let Some(ref end) = end_date {
+                    if let Some(ref ts) = r.timestamp {
+                        let ts_date = &ts[..10];
+                        if ts_date > end.as_str() {
+                            return false;
+                        }
+                    }
+                }
+                true
+            })
+            .collect();
+
         // 返回 top N
-        Ok(fused.into_iter().take(limit).collect())
+        Ok(filtered.into_iter().take(limit).collect())
     }
 
     /// 向量搜索

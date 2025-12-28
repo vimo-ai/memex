@@ -5,6 +5,8 @@
 //! 2. 构建上下文 prompt
 //! 3. 调用 Ollama chat API 生成答案
 
+#![allow(dead_code)] // 预留 API: is_available, chat_model
+
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -127,6 +129,8 @@ impl RagService {
             limit: max_sources,
             project_id,
             mode: SearchMode::Hybrid,
+            start_date: None,
+            end_date: None,
         };
 
         let search_results = self.hybrid_search.search(search_options).await?;

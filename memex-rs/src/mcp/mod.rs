@@ -6,6 +6,8 @@
 //! - get_recent_sessions: 获取最近会话
 //! - list_projects: 列出项目
 
+#![allow(dead_code)] // JSON-RPC 字段由 serde 使用
+
 use axum::{
     extract::{Query, State},
     response::IntoResponse,
@@ -17,6 +19,16 @@ use std::sync::Arc;
 
 use crate::api::AppState;
 use crate::domain::to_local_time;
+
+/// 安全截断字符串（按字符数，非字节数）
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    let truncated: String = s.chars().take(max_chars).collect();
+    if truncated.len() < s.len() {
+        format!("{}...", truncated)
+    } else {
+        truncated
+    }
+}
 
 /// MCP GET 请求参数
 #[derive(Debug, Deserialize)]
@@ -274,11 +286,7 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
             "projectId": r.project_id,
             "projectName": r.project_name,
             "type": r.r#type,
-            "content": if r.content.len() > 500 {
-                format!("{}...", &r.content[..500])
-            } else {
-                r.content.clone()
-            },
+            "content": truncate_str(&r.content, 500),
             "snippet": r.snippet,
             "score": r.score,
             "timestamp": to_local_time(r.timestamp.as_deref())
@@ -328,8 +336,8 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
         .take(limit)
         .enumerate()
         .map(|(idx, m)| {
-            let content = if limit > 5 && m.content.len() > 500 {
-                format!("{}...", &m.content[..500])
+            let content = if limit > 5 {
+                truncate_str(&m.content, 500)
             } else {
                 m.content.clone()
             };
