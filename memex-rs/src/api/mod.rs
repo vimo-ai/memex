@@ -67,7 +67,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // 采集
         .route("/api/collect", post(collect))
         // 索引
-        .route("/api/index", post(index_messages))
+        .route("/api/index", post(index_session_by_path))  // 精确索引（按路径）
+        .route("/api/index/all", post(index_messages))     // 全量索引
         .route("/api/index/batch", post(index_batch))
         // 备份
         .route("/api/backup", post(create_backup))
@@ -77,8 +78,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/embedding/trigger", post(embedding_trigger))
         .route("/api/embedding/failed", get(embedding_failed))
         // Admin
+        .route("/api/admin/stats", get(get_stats))
         .route("/api/admin/fix-metadata", post(fix_metadata))
         .route("/api/admin/merge-projects", post(merge_projects))
+        .route("/api/admin/deduplicate-projects", post(deduplicate_projects))
         .with_state(state)
 }
 
@@ -321,88 +324,55 @@ async fn search(
     Ok(Json(SearchResponse { results, total }))
 }
 
+/// 语义搜索查询参数（与 hybrid_search 一致）
 #[derive(Debug, Deserialize)]
 pub struct SemanticSearchQuery {
     q: String,
     #[serde(default = "default_search_limit")]
     limit: usize,
+    #[serde(rename = "projectId")]
+    project_id: Option<i64>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(rename = "startDate")]
+    start_date: Option<String>,
+    #[serde(rename = "endDate")]
+    end_date: Option<String>,
 }
 
-#[derive(Serialize)]
-struct SemanticSearchResponse {
-    results: Vec<SemanticSearchResult>,
-    total: usize,
-}
-
-#[derive(Serialize)]
-struct SemanticSearchResult {
-    message_id: i64,
-    chunk_index: i64,
-    content: String,
-    distance: f32,
-}
-
+/// 语义搜索 - 实际调用 hybrid_search 服务，统一返回格式
 async fn semantic_search(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SemanticSearchQuery>,
 ) -> Result<impl IntoResponse, AppError> {
     if query.q.trim().is_empty() {
-        return Ok(Json(SemanticSearchResponse {
+        return Ok(Json(HybridSearchResponse {
             results: vec![],
             total: 0,
         })
         .into_response());
     }
 
-    // 检查 embedding 是否可用
-    let ollama = match &state.ollama {
-        Some(o) => o,
-        None => {
-            return Ok((
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({"error": "Embedding 服务不可用"})),
-            )
-                .into_response());
-        }
+    // 解析搜索模式（默认 hybrid）
+    let mode = match query.mode.as_deref() {
+        Some("fts") => crate::search::SearchMode::Fts,
+        Some("vector") => crate::search::SearchMode::Vector,
+        _ => crate::search::SearchMode::Hybrid,
     };
 
-    let vector = match &state.vector {
-        Some(v) => v,
-        None => {
-            return Ok((
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({"error": "向量存储不可用"})),
-            )
-                .into_response());
-        }
+    let options = HybridSearchOptions {
+        query: query.q,
+        limit: query.limit,
+        project_id: query.project_id,
+        mode,
+        start_date: query.start_date,
+        end_date: query.end_date,
     };
 
-    // 生成查询向量
-    let query_embedding = ollama.embed(&query.q).await.map_err(|e| {
-        AppError(anyhow::anyhow!("生成查询向量失败: {}", e))
-    })?;
+    let results = state.hybrid_search.search(options).await?;
+    let total = results.len();
 
-    // 搜索
-    let vector_store = vector.read().await;
-    let results = vector_store.search(&query_embedding, query.limit).await?;
-
-    let response_results: Vec<SemanticSearchResult> = results
-        .into_iter()
-        .map(|r| SemanticSearchResult {
-            message_id: r.message_id,
-            chunk_index: r.chunk_index,
-            content: r.content,
-            distance: r.distance,
-        })
-        .collect();
-
-    let total = response_results.len();
-
-    Ok(Json(SemanticSearchResponse {
-        results: response_results,
-        total,
-    })
-    .into_response())
+    Ok(Json(HybridSearchResponse { results, total }).into_response())
 }
 
 /// 语义搜索状态
@@ -450,6 +420,8 @@ pub struct HybridSearchQuery {
     project_id: Option<i64>,
     #[serde(default)]
     mode: Option<String>,
+    start_date: Option<String>,
+    end_date: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -482,6 +454,8 @@ async fn hybrid_search(
         limit: query.limit,
         project_id: query.project_id,
         mode,
+        start_date: query.start_date,
+        end_date: query.end_date,
     };
 
     let results = state.hybrid_search.search(options).await?;
@@ -754,6 +728,67 @@ async fn embedding_failed(
 
 // ==================== 索引 ====================
 
+/// 精确索引请求（按路径）
+#[derive(Debug, Deserialize)]
+struct IndexByPathRequest {
+    path: String,
+}
+
+/// 精确索引响应
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IndexByPathResponse {
+    success: bool,
+    sessions_scanned: usize,
+    messages_inserted: usize,
+    new_message_ids: Vec<i64>,
+    errors: Vec<String>,
+}
+
+/// 按路径精确索引会话（替代 file watcher 轮询）
+async fn index_session_by_path(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<IndexByPathRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    if req.path.trim().is_empty() {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "path 参数不能为空"})),
+        )
+            .into_response());
+    }
+
+    // 调用采集服务解析并更新 FTS 索引
+    let collect_result = match state.collector.collect_by_path(&req.path) {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response());
+        }
+    };
+
+    // 可选：更新向量索引（如果有新消息且 indexer 可用）
+    if !collect_result.new_message_ids.is_empty() {
+        if let Some(indexer) = &state.indexer {
+            if let Err(e) = indexer.index_by_ids(&collect_result.new_message_ids).await {
+                tracing::warn!("向量索引失败: {}", e);
+            }
+        }
+    }
+
+    Ok(Json(IndexByPathResponse {
+        success: collect_result.errors.is_empty(),
+        sessions_scanned: collect_result.sessions_scanned,
+        messages_inserted: collect_result.messages_inserted,
+        new_message_ids: collect_result.new_message_ids,
+        errors: collect_result.errors,
+    })
+    .into_response())
+}
+
 #[derive(Serialize)]
 struct IndexResponse {
     total_messages: usize,
@@ -935,6 +970,25 @@ async fn merge_projects(State(state): State<Arc<AppState>>) -> Result<impl IntoR
         merged_count,
         deleted_count,
         details,
+    }))
+}
+
+/// 去重项目 - 按 path 合并，保留 session 数量最多的记录
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeduplicateProjectsResponse {
+    merged_count: usize,
+    deleted_ids: Vec<i64>,
+}
+
+async fn deduplicate_projects(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, AppError> {
+    let (merged_count, deleted_ids) = state.db.deduplicate_projects()?;
+
+    Ok(Json(DeduplicateProjectsResponse {
+        merged_count,
+        deleted_ids,
     }))
 }
 

@@ -1,5 +1,7 @@
 //! 数据库层 - SQLite + FTS5
 
+#![allow(dead_code)] // 预留 API: create_session
+
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
@@ -13,9 +15,11 @@ const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    path TEXT NOT NULL UNIQUE,
+    path TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'claude',
     created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(path, source)
 );
 
 -- 会话表
@@ -449,37 +453,7 @@ impl Database {
 
     // ==================== 消息操作 ====================
 
-    /// 批量插入消息 (旧版 - 兼容 parser 模块)
-    pub fn insert_messages(&self, session_id: &str, messages: &[crate::parser::ParsedMessage]) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction()?;
-
-        let mut inserted = 0;
-        for msg in messages {
-            let result = tx.execute(
-                r#"
-                INSERT OR IGNORE INTO messages (uuid, session_id, type, content, timestamp)
-                VALUES (?1, ?2, ?3, ?4, ?5)
-                "#,
-                params![
-                    msg.uuid,
-                    session_id,
-                    msg.r#type.to_string(),
-                    msg.content,
-                    msg.timestamp,
-                ],
-            );
-
-            if let Ok(n) = result {
-                inserted += n;
-            }
-        }
-
-        tx.commit()?;
-        Ok(inserted)
-    }
-
-    /// 批量插入消息 (v2 - 支持 adapter 模块的 ParsedMessage)
+    /// 批量插入消息
     /// 返回 (插入数量, 新插入的消息 ID 列表)
     pub fn insert_messages_v2(&self, session_id: &str, messages: &[crate::adapter::ParsedMessage]) -> Result<(usize, Vec<i64>)> {
         let mut conn = self.conn.lock().unwrap();
@@ -741,6 +715,82 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])?;
         Ok(())
+    }
+
+    /// 去重项目 - 按 path 合并，保留 session 最多的记录
+    /// 返回 (合并数量, 删除的项目 ID 列表)
+    pub fn deduplicate_projects(&self) -> Result<(usize, Vec<i64>)> {
+        let conn = self.conn.lock().unwrap();
+
+        // 找出所有重复的 path（有多条记录）
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT path, GROUP_CONCAT(id) as ids
+            FROM projects
+            GROUP BY path
+            HAVING COUNT(*) > 1
+            "#,
+        )?;
+
+        let duplicates: Vec<(String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        drop(stmt);
+
+        let mut merged_count = 0;
+        let mut deleted_ids = Vec::new();
+
+        for (path, ids_str) in duplicates {
+            let ids: Vec<i64> = ids_str
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+
+            if ids.len() < 2 {
+                continue;
+            }
+
+            // 找出每个 project 的 session 数量
+            let mut project_sessions: Vec<(i64, i64)> = Vec::new();
+            for &id in &ids {
+                let count: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM sessions WHERE project_id = ?1",
+                        params![id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0);
+                project_sessions.push((id, count));
+            }
+
+            // 按 session 数量降序排序，保留第一个（最多的）
+            project_sessions.sort_by(|a, b| b.1.cmp(&a.1));
+            let keep_id = project_sessions[0].0;
+
+            // 合并其他 project 的 sessions 到保留的那个
+            for &(id, _) in &project_sessions[1..] {
+                conn.execute(
+                    "UPDATE sessions SET project_id = ?1 WHERE project_id = ?2",
+                    params![keep_id, id],
+                )?;
+
+                // 删除重复的 project
+                conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
+
+                deleted_ids.push(id);
+                merged_count += 1;
+            }
+
+            tracing::info!(
+                "去重项目 path={}: 保留 ID {}, 删除 {:?}",
+                path,
+                keep_id,
+                &project_sessions[1..].iter().map(|(id, _)| id).collect::<Vec<_>>()
+            );
+        }
+
+        Ok((merged_count, deleted_ids))
     }
 }
 

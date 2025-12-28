@@ -1,5 +1,7 @@
 //! 采集服务 - 使用 Adapter 架构扫描和收集多种 CLI 会话
 
+#![allow(dead_code)] // 预留 API: collect_incremental
+
 use anyhow::Result;
 
 use crate::adapter::AdapterRegistry;
@@ -134,6 +136,105 @@ impl Collector {
     pub fn collect_incremental(&self) -> Result<CollectResult> {
         // 目前实现与全量相同
         self.collect_all()
+    }
+
+    /// 按路径采集单个会话（精确索引，替代 file watcher）
+    /// 接受 JSONL 文件路径，解析并更新数据库
+    pub fn collect_by_path(&self, path: &str) -> Result<CollectResult> {
+        use std::path::Path;
+        use ai_cli_session_collector::{SessionMeta, Source};
+
+        let mut result = CollectResult::default();
+
+        let file_path = Path::new(path);
+        if !file_path.exists() {
+            anyhow::bail!("文件不存在: {:?}", file_path);
+        }
+
+        // 从路径提取 session_id（文件名去掉 .jsonl 后缀）
+        let session_id = file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| anyhow::anyhow!("无效的文件名"))?;
+
+        // 从路径推断项目路径（Claude 项目目录结构：~/.claude/projects/<project_path_encoded>/）
+        // 路径格式: ~/.claude/projects/-Users-xxx-project/session_id.jsonl
+        let parent = file_path.parent().ok_or_else(|| anyhow::anyhow!("无法获取父目录"))?;
+        let project_dir_name = parent
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown");
+
+        // 将编码的项目路径转换回真实路径（将 - 替换为 /）
+        let project_path = project_dir_name.replace('-', "/");
+
+        // 创建 SessionMeta（参考 ffi.rs 的结构）
+        let meta = SessionMeta {
+            id: session_id.to_string(),
+            source: Source::Claude,
+            channel: Some("code".to_string()),
+            project_path: project_path.clone(),
+            project_name: None,
+            encoded_dir_name: Some(project_dir_name.to_string()),
+            session_path: Some(path.to_string()),
+            file_mtime: None,
+            file_size: None,
+            cwd: None,
+            model: None,
+            meta: None,
+            created_at: None,
+            updated_at: None,
+        };
+
+        // 找到合适的适配器（Claude）
+        let adapter = self.registry.adapters()
+            .iter()
+            .find(|a| a.source() == Source::Claude)
+            .ok_or_else(|| anyhow::anyhow!("未找到 Claude 适配器"))?;
+
+        // 解析会话
+        let parse_result = match adapter.parse_session(&meta) {
+            Ok(Some(r)) => r,
+            Ok(None) => return Ok(result),
+            Err(e) => {
+                result.errors.push(format!("解析会话失败: {}", e));
+                return Ok(result);
+            }
+        };
+
+        // 获取或创建项目
+        let project_name = extract_project_name(&project_path);
+        let project_id = self.db.get_or_create_project(
+            project_name,
+            &project_path,
+            "claude",
+        )?;
+
+        // 创建/更新会话
+        self.db.create_session_v2(
+            session_id,
+            project_id,
+            parse_result.cwd.as_deref(),
+            parse_result.model.as_deref(),
+            "claude",
+            meta.channel.as_deref(),
+        )?;
+
+        // 插入消息
+        match self.db.insert_messages_v2(session_id, &parse_result.messages) {
+            Ok((inserted, new_ids)) => {
+                result.sessions_scanned = 1;
+                result.messages_inserted = inserted;
+                result.new_message_ids = new_ids;
+                tracing::info!("📥 精确索引: 会话 {} 插入 {} 条消息", session_id, inserted);
+            }
+            Err(e) => {
+                result.errors.push(format!("插入消息失败: {}", e));
+            }
+        }
+
+        result.projects_scanned = 1;
+        Ok(result)
     }
 }
 
