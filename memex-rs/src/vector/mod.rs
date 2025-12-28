@@ -245,7 +245,12 @@ impl VectorStore {
         Ok(search_results)
     }
 
-    /// 检查消息是否已索引
+    /// 检查消息是否已索引（已弃用）
+    ///
+    /// 此方法效率低下（每次调用都查询 LanceDB），
+    /// 已改用 SQLite 的 vector_indexed 字段来跟踪索引状态。
+    #[deprecated(note = "使用 SQLite 的 vector_indexed 字段代替")]
+    #[allow(dead_code)]
     pub async fn is_indexed(&self, message_id: i64) -> Result<bool> {
         let table = match &self.table {
             Some(t) => t,
@@ -289,5 +294,38 @@ impl VectorStore {
                 .context("删除向量失败")?;
         }
         Ok(())
+    }
+
+    /// 获取所有已索引的 message_id（用于同步 SQLite 状态）
+    pub async fn get_all_indexed_message_ids(&self) -> Result<Vec<i64>> {
+        let table = match &self.table {
+            Some(t) => t,
+            None => return Ok(vec![]),
+        };
+
+        use futures::TryStreamExt;
+        use std::collections::HashSet;
+
+        let results = table
+            .query()
+            .select(lancedb::query::Select::Columns(vec!["message_id".to_string()]))
+            .execute()
+            .await?;
+
+        let batches: Vec<RecordBatch> = results.try_collect().await?;
+
+        let mut ids = HashSet::new();
+        for batch in batches {
+            if let Some(col) = batch
+                .column_by_name("message_id")
+                .and_then(|c| c.as_any().downcast_ref::<Int64Array>())
+            {
+                for i in 0..col.len() {
+                    ids.insert(col.value(i));
+                }
+            }
+        }
+
+        Ok(ids.into_iter().collect())
     }
 }

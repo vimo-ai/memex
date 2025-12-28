@@ -55,6 +55,9 @@ CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(type);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_uuid_session ON messages(uuid, session_id);
 
+-- 向量索引状态字段（迁移）
+-- 注意：SQLite 不支持 IF NOT EXISTS 于 ALTER TABLE，需要单独处理
+
 -- FTS5 全文搜索
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     content,
@@ -98,6 +101,9 @@ impl Database {
         // 初始化 schema
         conn.execute_batch(SCHEMA_SQL)
             .context("初始化数据库 schema 失败")?;
+
+        // 迁移：添加 vector_indexed 字段（如果不存在）
+        Self::migrate_vector_indexed(&conn)?;
 
         tracing::info!("数据库已打开: {:?}", path);
 
@@ -493,17 +499,31 @@ impl Database {
 
     /// 获取会话的消息
     pub fn get_messages(&self, session_id: &str) -> Result<Vec<Message>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT id, uuid, session_id, type, content, timestamp
-            FROM messages
-            WHERE session_id = ?1
-            ORDER BY id ASC
-            "#,
-        )?;
+        self.get_messages_with_options(session_id, None, false)
+    }
 
-        let rows = stmt.query_map(params![session_id], |row| {
+    /// 获取会话的消息（带分页和排序选项）
+    /// - limit: 返回数量限制
+    /// - desc: true 表示倒序（最新的在前）
+    pub fn get_messages_with_options(
+        &self,
+        session_id: &str,
+        limit: Option<usize>,
+        desc: bool,
+    ) -> Result<Vec<Message>> {
+        let conn = self.conn.lock().unwrap();
+        let order = if desc { "DESC" } else { "ASC" };
+
+        let sql = format!(
+            "SELECT id, uuid, session_id, type, content, timestamp
+             FROM messages WHERE session_id = ?1 ORDER BY id {} LIMIT ?2",
+            order
+        );
+
+        let limit_val = limit.unwrap_or(i64::MAX as usize) as i64;
+        let mut stmt = conn.prepare(&sql)?;
+
+        let rows = stmt.query_map(params![session_id, limit_val], |row| {
             Ok(Message {
                 id: row.get(0)?,
                 uuid: row.get(1)?,
@@ -715,6 +735,97 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM projects WHERE id = ?1", params![project_id])?;
         Ok(())
+    }
+
+    // ==================== 向量索引状态 ====================
+
+    /// 迁移：添加 vector_indexed 字段
+    fn migrate_vector_indexed(conn: &Connection) -> Result<()> {
+        // 检查字段是否存在
+        let has_column: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'vector_indexed'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count > 0)
+            .unwrap_or(false);
+
+        if !has_column {
+            tracing::info!("迁移：添加 vector_indexed 字段");
+            conn.execute_batch(
+                r#"
+                ALTER TABLE messages ADD COLUMN vector_indexed INTEGER DEFAULT 0;
+                CREATE INDEX IF NOT EXISTS idx_messages_vector_indexed ON messages(vector_indexed);
+                "#,
+            )?;
+            tracing::info!("迁移完成：vector_indexed 字段已添加");
+        }
+
+        Ok(())
+    }
+
+    /// 获取未向量索引的消息（用于增量索引）
+    /// 只返回 assistant 类型的消息
+    pub fn get_unindexed_messages(&self, limit: usize) -> Result<Vec<Message>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, uuid, session_id, type, content, timestamp
+            FROM messages
+            WHERE vector_indexed = 0 AND type = 'assistant'
+            ORDER BY id ASC
+            LIMIT ?1
+            "#,
+        )?;
+
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(Message {
+                id: row.get(0)?,
+                uuid: row.get(1)?,
+                session_id: row.get(2)?,
+                r#type: row.get(3)?,
+                content: row.get(4)?,
+                timestamp: row.get(5)?,
+            })
+        })?;
+
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    /// 标记消息已向量索引
+    pub fn mark_messages_indexed(&self, message_ids: &[i64]) -> Result<usize> {
+        if message_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.conn.lock().unwrap();
+        let placeholders: String = message_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "UPDATE messages SET vector_indexed = 1 WHERE id IN ({})",
+            placeholders
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::ToSql> = message_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::ToSql)
+            .collect();
+
+        let count = stmt.execute(params.as_slice())?;
+        Ok(count)
+    }
+
+    /// 获取未索引消息的数量
+    pub fn count_unindexed_messages(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM messages WHERE vector_indexed = 0 AND type = 'assistant'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
     }
 
     /// 去重项目 - 按 path 合并，保留 session 最多的记录

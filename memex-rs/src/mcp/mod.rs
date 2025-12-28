@@ -120,6 +120,7 @@ fn get_tools() -> Vec<Value> {
                     "sessionId": { "type": "string", "description": "会话 ID（完整 UUID 或前缀）" },
                     "offset": { "type": "number", "description": "从第几条消息开始，默认 0" },
                     "limit": { "type": "number", "description": "返回消息数量，默认 10" },
+                    "order": { "type": "string", "enum": ["asc", "desc"], "description": "排序方式：asc (从头开始，默认) / desc (从尾部开始，获取最新消息)" },
                     "search": { "type": "string", "description": "会话内搜索关键词，自动定位到匹配位置并返回匹配消息" }
                 },
                 "required": ["sessionId"]
@@ -303,65 +304,90 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
 async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
     let session_id_input = args.get("sessionId").and_then(|s| s.as_str())
         .ok_or("sessionId is required")?;
-    let offset = args.get("offset").and_then(|o| o.as_u64()).unwrap_or(0) as usize;
     let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10) as usize;
+    let order = args.get("order").and_then(|o| o.as_str()).unwrap_or("asc");
     let search = args.get("search").and_then(|s| s.as_str());
+    let desc = order == "desc";
 
     // 支持前缀匹配：先解析完整 session ID
     let session_id = state.db.resolve_session_id(session_id_input)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Session not found: {}", session_id_input))?;
 
-    // 获取消息
-    let all_messages = state.db.get_messages(&session_id)
-        .map_err(|e| e.to_string())?;
+    // 获取消息总数
+    let total_count = state.db.get_session_message_count(&session_id)
+        .map_err(|e| e.to_string())? as usize;
 
-    if all_messages.is_empty() {
+    if total_count == 0 {
         return Err(format!("Session not found: {}", session_id));
     }
 
-    // 如果有搜索词，定位到匹配位置
-    let actual_offset = if let Some(keyword) = search {
-        let keyword_lower = keyword.to_lowercase();
-        all_messages.iter()
-            .position(|m| m.content.to_lowercase().contains(&keyword_lower))
-            .unwrap_or(offset)
-    } else {
-        offset
-    };
+    // 如果有搜索词，需要获取全部消息来定位
+    let messages: Vec<Value> = if let Some(keyword) = search {
+        let all_messages = state.db.get_messages(&session_id)
+            .map_err(|e| e.to_string())?;
 
-    // 分页
-    let messages: Vec<Value> = all_messages.iter()
-        .skip(actual_offset)
-        .take(limit)
-        .enumerate()
-        .map(|(idx, m)| {
-            let content = if limit > 5 {
-                truncate_str(&m.content, 500)
-            } else {
-                m.content.clone()
-            };
-            json!({
-                "id": m.id,
-                "uuid": m.uuid,
-                "type": m.r#type,
-                "content": content,
-                "timestamp": to_local_time(m.timestamp.as_deref()),
-                "index": actual_offset + idx
+        let keyword_lower = keyword.to_lowercase();
+        let offset = all_messages.iter()
+            .position(|m| m.content.to_lowercase().contains(&keyword_lower))
+            .unwrap_or(0);
+
+        all_messages.iter()
+            .skip(offset)
+            .take(limit)
+            .enumerate()
+            .map(|(idx, m)| {
+                let content = if limit > 5 {
+                    truncate_str(&m.content, 500)
+                } else {
+                    m.content.clone()
+                };
+                json!({
+                    "id": m.id,
+                    "uuid": m.uuid,
+                    "type": m.r#type,
+                    "content": content,
+                    "timestamp": to_local_time(m.timestamp.as_deref()),
+                    "index": offset + idx
+                })
             })
-        })
-        .collect();
+            .collect()
+    } else {
+        // 直接使用数据库排序和分页
+        let db_messages = state.db.get_messages_with_options(&session_id, Some(limit), desc)
+            .map_err(|e| e.to_string())?;
+
+        db_messages.iter()
+            .enumerate()
+            .map(|(idx, m)| {
+                let content = if limit > 5 {
+                    truncate_str(&m.content, 500)
+                } else {
+                    m.content.clone()
+                };
+                let index = if desc { total_count - 1 - idx } else { idx };
+                json!({
+                    "id": m.id,
+                    "uuid": m.uuid,
+                    "type": m.r#type,
+                    "content": content,
+                    "timestamp": to_local_time(m.timestamp.as_deref()),
+                    "index": index
+                })
+            })
+            .collect()
+    };
 
     Ok(json!({
         "session": {
             "id": session_id,
-            "messageCount": all_messages.len()
+            "messageCount": total_count
         },
         "messages": messages,
         "pagination": {
-            "offset": actual_offset,
+            "order": order,
             "limit": limit,
-            "total": all_messages.len()
+            "total": total_count
         }
     }))
 }

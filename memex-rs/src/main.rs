@@ -170,6 +170,25 @@ async fn main() -> anyhow::Result<()> {
         _ => None,
     };
 
+    // 同步 LanceDB 索引状态到 SQLite（首次迁移用）
+    if let Some(ref indexer) = indexer {
+        let unindexed = db.count_unindexed_messages().unwrap_or(0);
+        if unindexed > 1000 {
+            // 只有大量未索引时才执行同步（说明可能是迁移后首次启动）
+            tracing::info!("🔄 检测到 {} 条未同步消息，执行 LanceDB 状态同步...", unindexed);
+            match indexer.sync_indexed_status().await {
+                Ok(n) => {
+                    if n > 0 {
+                        tracing::info!("✅ 同步完成: {} 条消息已标记为已索引", n);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️ 同步失败: {}", e);
+                }
+            }
+        }
+    }
+
     // 创建索引队列（可选，用于实时索引）
     let index_queue = indexer.clone().map(IndexQueue::new);
 

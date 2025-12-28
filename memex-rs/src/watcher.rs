@@ -89,30 +89,34 @@ impl FileWatcher {
         }
     }
 
-    /// 触发采集
+    /// 触发采集（精确索引单个文件，而非扫描全部）
     async fn trigger_collect(&self, path: &PathBuf) {
-        // 提取 session ID（文件名去掉扩展名）
-        let session_id = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
+        // 转换路径为字符串
+        let path_str = match path.to_str() {
+            Some(s) => s,
+            None => {
+                tracing::warn!("⚠️ 无法转换路径: {:?}", path);
+                return;
+            }
+        };
 
-        if session_id.is_empty() {
-            return;
-        }
-
-        // 执行采集
-        match self.collector.collect_all() {
+        // 精确采集单个文件（高效！不再扫描 9000+ 文件）
+        match self.collector.collect_by_path(path_str) {
             Ok(result) => {
                 // 异步触发向量索引
                 if result.messages_inserted > 0 {
+                    tracing::debug!(
+                        "📝 文件变化: {:?} → {} 新消息",
+                        path.file_name().unwrap_or_default(),
+                        result.messages_inserted
+                    );
                     if let Some(queue) = &self.index_queue {
                         queue.enqueue(result.new_message_ids).await;
                     }
                 }
             }
             Err(e) => {
-                tracing::error!("❌ 采集失败: {}", e);
+                tracing::error!("❌ 精确采集失败 {:?}: {}", path.file_name().unwrap_or_default(), e);
             }
         }
     }

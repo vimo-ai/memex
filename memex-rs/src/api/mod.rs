@@ -266,13 +266,23 @@ async fn get_session(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct MessagesQuery {
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    order: Option<String>,
+}
+
 async fn get_session_messages(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    Query(query): Query<MessagesQuery>,
 ) -> Result<impl IntoResponse, AppError> {
+    let desc = query.order.as_deref() == Some("desc");
     let messages: Vec<_> = state
         .db
-        .get_messages(&id)?
+        .get_messages_with_options(&id, query.limit, desc)?
         .into_iter()
         .map(|m| m.with_local_time().to_dto())
         .collect();
