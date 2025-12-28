@@ -32,6 +32,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai-cli-session-collector"
+version = "0.1.0"
+source = "git+https://github.com/vimo-ai/AI-cli-session-collector#5475fa4523c3936d58e1ab81a3b37b577f3bb0a3"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3488,8 +3501,9 @@ checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
 name = "memex-rs"
-version = "0.1.0"
+version = "0.0.1-beta.1"
 dependencies = [
+ "ai-cli-session-collector",
  "anyhow",
  "arrow-array",
  "arrow-schema",
@@ -3499,6 +3513,7 @@ dependencies = [
  "dirs",
  "futures",
  "lancedb",
+ "libc",
  "notify",
  "notify-debouncer-mini",
  "percent-encoding",
@@ -3508,6 +3523,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.17",
+ "time",
  "tokio",
  "tokio-cron-scheduler",
  "tower-http",
@@ -5722,6 +5738,7 @@ dependencies = [
  "sharded-slab",
  "smallvec",
  "thread_local",
+ "time",
  "tracing",
  "tracing-core",
  "tracing-log",

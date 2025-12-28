@@ -3,22 +3,7 @@
 //! Claude Code 会话历史管理系统 - Rust 实现
 //! 支持多种 CLI 数据源 (Claude Code, Codex CLI)
 
-mod adapter;
-mod api;
-mod backup;
-mod collector;
-mod config;
-mod db;
-mod domain;
-mod embedding;
-mod indexer;
-mod mcp;
-mod parser;
-mod rag;
-mod search;
-mod vector;
-mod watcher;
-
+use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -27,27 +12,71 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use api::{create_router, AppState};
-use backup::BackupService;
-use collector::Collector;
-use config::Config;
-use db::Database;
-use embedding::OllamaClient;
-use indexer::{IndexQueue, VectorIndexer};
-use rag::RagService;
-use search::HybridSearchService;
-use vector::VectorStore;
-use watcher::FileWatcher;
+use memex::api::{create_router, AppState};
+use memex::backup::BackupService;
+use memex::collector::Collector;
+use memex::config::Config;
+use memex::db::Database;
+use memex::embedding::OllamaClient;
+use memex::indexer::{IndexQueue, VectorIndexer};
+use memex::rag::RagService;
+use memex::search::HybridSearchService;
+use memex::vector::VectorStore;
+use memex::watcher::FileWatcher;
+
+/// 版本号（从 Cargo.toml 读取）
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // 初始化日志
+    // 处理命令行参数
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "--version" | "-V" => {
+                println!("memex {}", VERSION);
+                return Ok(());
+            }
+            "--help" | "-h" => {
+                println!("memex {} - Claude Code 会话历史管理系统", VERSION);
+                println!();
+                println!("用法: memex [选项]");
+                println!();
+                println!("选项:");
+                println!("  -V, --version    显示版本号");
+                println!("  -h, --help       显示帮助信息");
+                println!();
+                println!("环境变量:");
+                println!("  PORT                 服务端口 (默认: 10013)");
+                println!("  MEMEX_DATA_DIR       数据目录 (默认: ~/memex-data)");
+                println!("  OLLAMA_API           Ollama API 地址 (默认: http://localhost:11434)");
+                println!("  EMBEDDING_MODEL      Embedding 模型 (默认: bge-m3)");
+                println!("  CHAT_MODEL           Chat 模型 (默认: qwen3:8b)");
+                println!("  ENABLE_AI_CHAT       启用 AI 问答 (默认: false)");
+                return Ok(());
+            }
+            _ => {
+                eprintln!("未知参数: {}", args[1]);
+                eprintln!("使用 --help 查看帮助");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // 初始化日志（使用东八区时间 UTC+8）
+    let timer = tracing_subscriber::fmt::time::OffsetTime::new(
+        time::UtcOffset::from_hms(8, 0, 0).unwrap(),
+        time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]+08:00"),
+    );
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "memex_rs=info,tower_http=debug".into()),
+                .unwrap_or_else(|_| "memex=info,tower_http=debug".into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_timer(timer)
+        )
         .init();
 
     tracing::info!("🚀 Memex Rust Backend 启动中...");
