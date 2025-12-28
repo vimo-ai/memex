@@ -1,5 +1,7 @@
 //! Embedding 服务 - Ollama 集成
 
+#![allow(dead_code)] // 预留 API: embed_batch, chunk_type
+
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};

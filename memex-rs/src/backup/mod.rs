@@ -1,5 +1,7 @@
 //! 备份服务 - 每日增量备份
 
+#![allow(dead_code)] // 预留 API: restore, with_max_backups
+
 use anyhow::{Context, Result};
 use chrono::Local;
 use std::path::PathBuf;

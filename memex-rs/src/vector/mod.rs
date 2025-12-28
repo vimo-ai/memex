@@ -1,5 +1,7 @@
 //! 向量存储 - LanceDB 集成
 
+#![allow(dead_code)] // 预留 API: delete
+
 use anyhow::{Context, Result};
 use arrow_array::{
     builder::{FixedSizeListBuilder, Float32Builder},
