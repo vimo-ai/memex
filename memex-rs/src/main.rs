@@ -13,6 +13,7 @@ use tower_http::services::ServeDir;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use memex::api::{create_router, AppState};
+use memex::archive::ArchiveService;
 use memex::backup::BackupService;
 use memex::collector::Collector;
 use memex::config::Config;
@@ -40,7 +41,17 @@ async fn main() -> anyhow::Result<()> {
             "--help" | "-h" => {
                 println!("memex {} - Claude Code 会话历史管理系统", VERSION);
                 println!();
-                println!("用法: memex [选项]");
+                println!("用法: memex [命令] [选项]");
+                println!();
+                println!("命令:");
+                println!("  archive              归档管理");
+                println!("    --status           查看归档状态");
+                println!("    --check            检查并执行所有需要的归档（推荐）");
+                println!("    --now              立即执行每日归档");
+                println!("    --daily            执行每日归档");
+                println!("    --weekly           执行周合并");
+                println!("    --monthly          执行月合并");
+                println!("    --yearly           执行年合并");
                 println!();
                 println!("选项:");
                 println!("  -V, --version    显示版本号");
@@ -54,6 +65,9 @@ async fn main() -> anyhow::Result<()> {
                 println!("  CHAT_MODEL           Chat 模型 (默认: qwen3:8b)");
                 println!("  ENABLE_AI_CHAT       启用 AI 问答 (默认: false)");
                 return Ok(());
+            }
+            "archive" => {
+                return handle_archive_command(&args[2..]).await;
             }
             _ => {
                 eprintln!("未知参数: {}", args[1]);
@@ -103,6 +117,44 @@ async fn main() -> anyhow::Result<()> {
 
     // 创建备份服务
     let backup = BackupService::new(config.db_path(), config.backup_dir());
+
+    // 启动时执行归档补偿检查
+    {
+        let archive_dir = config.data_dir.join("archive");
+        match ArchiveService::new(config.claude_projects_path.clone(), archive_dir) {
+            Ok(mut service) => {
+                if let Ok(Some(_lock)) = service.try_lock() {
+                    tracing::info!("📦 启动时归档检查...");
+                    match service.check_and_archive_all() {
+                        Ok(result) => {
+                            if result.has_work() {
+                                tracing::info!(
+                                    "✅ 补偿归档完成: {} 日归档, {} 周合并, {} 月合并, {} 年合并",
+                                    result.daily_archived,
+                                    result.weekly_merged,
+                                    result.monthly_merged,
+                                    result.yearly_merged
+                                );
+                            } else {
+                                tracing::info!("📦 归档状态正常，无需补偿");
+                            }
+                            if result.has_errors() {
+                                for err in &result.errors {
+                                    tracing::warn!("归档警告: {}", err);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("⚠️ 启动归档检查失败: {}，将在定时任务中重试", e);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("⚠️ 创建归档服务失败: {}，将在定时任务中重试", e);
+            }
+        }
+    }
 
     // 初始化 Ollama 客户端 (语义搜索核心功能)
     let ollama = {
@@ -320,6 +372,7 @@ async fn setup_scheduler(
     indexer: Option<VectorIndexer>,
 ) -> anyhow::Result<JobScheduler> {
     let scheduler = JobScheduler::new().await?;
+    let config = memex::config::Config::from_env();
 
     // 每日 02:00 执行备份
     let backup_clone = backup.clone();
@@ -397,9 +450,217 @@ async fn setup_scheduler(
         tracing::info!("📅 定时任务已注册: 向量索引 (每小时)");
     }
 
+    // 每日 03:00 执行归档检查（统一入口，包含日/周/月/年的补偿逻辑）
+    let archive_source = config.claude_projects_path.clone();
+    let archive_dir = config.data_dir.join("archive");
+    scheduler
+        .add(Job::new_async("0 0 3 * * *", move |_uuid, _lock| {
+            let source = archive_source.clone();
+            let dir = archive_dir.clone();
+            Box::pin(async move {
+                tracing::info!("⏰ 定时任务: 开始归档检查...");
+                match ArchiveService::new(source, dir) {
+                    Ok(mut service) => {
+                        match service.try_lock() {
+                            Ok(Some(_lock)) => {
+                                match service.check_and_archive_all() {
+                                    Ok(result) => {
+                                        if result.has_work() {
+                                            tracing::info!(
+                                                "✅ 归档完成: {} 日归档, {} 周合并, {} 月合并, {} 年合并",
+                                                result.daily_archived,
+                                                result.weekly_merged,
+                                                result.monthly_merged,
+                                                result.yearly_merged
+                                            );
+                                        }
+                                        if result.has_errors() {
+                                            for err in &result.errors {
+                                                tracing::error!("归档错误: {}", err);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("❌ 归档检查失败: {}", e);
+                                    }
+                                }
+                            }
+                            Ok(None) => {
+                                tracing::warn!("另一个归档任务正在运行，跳过");
+                            }
+                            Err(e) => {
+                                tracing::error!("❌ 获取归档锁失败: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ 创建归档服务失败: {}", e);
+                    }
+                }
+            })
+        })?)
+        .await?;
+    tracing::info!("📅 定时任务已注册: 归档检查 (每日 03:00)");
+
     // 启动调度器
     scheduler.start().await?;
     tracing::info!("🕐 定时任务调度器已启动");
 
     Ok(scheduler)
+}
+
+/// 处理归档命令
+async fn handle_archive_command(args: &[String]) -> anyhow::Result<()> {
+    // 初始化日志
+    let timer = tracing_subscriber::fmt::time::OffsetTime::new(
+        time::UtcOffset::from_hms(8, 0, 0).unwrap(),
+        time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]+08:00"),
+    );
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "memex=info".into()),
+        )
+        .with(tracing_subscriber::fmt::layer().with_timer(timer))
+        .init();
+
+    let config = memex::config::Config::from_env();
+    let archive_dir = config.data_dir.join("archive");
+
+    let mut archive_service = ArchiveService::new(
+        config.claude_projects_path.clone(),
+        archive_dir,
+    )?;
+
+    // 尝试获取锁
+    let _lock = match archive_service.try_lock()? {
+        Some(lock) => lock,
+        None => {
+            eprintln!("另一个归档任务正在运行");
+            std::process::exit(1);
+        }
+    };
+
+    let action = args.first().map(|s| s.as_str()).unwrap_or("--status");
+
+    match action {
+        "--status" => {
+            let state = archive_service.status();
+            println!("归档状态:");
+            println!("  最后成功: {:?}", state.last_success);
+            println!("  待处理任务: {}", state.has_pending_task());
+            println!("  失败记录: {} 条", state.failures.len());
+            for failure in &state.failures {
+                println!("    - {:?}: {} (重试 {} 次)",
+                    failure.task_type, failure.error, failure.retry_count);
+            }
+        }
+        "--check" => {
+            println!("检查并执行所有需要的归档...");
+            match archive_service.check_and_archive_all() {
+                Ok(result) => {
+                    if result.has_work() {
+                        println!("归档完成:");
+                        println!("  日归档: {} 个", result.daily_archived);
+                        println!("  周合并: {} 个", result.weekly_merged);
+                        println!("  月合并: {} 个", result.monthly_merged);
+                        println!("  年合并: {} 个", result.yearly_merged);
+                    } else {
+                        println!("归档状态正常，无需操作");
+                    }
+                    if result.has_errors() {
+                        println!("警告:");
+                        for err in &result.errors {
+                            println!("  - {}", err);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("归档检查失败: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        "--now" | "--daily" => {
+            println!("执行每日归档...");
+            match archive_service.archive_daily() {
+                Ok(Some(result)) => {
+                    println!("归档完成:");
+                    println!("  路径: {}", result.archive_path.display());
+                    println!("  文件数: {}", result.files_count);
+                    println!("  原始大小: {} bytes", result.original_size);
+                    println!("  压缩后: {} bytes", result.compressed_size);
+                    println!("  压缩率: {:.1}:1", result.compression_ratio);
+                }
+                Ok(None) => {
+                    println!("没有需要归档的文件");
+                }
+                Err(e) => {
+                    eprintln!("归档失败: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        "--weekly" => {
+            println!("执行周合并...");
+            match archive_service.merge_weekly() {
+                Ok(Some(result)) => {
+                    println!("周合并完成:");
+                    println!("  路径: {}", result.archive_path.display());
+                    println!("  文件数: {}", result.files_count);
+                    println!("  压缩率: {:.1}:1", result.compression_ratio);
+                }
+                Ok(None) => {
+                    println!("没有需要合并的日包");
+                }
+                Err(e) => {
+                    eprintln!("周合并失败: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        "--monthly" => {
+            println!("执行月合并...");
+            match archive_service.merge_monthly() {
+                Ok(Some(result)) => {
+                    println!("月合并完成:");
+                    println!("  路径: {}", result.archive_path.display());
+                    println!("  文件数: {}", result.files_count);
+                    println!("  压缩率: {:.1}:1", result.compression_ratio);
+                }
+                Ok(None) => {
+                    println!("没有需要合并的周包");
+                }
+                Err(e) => {
+                    eprintln!("月合并失败: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        "--yearly" => {
+            println!("执行年合并...");
+            match archive_service.merge_yearly() {
+                Ok(Some(result)) => {
+                    println!("年合并完成:");
+                    println!("  路径: {}", result.archive_path.display());
+                    println!("  文件数: {}", result.files_count);
+                    println!("  压缩率: {:.1}:1", result.compression_ratio);
+                }
+                Ok(None) => {
+                    println!("没有需要合并的月包");
+                }
+                Err(e) => {
+                    eprintln!("年合并失败: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        _ => {
+            eprintln!("未知归档命令: {}", action);
+            eprintln!("使用 --help 查看帮助");
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
 }

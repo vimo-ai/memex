@@ -19,6 +19,8 @@ pub mod vector;
 #[cfg(feature = "cli")]
 pub mod api;
 #[cfg(feature = "cli")]
+pub mod archive;
+#[cfg(feature = "cli")]
 pub mod backup;
 #[cfg(feature = "cli")]
 pub mod mcp;
