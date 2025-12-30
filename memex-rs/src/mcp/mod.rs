@@ -235,7 +235,7 @@ async fn process_mcp_request(state: &AppState, request: MCPRequest) -> MCPRespon
                         }]
                     }),
                 ),
-                Err(e) => MCPResponse::error(id, -32602, "Tool execution failed", Some(json!(e))),
+                Err(e) => MCPResponse::error(id, -32603, &format!("Tool execution failed: {}", e), None),
             }
         }
 
@@ -302,8 +302,11 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
 
 /// 获取会话详情
 async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
-    let session_id_input = args.get("sessionId").and_then(|s| s.as_str())
-        .ok_or("sessionId is required")?;
+    // 兼容 camelCase 和 snake_case 两种命名风格
+    let session_id_input = args.get("sessionId")
+        .or_else(|| args.get("session_id"))
+        .and_then(|s| s.as_str())
+        .ok_or("sessionId is required (also accepts session_id)")?;
     let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10) as usize;
     let order = args.get("order").and_then(|o| o.as_str()).unwrap_or("asc");
     let search = args.get("search").and_then(|s| s.as_str());

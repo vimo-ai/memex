@@ -15,8 +15,7 @@ pub mod rag;
 pub mod search;
 pub mod vector;
 
-// 共享数据库适配器（用于与 ETerm/Vlaude 协调）
-#[cfg(feature = "shared-db")]
+// 共享数据库适配器（ETerm/Vlaude 数据统一层）
 pub mod shared_adapter;
 
 // CLI 专用模块

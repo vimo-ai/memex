@@ -14,8 +14,8 @@ MEMEXKIT_LIB="$ETERM_ROOT/Plugins/MemexKit/Lib"
 echo "Building Memex (arm64, cli mode)..."
 cd "$PROJECT_DIR"
 
-# 默认 cli feature（HTTP 服务模式）
-cargo build --release
+# cli feature（HTTP 服务，SharedDb 现为必须依赖）
+cargo build --release --features cli
 
 BINARY="$PROJECT_DIR/target/release/memex"
 

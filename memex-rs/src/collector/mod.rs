@@ -9,7 +9,6 @@ use crate::adapter::AdapterRegistry;
 use crate::config::Config;
 use crate::db::Database;
 
-#[cfg(feature = "shared-db")]
 use crate::shared_adapter::SharedDbAdapter;
 
 /// 采集服务
@@ -17,7 +16,6 @@ use crate::shared_adapter::SharedDbAdapter;
 pub struct Collector {
     registry: AdapterRegistry,
     db: Database,
-    #[cfg(feature = "shared-db")]
     shared_db: Option<Arc<SharedDbAdapter>>,
 }
 
@@ -33,17 +31,9 @@ pub struct CollectResult {
 
 impl Collector {
     /// 创建采集服务
-    #[cfg(feature = "shared-db")]
     pub fn new(config: Config, db: Database, shared_db: Option<Arc<SharedDbAdapter>>) -> Self {
         let registry = AdapterRegistry::from_config(&config);
         Self { registry, db, shared_db }
-    }
-
-    /// 创建采集服务（无共享数据库）
-    #[cfg(not(feature = "shared-db"))]
-    pub fn new(config: Config, db: Database) -> Self {
-        let registry = AdapterRegistry::from_config(&config);
-        Self { registry, db }
     }
 
     /// 执行全量采集
@@ -125,7 +115,6 @@ impl Collector {
                             tracing::debug!("会话 {} 插入 {} 条消息", meta.id, inserted);
 
                             // 同步写入共享数据库
-                            #[cfg(feature = "shared-db")]
                             self.sync_to_shared_db(
                                 project_name,
                                 &meta.project_path,
@@ -205,7 +194,6 @@ impl Collector {
                 tracing::info!("📥 精确索引: 会话 {} 插入 {} 条消息", session.session_id, inserted);
 
                 // 同步写入共享数据库
-                #[cfg(feature = "shared-db")]
                 if inserted > 0 {
                     self.sync_indexable_to_shared_db(
                         &session.project_name,
@@ -225,7 +213,6 @@ impl Collector {
     }
 
     /// 同步数据到共享数据库（仅在 Writer 模式下）
-    #[cfg(feature = "shared-db")]
     fn sync_to_shared_db(
         &self,
         project_name: &str,
@@ -318,7 +305,6 @@ impl Collector {
     }
 
     /// 同步 IndexableMessage 到共享数据库
-    #[cfg(feature = "shared-db")]
     fn sync_indexable_to_shared_db(
         &self,
         project_name: &str,

@@ -279,6 +279,9 @@ async fn get_session_messages(
     Path(id): Path<String>,
     Query(query): Query<MessagesQuery>,
 ) -> Result<impl IntoResponse, AppError> {
+    // 先获取总消息数（分页前）
+    let total = state.db.get_session_message_count(&id)? as usize;
+
     let desc = query.order.as_deref() == Some("desc");
     let messages: Vec<_> = state
         .db
@@ -287,10 +290,7 @@ async fn get_session_messages(
         .map(|m| m.with_local_time().to_dto())
         .collect();
 
-    let response = MessageListDto {
-        total: messages.len(),
-        messages,
-    };
+    let response = MessageListDto { total, messages };
     Ok(Json(response))
 }
 
