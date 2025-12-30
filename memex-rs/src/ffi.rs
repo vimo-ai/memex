@@ -3,10 +3,9 @@
 //! 提供 C ABI 接口，用于 ETerm 的 MemexKit 插件
 
 use std::ffi::{c_char, c_int, CStr, CString};
-use std::path::Path;
 use std::ptr;
 
-use ai_cli_session_collector::{ClaudeAdapter, ConversationAdapter};
+use ai_cli_session_collector::ClaudeAdapter;
 
 use crate::db::Database;
 use crate::domain::SearchResult;
@@ -97,14 +96,14 @@ pub extern "C" fn memex_free(handle: *mut MemexHandle) {
 ///
 /// - `handle`: Memex 句柄
 /// - `jsonl_path`: JSONL 文件路径
-/// - `project_path`: 项目路径（解码后的真实路径）
+/// - `project_path`: （已废弃，保留参数兼容性）
 ///
 /// 返回插入的消息数量，失败返回 -1
 #[no_mangle]
 pub extern "C" fn memex_index_jsonl(
     handle: *mut MemexHandle,
     jsonl_path: *const c_char,
-    project_path: *const c_char,
+    _project_path: *const c_char,  // 不再使用，直接从 JSONL 读取 cwd
 ) -> c_int {
     let handle = match unsafe { handle.as_ref() } {
         Some(h) => h,
@@ -116,73 +115,37 @@ pub extern "C" fn memex_index_jsonl(
         Err(_) => return -1,
     };
 
-    let project_path = match unsafe { CStr::from_ptr(project_path) }.to_str() {
-        Ok(s) => s,
-        Err(_) => return -1,
-    };
-
-    // 从文件名提取 session_id
-    let session_id = Path::new(jsonl_path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-
-    if session_id.is_empty() {
-        return -1;
-    }
-
-    // 提取项目名
-    let project_name = project_path
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .last()
-        .unwrap_or(project_path);
-
-    // 获取或创建项目
-    let project_id = match handle.db.get_or_create_project(project_name, project_path, "claude") {
-        Ok(id) => id,
-        Err(_) => return -1,
-    };
-
-    // 构造 SessionMeta
-    let meta = ai_cli_session_collector::SessionMeta {
-        id: session_id.to_string(),
-        source: ai_cli_session_collector::Source::Claude,
-        channel: Some("code".to_string()),
-        project_path: project_path.to_string(),
-        project_name: Some(project_name.to_string()),
-        encoded_dir_name: None,
-        session_path: Some(jsonl_path.to_string()),
-        file_mtime: None,
-        file_size: None,
-        cwd: None,
-        model: None,
-        meta: None,
-        created_at: None,
-        updated_at: None,
-    };
-
-    // 解析会话
-    let parse_result = match handle.claude_adapter.parse_session(&meta) {
-        Ok(Some(r)) => r,
+    // 直接调用 ai-cli-session-collector 的核心实现
+    let session = match ClaudeAdapter::parse_session_from_path(jsonl_path) {
+        Ok(Some(s)) => s,
         Ok(None) => return 0,
         Err(_) => return -1,
     };
 
+    // 获取或创建项目（使用正确的 project_path）
+    let project_id = match handle.db.get_or_create_project(
+        &session.project_name,
+        &session.project_path,
+        "claude",
+    ) {
+        Ok(id) => id,
+        Err(_) => return -1,
+    };
+
     // 创建会话
-    if let Err(_) = handle.db.create_session_v2(
-        session_id,
+    if handle.db.create_session_v2(
+        &session.session_id,
         project_id,
-        parse_result.cwd.as_deref(),
-        parse_result.model.as_deref(),
+        Some(&session.project_path),
+        None,
         "claude",
         Some("code"),
-    ) {
+    ).is_err() {
         return -1;
     }
 
     // 插入消息
-    match handle.db.insert_messages_v2(session_id, &parse_result.messages) {
+    match handle.db.insert_indexable_messages(&session.session_id, &session.messages) {
         Ok((inserted, _)) => inserted as c_int,
         Err(_) => -1,
     }

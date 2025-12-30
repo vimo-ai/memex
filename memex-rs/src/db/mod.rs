@@ -459,6 +459,51 @@ impl Database {
 
     // ==================== 消息操作 ====================
 
+    /// 批量插入消息（从 IndexableMessage）
+    /// 用于精确索引场景，直接接受 ai-cli-session-collector 的 IndexableMessage
+    pub fn insert_indexable_messages(
+        &self,
+        session_id: &str,
+        messages: &[ai_cli_session_collector::IndexableMessage],
+    ) -> Result<(usize, Vec<i64>)> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+
+        let mut inserted = 0;
+        let mut new_ids = Vec::new();
+
+        for msg in messages {
+            // role: "user" -> "human", "assistant" -> "assistant"
+            let msg_type = if msg.role == "user" { "human" } else { &msg.role };
+
+            let result = tx.execute(
+                r#"
+                INSERT OR IGNORE INTO messages (uuid, session_id, type, content, source, channel, timestamp)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "#,
+                params![
+                    msg.uuid,
+                    session_id,
+                    msg_type,
+                    msg.content,
+                    "claude",  // source 固定为 claude
+                    "code",    // channel 固定为 code
+                    msg.timestamp.to_string(),
+                ],
+            );
+
+            if let Ok(n) = result {
+                if n > 0 {
+                    inserted += n;
+                    new_ids.push(tx.last_insert_rowid());
+                }
+            }
+        }
+
+        tx.commit()?;
+        Ok((inserted, new_ids))
+    }
+
     /// 批量插入消息
     /// 返回 (插入数量, 新插入的消息 ID 列表)
     pub fn insert_messages_v2(&self, session_id: &str, messages: &[crate::adapter::ParsedMessage]) -> Result<(usize, Vec<i64>)> {

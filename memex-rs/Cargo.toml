@@ -17,6 +17,7 @@ required-features = ["cli"]
 default = ["cli"]
 cli = ["notify", "notify-debouncer-mini", "axum", "tower-http", "tokio-cron-scheduler"]
 ffi = []
+shared-db = ["claude-session-db"]
 
 [dependencies]
 # HTTP 框架 (CLI only)
@@ -51,6 +52,9 @@ tokio-cron-scheduler = { version = "0.13", optional = true }
 
 # AI 会话收集
 ai-cli-session-collector = { git = "https://github.com/vimo-ai/AI-cli-session-collector" }
+
+# 共享数据库（用于 ETerm/Vlaude 协调）
+claude-session-db = { path = "../../ETerm/claude-session-db", features = ["writer", "reader", "search", "coordination"], optional = true }
 
 # 工具
 anyhow = "1"

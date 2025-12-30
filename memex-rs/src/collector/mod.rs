@@ -3,16 +3,22 @@
 #![allow(dead_code)] // 预留 API: collect_incremental
 
 use anyhow::Result;
+use std::sync::Arc;
 
 use crate::adapter::AdapterRegistry;
 use crate::config::Config;
 use crate::db::Database;
+
+#[cfg(feature = "shared-db")]
+use crate::shared_adapter::SharedDbAdapter;
 
 /// 采集服务
 #[derive(Clone)]
 pub struct Collector {
     registry: AdapterRegistry,
     db: Database,
+    #[cfg(feature = "shared-db")]
+    shared_db: Option<Arc<SharedDbAdapter>>,
 }
 
 /// 采集结果
@@ -27,6 +33,14 @@ pub struct CollectResult {
 
 impl Collector {
     /// 创建采集服务
+    #[cfg(feature = "shared-db")]
+    pub fn new(config: Config, db: Database, shared_db: Option<Arc<SharedDbAdapter>>) -> Self {
+        let registry = AdapterRegistry::from_config(&config);
+        Self { registry, db, shared_db }
+    }
+
+    /// 创建采集服务（无共享数据库）
+    #[cfg(not(feature = "shared-db"))]
     pub fn new(config: Config, db: Database) -> Self {
         let registry = AdapterRegistry::from_config(&config);
         Self { registry, db }
@@ -101,7 +115,7 @@ impl Collector {
                     continue;
                 }
 
-                // 插入消息
+                // 插入消息到 memex db
                 match self.db.insert_messages_v2(&meta.id, &parse_result.messages) {
                     Ok((inserted, new_ids)) => {
                         if inserted > 0 {
@@ -109,6 +123,16 @@ impl Collector {
                             result.messages_inserted += inserted;
                             result.new_message_ids.extend(new_ids);
                             tracing::debug!("会话 {} 插入 {} 条消息", meta.id, inserted);
+
+                            // 同步写入共享数据库
+                            #[cfg(feature = "shared-db")]
+                            self.sync_to_shared_db(
+                                project_name,
+                                &meta.project_path,
+                                &source_str,
+                                &meta.id,
+                                &parse_result.messages,
+                            );
                         }
                     }
                     Err(e) => {
@@ -141,60 +165,13 @@ impl Collector {
     /// 按路径采集单个会话（精确索引，替代 file watcher）
     /// 接受 JSONL 文件路径，解析并更新数据库
     pub fn collect_by_path(&self, path: &str) -> Result<CollectResult> {
-        use std::path::Path;
-        use ai_cli_session_collector::{SessionMeta, Source};
+        use ai_cli_session_collector::ClaudeAdapter;
 
         let mut result = CollectResult::default();
 
-        let file_path = Path::new(path);
-        if !file_path.exists() {
-            anyhow::bail!("文件不存在: {:?}", file_path);
-        }
-
-        // 从路径提取 session_id（文件名去掉 .jsonl 后缀）
-        let session_id = file_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| anyhow::anyhow!("无效的文件名"))?;
-
-        // 从路径推断项目路径（Claude 项目目录结构：~/.claude/projects/<project_path_encoded>/）
-        // 路径格式: ~/.claude/projects/-Users-xxx-project/session_id.jsonl
-        let parent = file_path.parent().ok_or_else(|| anyhow::anyhow!("无法获取父目录"))?;
-        let project_dir_name = parent
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown");
-
-        // 将编码的项目路径转换回真实路径（将 - 替换为 /）
-        let project_path = project_dir_name.replace('-', "/");
-
-        // 创建 SessionMeta（参考 ffi.rs 的结构）
-        let meta = SessionMeta {
-            id: session_id.to_string(),
-            source: Source::Claude,
-            channel: Some("code".to_string()),
-            project_path: project_path.clone(),
-            project_name: None,
-            encoded_dir_name: Some(project_dir_name.to_string()),
-            session_path: Some(path.to_string()),
-            file_mtime: None,
-            file_size: None,
-            cwd: None,
-            model: None,
-            meta: None,
-            created_at: None,
-            updated_at: None,
-        };
-
-        // 找到合适的适配器（Claude）
-        let adapter = self.registry.adapters()
-            .iter()
-            .find(|a| a.source() == Source::Claude)
-            .ok_or_else(|| anyhow::anyhow!("未找到 Claude 适配器"))?;
-
-        // 解析会话
-        let parse_result = match adapter.parse_session(&meta) {
-            Ok(Some(r)) => r,
+        // 直接调用 ai-cli-session-collector 的核心实现
+        let session = match ClaudeAdapter::parse_session_from_path(path) {
+            Ok(Some(s)) => s,
             Ok(None) => return Ok(result),
             Err(e) => {
                 result.errors.push(format!("解析会话失败: {}", e));
@@ -202,31 +179,41 @@ impl Collector {
             }
         };
 
-        // 获取或创建项目
-        let project_name = extract_project_name(&project_path);
+        // 获取或创建项目（使用正确的 project_path，已从 cwd 读取）
         let project_id = self.db.get_or_create_project(
-            project_name,
-            &project_path,
+            &session.project_name,
+            &session.project_path,
             "claude",
         )?;
 
         // 创建/更新会话
         self.db.create_session_v2(
-            session_id,
+            &session.session_id,
             project_id,
-            parse_result.cwd.as_deref(),
-            parse_result.model.as_deref(),
+            Some(&session.project_path),  // cwd 就是 project_path
+            None,  // model 在 IndexableSession 中不可用
             "claude",
-            meta.channel.as_deref(),
+            Some("code"),
         )?;
 
-        // 插入消息
-        match self.db.insert_messages_v2(session_id, &parse_result.messages) {
+        // 插入消息（使用新的 insert_indexable_messages 方法）
+        match self.db.insert_indexable_messages(&session.session_id, &session.messages) {
             Ok((inserted, new_ids)) => {
                 result.sessions_scanned = 1;
                 result.messages_inserted = inserted;
                 result.new_message_ids = new_ids;
-                tracing::info!("📥 精确索引: 会话 {} 插入 {} 条消息", session_id, inserted);
+                tracing::info!("📥 精确索引: 会话 {} 插入 {} 条消息", session.session_id, inserted);
+
+                // 同步写入共享数据库
+                #[cfg(feature = "shared-db")]
+                if inserted > 0 {
+                    self.sync_indexable_to_shared_db(
+                        &session.project_name,
+                        &session.project_path,
+                        &session.session_id,
+                        &session.messages,
+                    );
+                }
             }
             Err(e) => {
                 result.errors.push(format!("插入消息失败: {}", e));
@@ -235,6 +222,173 @@ impl Collector {
 
         result.projects_scanned = 1;
         Ok(result)
+    }
+
+    /// 同步数据到共享数据库（仅在 Writer 模式下）
+    #[cfg(feature = "shared-db")]
+    fn sync_to_shared_db(
+        &self,
+        project_name: &str,
+        project_path: &str,
+        source: &str,
+        session_id: &str,
+        messages: &[crate::adapter::ParsedMessage],
+    ) {
+        use claude_session_db::db::MessageInput;
+        use claude_session_db::MessageRole;
+
+        let Some(shared_db) = &self.shared_db else {
+            return;
+        };
+
+        // 预先转换消息格式（在闭包外）
+        let shared_messages: Vec<MessageInput> = messages
+            .iter()
+            .enumerate()
+            .map(|(i, msg)| {
+                // 解析时间戳：Option<String> -> i64
+                let timestamp = msg.timestamp
+                    .as_ref()
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or_else(|| {
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as i64)
+                            .unwrap_or(0)
+                    });
+
+                MessageInput {
+                    uuid: msg.uuid.clone(),
+                    role: match msg.message_type.to_string().as_str() {
+                        "human" => MessageRole::Human,
+                        "assistant" => MessageRole::Assistant,
+                        _ => MessageRole::Human,
+                    },
+                    content: msg.content.clone(),
+                    timestamp,
+                    sequence: i as i64,
+                }
+            })
+            .collect();
+
+        // 使用 block_in_place 允许在 tokio runtime 内执行阻塞操作
+        let shared_db = shared_db.clone();
+        let project_name = project_name.to_string();
+        let project_path = project_path.to_string();
+        let source = source.to_string();
+        let session_id = session_id.to_string();
+
+        tokio::task::block_in_place(move || {
+            let rt = tokio::runtime::Handle::current();
+
+            // 检查是否是 Writer
+            let is_writer = rt.block_on(shared_db.is_writer());
+            if !is_writer {
+                tracing::debug!("[SharedDB] 非 Writer，跳过写入");
+                return;
+            }
+
+            // 获取或创建项目
+            let shared_project_id = match rt.block_on(shared_db.get_or_create_project(&project_name, &project_path, &source)) {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::warn!("[SharedDB] 创建项目失败: {}", e);
+                    return;
+                }
+            };
+
+            // 创建会话
+            if let Err(e) = rt.block_on(shared_db.upsert_session(&session_id, shared_project_id)) {
+                tracing::warn!("[SharedDB] 创建会话失败: {}", e);
+                return;
+            }
+
+            // 插入消息
+            match rt.block_on(shared_db.insert_messages(&session_id, &shared_messages)) {
+                Ok(inserted) => {
+                    if inserted > 0 {
+                        tracing::debug!("[SharedDB] 同步 {} 条消息到共享数据库", inserted);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("[SharedDB] 插入消息失败: {}", e);
+                }
+            }
+        });
+    }
+
+    /// 同步 IndexableMessage 到共享数据库
+    #[cfg(feature = "shared-db")]
+    fn sync_indexable_to_shared_db(
+        &self,
+        project_name: &str,
+        project_path: &str,
+        session_id: &str,
+        messages: &[ai_cli_session_collector::IndexableMessage],
+    ) {
+        use claude_session_db::db::MessageInput;
+        use claude_session_db::MessageRole;
+
+        let Some(shared_db) = &self.shared_db else {
+            return;
+        };
+
+        // 转换消息格式
+        let shared_messages: Vec<MessageInput> = messages
+            .iter()
+            .map(|msg| {
+                MessageInput {
+                    uuid: msg.uuid.clone(),
+                    role: if msg.role == "user" || msg.role == "human" {
+                        MessageRole::Human
+                    } else {
+                        MessageRole::Assistant
+                    },
+                    content: msg.content.clone(),
+                    timestamp: msg.timestamp,
+                    sequence: msg.sequence,
+                }
+            })
+            .collect();
+
+        let shared_db = shared_db.clone();
+        let project_name = project_name.to_string();
+        let project_path = project_path.to_string();
+        let session_id = session_id.to_string();
+
+        tokio::task::block_in_place(move || {
+            let rt = tokio::runtime::Handle::current();
+
+            let is_writer = rt.block_on(shared_db.is_writer());
+            if !is_writer {
+                tracing::debug!("[SharedDB] 非 Writer，跳过写入");
+                return;
+            }
+
+            let shared_project_id = match rt.block_on(shared_db.get_or_create_project(&project_name, &project_path, "claude")) {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::warn!("[SharedDB] 创建项目失败: {}", e);
+                    return;
+                }
+            };
+
+            if let Err(e) = rt.block_on(shared_db.upsert_session(&session_id, shared_project_id)) {
+                tracing::warn!("[SharedDB] 创建会话失败: {}", e);
+                return;
+            }
+
+            match rt.block_on(shared_db.insert_messages(&session_id, &shared_messages)) {
+                Ok(inserted) => {
+                    if inserted > 0 {
+                        tracing::debug!("[SharedDB] 同步 {} 条消息到共享数据库", inserted);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("[SharedDB] 插入消息失败: {}", e);
+                }
+            }
+        });
     }
 }
 
