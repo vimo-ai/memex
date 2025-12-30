@@ -36,7 +36,13 @@ impl Config {
 
             data_dir: std::env::var("MEMEX_DATA_DIR")
                 .map(PathBuf::from)
-                .unwrap_or_else(|_| home.join("memex-data")),
+                .unwrap_or_else(|_| {
+                    // 支持 VIMO_HOME 环境变量
+                    let vimo_root = std::env::var("VIMO_HOME")
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|_| home.join(".vimo"));
+                    vimo_root.join("db")
+                }),
 
             claude_projects_path: std::env::var("CLAUDE_PROJECTS_PATH")
                 .map(PathBuf::from)
@@ -64,7 +70,7 @@ impl Config {
 
     /// 数据库路径
     pub fn db_path(&self) -> PathBuf {
-        self.data_dir.join("memex.db")
+        self.data_dir.join("claude-session.db")
     }
 
     /// LanceDB 路径

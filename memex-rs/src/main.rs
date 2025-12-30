@@ -60,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
                 println!();
                 println!("环境变量:");
                 println!("  PORT                 服务端口 (默认: 10013)");
-                println!("  MEMEX_DATA_DIR       数据目录 (默认: ~/memex-data)");
+                println!("  MEMEX_DATA_DIR       数据目录 (默认: ~/.vimo/memex)");
                 println!("  OLLAMA_API           Ollama API 地址 (默认: http://localhost:11434)");
                 println!("  EMBEDDING_MODEL      Embedding 模型 (默认: bge-m3)");
                 println!("  CHAT_MODEL           Chat 模型 (默认: qwen3:8b)");
