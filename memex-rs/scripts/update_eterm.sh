@@ -6,7 +6,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-ETERM_ROOT="/Users/higuaifan/Desktop/hi/小工具/english"
+ETERM_ROOT="$(dirname "$(dirname "$PROJECT_DIR")")/english"
 
 # MemexKit 插件目录
 MEMEXKIT_LIB="$ETERM_ROOT/Plugins/MemexKit/Lib"

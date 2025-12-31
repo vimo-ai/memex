@@ -70,7 +70,7 @@ impl Config {
 
     /// 数据库路径
     pub fn db_path(&self) -> PathBuf {
-        self.data_dir.join("claude-session.db")
+        self.data_dir.join("ai-cli-session.db")
     }
 
     /// LanceDB 路径

@@ -54,7 +54,7 @@ impl BackupService {
 
         // 生成备份文件名
         let timestamp = Local::now().format("%Y%m%d%H%M%S").to_string();
-        let backup_name = format!("claude-session.db.bak-{}", timestamp);
+        let backup_name = format!("ai-cli-session.db.bak-{}", timestamp);
         let backup_path = self.backup_dir.join(&backup_name);
 
         // 检查今天是否已备份
@@ -126,7 +126,7 @@ impl BackupService {
                 .unwrap_or_default()
                 .to_string();
 
-            if !name.starts_with("claude-session.db.bak-") {
+            if !name.starts_with("ai-cli-session.db.bak-") {
                 continue;
             }
 
@@ -134,7 +134,7 @@ impl BackupService {
 
             // 解析日期
             let date = name
-                .strip_prefix("claude-session.db.bak-")
+                .strip_prefix("ai-cli-session.db.bak-")
                 .and_then(|s| s.get(0..8))
                 .map(|s| format!("{}-{}-{}", &s[0..4], &s[4..6], &s[6..8]))
                 .unwrap_or_default();

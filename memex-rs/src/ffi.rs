@@ -62,7 +62,7 @@ pub extern "C" fn memex_init(data_dir: *const c_char) -> *mut MemexHandle {
         Err(_) => return ptr::null_mut(),
     };
 
-    let db_path = Path::new(data_dir).join("claude-session.db");
+    let db_path = Path::new(data_dir).join("ai-cli-session.db");
     let db = match Database::open(&db_path) {
         Ok(db) => db,
         Err(e) => {

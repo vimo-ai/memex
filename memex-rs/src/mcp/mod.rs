@@ -277,7 +277,7 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
     };
 
     // 执行 FTS 搜索
-    let results = state.db.search(query, limit, project_id)
+    let results = state.legacy_db.search(query, limit, project_id)
         .map_err(|e| e.to_string())?;
 
     let formatted: Vec<Value> = results.iter().map(|r| {
@@ -313,12 +313,12 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
     let desc = order == "desc";
 
     // 支持前缀匹配：先解析完整 session ID
-    let session_id = state.db.resolve_session_id(session_id_input)
+    let session_id = state.legacy_db.resolve_session_id(session_id_input)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Session not found: {}", session_id_input))?;
 
     // 获取消息总数
-    let total_count = state.db.get_session_message_count(&session_id)
+    let total_count = state.legacy_db.get_session_message_count(&session_id)
         .map_err(|e| e.to_string())? as usize;
 
     if total_count == 0 {
@@ -327,7 +327,7 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
 
     // 如果有搜索词，需要获取全部消息来定位
     let messages: Vec<Value> = if let Some(keyword) = search {
-        let all_messages = state.db.get_messages(&session_id)
+        let all_messages = state.legacy_db.get_messages(&session_id)
             .map_err(|e| e.to_string())?;
 
         let keyword_lower = keyword.to_lowercase();
@@ -357,7 +357,7 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
             .collect()
     } else {
         // 直接使用数据库排序和分页
-        let db_messages = state.db.get_messages_with_options(&session_id, Some(limit), desc)
+        let db_messages = state.legacy_db.get_messages_with_options(&session_id, Some(limit), desc)
             .map_err(|e| e.to_string())?;
 
         db_messages.iter()
@@ -406,7 +406,7 @@ async fn get_recent_sessions(state: &AppState, args: Value) -> Result<Value, Str
         None
     };
 
-    let sessions = state.db.get_sessions(project_id, limit)
+    let sessions = state.legacy_db.get_sessions(project_id, limit)
         .map_err(|e| e.to_string())?;
 
     let formatted: Vec<Value> = sessions.iter().map(|s| {
@@ -428,7 +428,7 @@ async fn get_recent_sessions(state: &AppState, args: Value) -> Result<Value, Str
 
 /// 列出所有项目
 async fn list_projects(state: &AppState, _args: Value) -> Result<Value, String> {
-    let projects = state.db.get_projects()
+    let projects = state.legacy_db.get_projects()
         .map_err(|e| e.to_string())?;
 
     let formatted: Vec<Value> = projects.iter().map(|p| {
@@ -450,7 +450,7 @@ async fn list_projects(state: &AppState, _args: Value) -> Result<Value, String> 
 
 /// 根据 cwd 查找项目
 fn find_project_by_cwd(state: &AppState, cwd: &str) -> Option<i64> {
-    let projects = state.db.get_projects().ok()?;
+    let projects = state.legacy_db.get_projects().ok()?;
 
     // 精确匹配
     if let Some(p) = projects.iter().find(|p| p.path == cwd) {

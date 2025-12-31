@@ -96,56 +96,50 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("🚀 Memex Rust Backend 启动中...");
 
-    // 初始化共享数据库
-    let _shared_db = {
+    // 初始化共享数据库（必须成功）
+    let shared_db = {
         use claude_session_db::coordination::{Role, WriterHealth};
 
-        match SharedDbAdapter::new(None) {
-            Ok(adapter) => {
-                tracing::info!("[SharedDB] 连接共享数据库成功");
-                let adapter = std::sync::Arc::new(adapter);
-                // 注册 Writer
-                match adapter.register().await {
-                    Ok(role) => {
-                        tracing::info!("[SharedDB] 注册为 {:?}", role);
+        let adapter = SharedDbAdapter::new(None)?;
+        tracing::info!("[SharedDB] 连接共享数据库成功");
+        let adapter = std::sync::Arc::new(adapter);
 
-                        // 如果是 Reader，检查现有 Writer 是否超时
-                        if role == Role::Reader {
-                            match adapter.check_writer_health().await {
-                                Ok(health) => {
-                                    tracing::info!("[SharedDB] 当前 Writer 状态: {:?}", health);
-                                    if matches!(health, WriterHealth::Timeout | WriterHealth::Released) {
-                                        tracing::info!("[SharedDB] Writer 已超时/释放，尝试接管...");
-                                        match adapter.try_takeover().await {
-                                            Ok(true) => {
-                                                tracing::info!("[SharedDB] 接管成功，现在是 Writer");
-                                            }
-                                            Ok(false) => {
-                                                tracing::info!("[SharedDB] 接管失败，其他组件已抢先");
-                                            }
-                                            Err(e) => {
-                                                tracing::warn!("[SharedDB] 接管出错: {}", e);
-                                            }
-                                        }
+        // 注册 Writer
+        match adapter.register().await {
+            Ok(role) => {
+                tracing::info!("[SharedDB] 注册为 {:?}", role);
+
+                // 如果是 Reader，检查现有 Writer 是否超时
+                if role == Role::Reader {
+                    match adapter.check_writer_health().await {
+                        Ok(health) => {
+                            tracing::info!("[SharedDB] 当前 Writer 状态: {:?}", health);
+                            if matches!(health, WriterHealth::Timeout | WriterHealth::Released) {
+                                tracing::info!("[SharedDB] Writer 已超时/释放，尝试接管...");
+                                match adapter.try_takeover().await {
+                                    Ok(true) => {
+                                        tracing::info!("[SharedDB] 接管成功，现在是 Writer");
                                     }
-                                }
-                                Err(e) => {
-                                    tracing::warn!("[SharedDB] 检查 Writer 健康状态失败: {}", e);
+                                    Ok(false) => {
+                                        tracing::info!("[SharedDB] 接管失败，其他组件已抢先");
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("[SharedDB] 接管出错: {}", e);
+                                    }
                                 }
                             }
                         }
-                    }
-                    Err(e) => {
-                        tracing::warn!("[SharedDB] 注册失败: {}", e);
+                        Err(e) => {
+                            tracing::warn!("[SharedDB] 检查 Writer 健康状态失败: {}", e);
+                        }
                     }
                 }
-                Some(adapter)
             }
             Err(e) => {
-                tracing::warn!("[SharedDB] 连接失败: {}，继续运行（不使用共享数据库）", e);
-                None
+                tracing::warn!("[SharedDB] 注册失败: {}", e);
             }
         }
+        adapter
     };
 
     // 加载配置
@@ -166,7 +160,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // 创建采集服务
-    let collector = Collector::new(config.clone(), db.clone(), _shared_db.clone());
+    let collector = Collector::new(config.clone(), db.clone(), Some(shared_db.clone()));
 
     // 创建备份服务
     let backup = BackupService::new(config.db_path(), config.backup_dir());
@@ -315,7 +309,8 @@ async fn main() -> anyhow::Result<()> {
     // 创建应用状态
     let state = Arc::new(AppState {
         config: config.clone(),
-        db,
+        db: shared_db,
+        legacy_db: db,
         collector,
         backup,
         ollama,

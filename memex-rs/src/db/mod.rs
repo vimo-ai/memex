@@ -461,10 +461,11 @@ impl Database {
 
     /// 批量插入消息（从 IndexableMessage）
     /// 用于精确索引场景，直接接受 ai-cli-session-collector 的 IndexableMessage
+    /// 注意：存储 content.text（纯对话文本），用于后续向量化
     pub fn insert_indexable_messages(
         &self,
         session_id: &str,
-        messages: &[ai_cli_session_collector::IndexableMessage],
+        messages: &[claude_session_db::IndexableMessage],
     ) -> Result<(usize, Vec<i64>)> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
@@ -476,6 +477,7 @@ impl Database {
             // role: "user" -> "human", "assistant" -> "assistant"
             let msg_type = if msg.role == "user" { "human" } else { &msg.role };
 
+            // 使用 content.text（纯对话内容）用于向量化
             let result = tx.execute(
                 r#"
                 INSERT OR IGNORE INTO messages (uuid, session_id, type, content, source, channel, timestamp)
@@ -485,7 +487,7 @@ impl Database {
                     msg.uuid,
                     session_id,
                     msg_type,
-                    msg.content,
+                    msg.content.text,  // 使用 text 字段用于向量化
                     "claude",  // source 固定为 claude
                     "code",    // channel 固定为 code
                     msg.timestamp.to_string(),
@@ -506,6 +508,7 @@ impl Database {
 
     /// 批量插入消息
     /// 返回 (插入数量, 新插入的消息 ID 列表)
+    /// 注意：存储 content.text（纯对话文本），用于后续向量化
     pub fn insert_messages_v2(&self, session_id: &str, messages: &[crate::adapter::ParsedMessage]) -> Result<(usize, Vec<i64>)> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
@@ -514,6 +517,7 @@ impl Database {
         let mut new_ids = Vec::new();
 
         for msg in messages {
+            // 使用 content.text（纯对话内容）用于向量化
             let result = tx.execute(
                 r#"
                 INSERT OR IGNORE INTO messages (uuid, session_id, type, content, source, channel, timestamp)
@@ -523,7 +527,7 @@ impl Database {
                     msg.uuid,
                     session_id,
                     msg.message_type.to_string(),
-                    msg.content,
+                    msg.content.text,  // 使用 text 字段用于向量化
                     msg.source.to_string(),
                     msg.channel,
                     msg.timestamp,

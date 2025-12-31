@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use ai_cli_session_collector::{ClaudeAdapter, CodexAdapter, ConversationAdapter};
+use claude_session_db::{ClaudeAdapter, CodexAdapter, ConversationAdapter};
 use crate::config::Config;
 
 /// 适配器注册表

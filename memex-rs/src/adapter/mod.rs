@@ -8,4 +8,4 @@ mod registry;
 pub use registry::AdapterRegistry;
 
 // 只 re-export 实际使用的类型
-pub use ai_cli_session_collector::ParsedMessage;
+pub use claude_session_db::ParsedMessage;

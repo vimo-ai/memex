@@ -34,7 +34,6 @@ dependencies = [
 [[package]]
 name = "ai-cli-session-collector"
 version = "0.1.0"
-source = "git+https://github.com/vimo-ai/AI-cli-session-collector#ca4284e6bb478b61d9994e617024461ef4553e75"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3630,7 +3629,6 @@ checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 name = "memex-rs"
 version = "0.0.1-beta.2"
 dependencies = [
- "ai-cli-session-collector",
  "anyhow",
  "arrow-array",
  "arrow-schema",

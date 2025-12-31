@@ -16,17 +16,21 @@ use crate::collector::Collector;
 use crate::config::Config;
 use crate::db::Database;
 use crate::domain::{MessageListDto, ProjectListDto, SessionListDto, SessionSearchDto};
-// Note: ProjectDetailDto 由 to_detail_dto() 返回，不需要显式导入
 use crate::embedding::OllamaClient;
 use crate::indexer::VectorIndexer;
 use crate::rag::{RagOptions, RagService};
 use crate::search::{HybridSearchOptions, HybridSearchResult, HybridSearchService};
+use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::VectorStore;
 
 /// 应用状态
 pub struct AppState {
     pub config: Config,
-    pub db: Database,
+    /// 新的共享数据库适配器（异步）- 用于 API 层
+    pub db: Arc<SharedDbAdapter>,
+    /// 旧的数据库（同步）- 用于尚未迁移的模块（collector, indexer, search, rag, mcp, ffi）
+    /// TODO: 迁移完成后删除
+    pub legacy_db: Database,
     pub collector: Collector,
     pub backup: BackupService,
     pub ollama: Option<Arc<OllamaClient>>,
@@ -105,7 +109,7 @@ struct StatsResponse {
 }
 
 async fn get_stats(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
-    let stats = state.db.get_stats()?;
+    let stats = state.db.get_stats().await?;
     Ok(Json(StatsResponse {
         project_count: stats.project_count,
         session_count: stats.session_count,
@@ -118,11 +122,13 @@ async fn get_stats(State(state): State<Arc<AppState>>) -> Result<impl IntoRespon
 // ==================== 项目 ====================
 
 async fn get_projects(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
-    let projects: Vec<_> = state
+    use crate::domain::ProjectDto;
+    let projects: Vec<ProjectDto> = state
         .db
-        .get_projects()?
+        .list_projects()
+        .await?
         .into_iter()
-        .map(|p| p.with_local_time().to_dto())
+        .map(Into::into)
         .collect();
 
     let response = ProjectListDto {
@@ -136,9 +142,10 @@ async fn get_project(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, AppError> {
-    match state.db.get_project(id)? {
+    use crate::domain::ProjectDetailDto;
+    match state.db.get_project(id).await? {
         Some(project) => {
-            let dto = project.with_local_time().to_detail_dto();
+            let dto: ProjectDetailDto = project.into();
             Ok(Json(dto).into_response())
         }
         None => Ok((
@@ -153,8 +160,9 @@ async fn get_project_sessions(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, AppError> {
+    use crate::domain::SessionDto;
     // 先检查项目是否存在
-    if state.db.get_project(id)?.is_none() {
+    if state.db.get_project(id).await?.is_none() {
         return Ok((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "项目不存在"})),
@@ -162,11 +170,12 @@ async fn get_project_sessions(
             .into_response());
     }
 
-    let sessions: Vec<_> = state
+    let sessions: Vec<SessionDto> = state
         .db
-        .get_sessions_by_project(id)?
+        .get_sessions(Some(id), 1000)
+        .await?
         .into_iter()
-        .map(|s| s.with_local_time().to_dto())
+        .map(Into::into)
         .collect();
 
     let response = SessionListDto {
@@ -205,11 +214,13 @@ async fn get_sessions(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SessionsQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    let sessions: Vec<_> = state
+    use crate::domain::SessionDto;
+    let sessions: Vec<SessionDto> = state
         .db
-        .get_sessions(query.project_id, query.limit)?
+        .get_sessions(query.project_id, query.limit)
+        .await?
         .into_iter()
-        .map(|s| s.with_local_time().to_dto())
+        .map(Into::into)
         .collect();
 
     let response = SessionListDto {
@@ -224,6 +235,7 @@ async fn search_sessions(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SessionSearchQuery>,
 ) -> Result<impl IntoResponse, AppError> {
+    use crate::domain::SessionDto;
     let id_prefix = query.id_prefix.unwrap_or_default();
 
     if id_prefix.trim().is_empty() {
@@ -234,11 +246,12 @@ async fn search_sessions(
         }));
     }
 
-    let sessions: Vec<_> = state
+    let sessions: Vec<SessionDto> = state
         .db
-        .search_sessions_by_prefix(&id_prefix, query.limit)?
+        .search_sessions_by_prefix(&id_prefix, query.limit)
+        .await?
         .into_iter()
-        .map(|s| s.with_local_time().to_dto())
+        .map(Into::into)
         .collect();
 
     let response = SessionSearchDto {
@@ -253,9 +266,10 @@ async fn get_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    match state.db.get_session(&id)? {
+    use crate::domain::SessionDto;
+    match state.db.get_session(&id).await? {
         Some(session) => {
-            let dto = session.with_local_time().to_dto();
+            let dto: SessionDto = session.into();
             Ok(Json(dto).into_response())
         }
         None => Ok((
@@ -279,15 +293,17 @@ async fn get_session_messages(
     Path(id): Path<String>,
     Query(query): Query<MessagesQuery>,
 ) -> Result<impl IntoResponse, AppError> {
+    use crate::domain::MessageDto;
     // 先获取总消息数（分页前）
-    let total = state.db.get_session_message_count(&id)? as usize;
+    let total = state.db.get_session_message_count(&id).await? as usize;
 
     let desc = query.order.as_deref() == Some("desc");
-    let messages: Vec<_> = state
+    let messages: Vec<MessageDto> = state
         .db
-        .get_messages_with_options(&id, query.limit, desc)?
+        .get_messages_with_options(&id, query.limit, desc)
+        .await?
         .into_iter()
-        .map(|m| m.with_local_time().to_dto())
+        .map(Into::into)
         .collect();
 
     let response = MessageListDto { total, messages };
@@ -325,9 +341,27 @@ async fn search(
         }));
     }
 
-    let results: Vec<_> = state.db.search(&query.q, query.limit, query.project_id)?
+    // 使用 SharedDbAdapter 的 FTS 搜索
+    let results = if let Some(project_id) = query.project_id {
+        state.db.search_fts_with_project(&query.q, query.limit, Some(project_id)).await?
+    } else {
+        state.db.search_fts(&query.q, query.limit).await?
+    };
+
+    // 转换为 domain::SearchResult
+    let results: Vec<crate::domain::SearchResult> = results
         .into_iter()
-        .map(|r| r.with_local_time())
+        .map(|r| crate::domain::SearchResult {
+            message_id: r.message_id,
+            session_id: r.session_id,
+            project_id: r.project_id,
+            project_name: r.project_name,
+            r#type: r.r#type,
+            content: r.content_full.clone(),
+            snippet: r.snippet,
+            score: r.score,
+            timestamp: r.timestamp.map(crate::domain::ms_to_local_iso),
+        })
         .collect();
     let total = results.len();
 
@@ -577,6 +611,7 @@ struct CollectResponse {
 }
 
 async fn collect(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
+    // TODO: Collector 迁移后改为 async
     let result = state.collector.collect_all()?;
 
     Ok(Json(CollectResponse {
@@ -882,9 +917,9 @@ struct FixMetadataResponse {
 
 async fn fix_metadata(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
     // 统计没有 cwd 的会话数量
-    let sessions_without_cwd = state.db.count_sessions_without_cwd()?;
+    let sessions_without_cwd = state.db.count_sessions_without_cwd().await?;
 
-    // 触发采集
+    // 触发采集 (TODO: Collector 迁移后改为 async)
     let collect_result = state.collector.collect_all()?;
 
     Ok(Json(FixMetadataResponse {
@@ -921,10 +956,10 @@ async fn merge_projects(State(state): State<Arc<AppState>>) -> Result<impl IntoR
     let mut details = Vec::new();
 
     // 获取所有项目及其来源
-    let projects = state.db.get_all_projects_with_source()?;
+    let projects = state.db.get_all_projects_with_source().await?;
 
     // 按 path 分组
-    let mut path_groups: std::collections::HashMap<String, Vec<crate::db::ProjectWithSource>> =
+    let mut path_groups: std::collections::HashMap<String, Vec<claude_session_db::ProjectWithSource>> =
         std::collections::HashMap::new();
 
     for project in projects {
@@ -955,11 +990,11 @@ async fn merge_projects(State(state): State<Arc<AppState>>) -> Result<impl IntoR
 
         for dup in duplicates {
             // 移动会话到目标项目
-            let moved = state.db.update_sessions_project_id(dup.id, target.id)?;
+            let moved = state.db.update_sessions_project_id(dup.id, target.id).await?;
             total_sessions_moved += moved;
 
             // 删除重复项目
-            state.db.delete_project(dup.id)?;
+            state.db.delete_project(dup.id).await?;
 
             merged_from.push(dup.id);
             deleted_count += 1;
@@ -994,7 +1029,7 @@ struct DeduplicateProjectsResponse {
 async fn deduplicate_projects(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, AppError> {
-    let (merged_count, deleted_ids) = state.db.deduplicate_projects()?;
+    let (merged_count, deleted_ids) = state.db.deduplicate_projects().await?;
 
     Ok(Json(DeduplicateProjectsResponse {
         merged_count,

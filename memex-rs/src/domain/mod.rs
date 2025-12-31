@@ -1,6 +1,9 @@
-//! 领域模型
+//! 领域模型 - API DTO 和类型转换
+//!
+//! 定义 API 响应格式（DTO），并提供从 claude_session_db 类型的转换
 
 use chrono::{DateTime, Local, Utc};
+use claude_session_db::{Message as DbMessage, Project as DbProject, Session as DbSession};
 use serde::{Deserialize, Serialize};
 
 /// 将 UTC 时间字符串转换为本地时区 ISO 8601 格式
@@ -315,5 +318,89 @@ impl SearchResult {
     pub fn with_local_time(mut self) -> Self {
         self.timestamp = to_local_time(self.timestamp.as_deref());
         self
+    }
+}
+
+// ==================== 从 claude_session_db 类型转换 ====================
+
+/// 毫秒时间戳转 ISO 8601 字符串（本地时区）
+pub fn ms_to_local_iso(ms: i64) -> String {
+    use chrono::TimeZone;
+    Local
+        .timestamp_millis_opt(ms)
+        .single()
+        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string())
+        .unwrap_or_else(now_local_iso)
+}
+
+impl From<DbProject> for ProjectDto {
+    fn from(p: DbProject) -> Self {
+        ProjectDto {
+            id: p.id,
+            name: p.name,
+            path: p.path.clone(),
+            encoded_dir_name: Some(encode_path(&p.path)),
+            source: Some(p.source),
+            created_at: ms_to_local_iso(p.created_at),
+            updated_at: ms_to_local_iso(p.updated_at),
+            session_count: None, // 需要额外查询
+            message_count: None, // 需要额外查询
+        }
+    }
+}
+
+impl From<DbProject> for ProjectDetailDto {
+    fn from(p: DbProject) -> Self {
+        ProjectDetailDto {
+            id: p.id,
+            name: p.name,
+            path: p.path.clone(),
+            encoded_dir_name: Some(encode_path(&p.path)),
+            source: Some(p.source),
+            created_at: ms_to_local_iso(p.created_at),
+            updated_at: ms_to_local_iso(p.updated_at),
+            session_count: 0, // 需要额外查询
+            message_count: 0, // 需要额外查询
+        }
+    }
+}
+
+impl From<DbSession> for SessionDto {
+    fn from(s: DbSession) -> Self {
+        SessionDto {
+            id: s.session_id,
+            project_id: s.project_id,
+            status: "completed".to_string(),
+            source: Some("claude".to_string()),
+            channel: s.channel,
+            cwd: s.cwd,
+            model: s.model,
+            meta: s.meta.and_then(|m| serde_json::from_str(&m).ok()),
+            message_count: s.message_count,
+            created_at: ms_to_local_iso(s.created_at),
+            updated_at: ms_to_local_iso(s.updated_at),
+        }
+    }
+}
+
+impl From<DbMessage> for MessageDto {
+    fn from(m: DbMessage) -> Self {
+        MessageDto {
+            id: m.id,
+            uuid: m.uuid,
+            session_id: m.session_id,
+            r#type: m.r#type.to_string(),
+            source: m.source,
+            channel: m.channel,
+            model: m.model,
+            tool_call_id: m.tool_call_id,
+            tool_name: m.tool_name,
+            tool_args: m.tool_args,
+            raw: m.raw,
+            meta: None,
+            content: m.content_text, // 使用 content_text 作为显示内容
+            timestamp: Some(ms_to_local_iso(m.timestamp)),
+            created_at: ms_to_local_iso(m.timestamp),
+        }
     }
 }

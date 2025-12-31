@@ -35,7 +35,7 @@ impl SharedDbAdapter {
     /// 创建适配器（连接到共享数据库）
     ///
     /// # Arguments
-    /// - `shared_db_path`: 共享数据库路径（默认 ~/.vimo/db/claude-session.db）
+    /// - `shared_db_path`: 共享数据库路径（默认 ~/.vimo/db/ai-cli-session.db）
     pub fn new(shared_db_path: Option<PathBuf>) -> Result<Self> {
         let db_path = shared_db_path.unwrap_or_else(|| {
             // 支持 VIMO_HOME 环境变量覆盖
@@ -43,7 +43,7 @@ impl SharedDbAdapter {
                 let home = std::env::var("HOME").unwrap_or_default();
                 format!("{}/.vimo", home)
             });
-            PathBuf::from(format!("{}/db/claude-session.db", vimo_root))
+            PathBuf::from(format!("{}/db/ai-cli-session.db", vimo_root))
         });
 
         // 确保目录存在
@@ -281,6 +281,123 @@ impl SharedDbAdapter {
     pub async fn get_stats(&self) -> Result<claude_session_db::Stats> {
         let db = self.db.read().await;
         Ok(db.get_stats()?)
+    }
+
+    // ==================== 向量索引 ====================
+
+    /// 获取未向量索引的消息（用于增量索引）
+    pub async fn get_unindexed_messages(&self, limit: usize) -> Result<Vec<claude_session_db::Message>> {
+        let db = self.db.read().await;
+        Ok(db.get_unindexed_messages(limit)?)
+    }
+
+    /// 标记消息已向量索引
+    pub async fn mark_messages_indexed(&self, message_ids: &[i64]) -> Result<usize> {
+        let db = self.db.write().await;
+        Ok(db.mark_messages_indexed(message_ids)?)
+    }
+
+    /// 获取未索引消息的数量
+    pub async fn count_unindexed_messages(&self) -> Result<i64> {
+        let db = self.db.read().await;
+        Ok(db.count_unindexed_messages()?)
+    }
+
+    /// 按 ID 列表获取消息
+    pub async fn get_messages_by_ids(&self, ids: &[i64]) -> Result<Vec<claude_session_db::Message>> {
+        let db = self.db.read().await;
+        Ok(db.get_messages_by_ids(ids)?)
+    }
+
+    // ==================== 新增 API ====================
+
+    /// 获取单个 Session
+    pub async fn get_session(&self, session_id: &str) -> Result<Option<claude_session_db::Session>> {
+        let db = self.db.read().await;
+        Ok(db.get_session(session_id)?)
+    }
+
+    /// 检查 Session 是否存在
+    pub async fn session_exists(&self, session_id: &str) -> Result<bool> {
+        let db = self.db.read().await;
+        Ok(db.session_exists(session_id)?)
+    }
+
+    /// 获取 Session 的消息数量
+    pub async fn get_session_message_count(&self, session_id: &str) -> Result<i64> {
+        let db = self.db.read().await;
+        Ok(db.get_session_message_count(session_id)?)
+    }
+
+    /// 获取 Sessions (支持可选的 project_id 过滤)
+    pub async fn get_sessions(&self, project_id: Option<i64>, limit: usize) -> Result<Vec<Session>> {
+        let db = self.db.read().await;
+        Ok(db.get_sessions(project_id, limit)?)
+    }
+
+    /// 获取 Session 的所有 Messages (无分页)
+    pub async fn get_messages(&self, session_id: &str) -> Result<Vec<Message>> {
+        let db = self.db.read().await;
+        Ok(db.get_messages(session_id)?)
+    }
+
+    /// 获取 Session 的 Messages (带分页和排序选项)
+    pub async fn get_messages_with_options(
+        &self,
+        session_id: &str,
+        limit: Option<usize>,
+        desc: bool,
+    ) -> Result<Vec<Message>> {
+        let db = self.db.read().await;
+        Ok(db.get_messages_with_options(session_id, limit, desc)?)
+    }
+
+    /// 通过前缀解析完整会话 ID
+    pub async fn resolve_session_id(&self, prefix: &str) -> Result<Option<String>> {
+        let db = self.db.read().await;
+        Ok(db.resolve_session_id(prefix)?)
+    }
+
+    /// 按 session_id 前缀搜索会话列表
+    pub async fn search_sessions_by_prefix(&self, prefix: &str, limit: usize) -> Result<Vec<Session>> {
+        let db = self.db.read().await;
+        Ok(db.search_sessions_by_prefix(prefix, limit)?)
+    }
+
+    /// 获取单个 Project
+    pub async fn get_project(&self, id: i64) -> Result<Option<Project>> {
+        let db = self.db.read().await;
+        Ok(db.get_project(id)?)
+    }
+
+    /// 统计缺少 cwd 的会话数量
+    pub async fn count_sessions_without_cwd(&self) -> Result<i64> {
+        let db = self.db.read().await;
+        Ok(db.count_sessions_without_cwd()?)
+    }
+
+    /// 获取所有项目（带 source 字段）
+    pub async fn get_all_projects_with_source(&self) -> Result<Vec<claude_session_db::ProjectWithSource>> {
+        let db = self.db.read().await;
+        Ok(db.get_all_projects_with_source()?)
+    }
+
+    /// 更新会话的项目 ID
+    pub async fn update_sessions_project_id(&self, from_project_id: i64, to_project_id: i64) -> Result<usize> {
+        let db = self.db.write().await;
+        Ok(db.update_sessions_project_id(from_project_id, to_project_id)?)
+    }
+
+    /// 删除项目
+    pub async fn delete_project(&self, project_id: i64) -> Result<()> {
+        let db = self.db.write().await;
+        Ok(db.delete_project(project_id)?)
+    }
+
+    /// 去重项目
+    pub async fn deduplicate_projects(&self) -> Result<(usize, Vec<i64>)> {
+        let db = self.db.write().await;
+        Ok(db.deduplicate_projects()?)
     }
 }
 

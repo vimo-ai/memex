@@ -154,7 +154,7 @@ impl Collector {
     /// 按路径采集单个会话（精确索引，替代 file watcher）
     /// 接受 JSONL 文件路径，解析并更新数据库
     pub fn collect_by_path(&self, path: &str) -> Result<CollectResult> {
-        use ai_cli_session_collector::ClaudeAdapter;
+        use claude_session_db::ClaudeAdapter;
 
         let mut result = CollectResult::default();
 
@@ -222,7 +222,6 @@ impl Collector {
         messages: &[crate::adapter::ParsedMessage],
     ) {
         use claude_session_db::db::MessageInput;
-        use claude_session_db::MessageRole;
 
         let Some(shared_db) = &self.shared_db else {
             return;
@@ -246,14 +245,18 @@ impl Collector {
 
                 MessageInput {
                     uuid: msg.uuid.clone(),
-                    role: match msg.message_type.to_string().as_str() {
-                        "human" => MessageRole::Human,
-                        "assistant" => MessageRole::Assistant,
-                        _ => MessageRole::Human,
-                    },
-                    content: msg.content.clone(),
+                    r#type: msg.message_type,  // 直接使用，类型统一
+                    content_text: msg.content.text.clone(),  // 纯对话文本（向量化用）
+                    content_full: msg.content.full.clone(),  // 完整内容（FTS 用）
                     timestamp,
                     sequence: i as i64,
+                    source: Some(msg.source.to_string()),
+                    channel: msg.channel.clone(),
+                    model: msg.model.clone(),
+                    tool_call_id: msg.tool_call_id.clone(),
+                    tool_name: msg.tool_name.clone(),
+                    tool_args: msg.tool_args.clone(),
+                    raw: msg.raw.clone(),
                 }
             })
             .collect();
@@ -310,10 +313,9 @@ impl Collector {
         project_name: &str,
         project_path: &str,
         session_id: &str,
-        messages: &[ai_cli_session_collector::IndexableMessage],
+        messages: &[claude_session_db::IndexableMessage],
     ) {
-        use claude_session_db::db::MessageInput;
-        use claude_session_db::MessageRole;
+        use claude_session_db::{db::MessageInput, MessageType};
 
         let Some(shared_db) = &self.shared_db else {
             return;
@@ -325,14 +327,25 @@ impl Collector {
             .map(|msg| {
                 MessageInput {
                     uuid: msg.uuid.clone(),
-                    role: if msg.role == "user" || msg.role == "human" {
-                        MessageRole::Human
+                    r#type: if msg.role == "user" || msg.role == "human" {
+                        MessageType::User
+                    } else if msg.role == "tool" {
+                        MessageType::Tool
                     } else {
-                        MessageRole::Assistant
+                        MessageType::Assistant
                     },
-                    content: msg.content.clone(),
+                    content_text: msg.content.text.clone(),  // 纯对话文本（向量化用）
+                    content_full: msg.content.full.clone(),  // 完整内容（FTS 用）
                     timestamp: msg.timestamp,
                     sequence: msg.sequence,
+                    // collect_by_path 只用于 Claude Code
+                    source: Some("claude".to_string()),
+                    channel: Some("code".to_string()),
+                    model: None,  // IndexableMessage 没有 model 信息
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_args: None,
+                    raw: None,
                 }
             })
             .collect();
