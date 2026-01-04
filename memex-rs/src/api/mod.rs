@@ -14,7 +14,6 @@ use tokio::sync::RwLock;
 use crate::backup::BackupService;
 use crate::collector::Collector;
 use crate::config::Config;
-use crate::db::Database;
 use crate::domain::{MessageListDto, ProjectListDto, SessionListDto, SessionSearchDto};
 use crate::embedding::OllamaClient;
 use crate::indexer::VectorIndexer;
@@ -26,11 +25,8 @@ use crate::vector::VectorStore;
 /// 应用状态
 pub struct AppState {
     pub config: Config,
-    /// 新的共享数据库适配器（异步）- 用于 API 层
+    /// 共享数据库适配器（异步）
     pub db: Arc<SharedDbAdapter>,
-    /// 旧的数据库（同步）- 用于尚未迁移的模块（collector, indexer, search, rag, mcp, ffi）
-    /// TODO: 迁移完成后删除
-    pub legacy_db: Database,
     pub collector: Collector,
     pub backup: BackupService,
     pub ollama: Option<Arc<OllamaClient>>,

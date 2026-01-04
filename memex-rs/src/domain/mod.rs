@@ -3,7 +3,10 @@
 //! 定义 API 响应格式（DTO），并提供从 claude_session_db 类型的转换
 
 use chrono::{DateTime, Local, Utc};
-use claude_session_db::{Message as DbMessage, Project as DbProject, Session as DbSession};
+use claude_session_db::{
+    Message as DbMessage, Project as DbProject, SearchResult as DbSearchResult,
+    Session as DbSession,
+};
 use serde::{Deserialize, Serialize};
 
 /// 将 UTC 时间字符串转换为本地时区 ISO 8601 格式
@@ -187,7 +190,7 @@ impl Project {
             id: self.id,
             name: self.name.clone(),
             path: self.path.clone(),
-            encoded_dir_name: Some(encode_path(&self.path)),
+            encoded_dir_name: None, // memex 本地 Project 没有此字段
             source: Some("claude".to_string()),
             created_at: self.last_active.clone().unwrap_or_else(|| now.clone()),
             updated_at: self.last_active.clone().unwrap_or_else(|| now.clone()),
@@ -203,7 +206,7 @@ impl Project {
             id: self.id,
             name: self.name.clone(),
             path: self.path.clone(),
-            encoded_dir_name: Some(encode_path(&self.path)),
+            encoded_dir_name: None, // memex 本地 Project 没有此字段
             source: Some("claude".to_string()),
             created_at: self.last_active.clone().unwrap_or_else(|| now.clone()),
             updated_at: self.last_active.clone().unwrap_or_else(|| now.clone()),
@@ -211,13 +214,6 @@ impl Project {
             message_count: self.message_count,
         }
     }
-}
-
-/// 编码路径为目录名 (与 Claude Code 格式兼容)
-fn encode_path(path: &str) -> String {
-    path.replace('/', "-")
-        .trim_start_matches('-')
-        .to_string()
 }
 
 /// 会话
@@ -338,8 +334,8 @@ impl From<DbProject> for ProjectDto {
         ProjectDto {
             id: p.id,
             name: p.name,
-            path: p.path.clone(),
-            encoded_dir_name: Some(encode_path(&p.path)),
+            path: p.path,
+            encoded_dir_name: p.encoded_dir_name,
             source: Some(p.source),
             created_at: ms_to_local_iso(p.created_at),
             updated_at: ms_to_local_iso(p.updated_at),
@@ -354,8 +350,8 @@ impl From<DbProject> for ProjectDetailDto {
         ProjectDetailDto {
             id: p.id,
             name: p.name,
-            path: p.path.clone(),
-            encoded_dir_name: Some(encode_path(&p.path)),
+            path: p.path,
+            encoded_dir_name: p.encoded_dir_name,
             source: Some(p.source),
             created_at: ms_to_local_iso(p.created_at),
             updated_at: ms_to_local_iso(p.updated_at),
@@ -401,6 +397,22 @@ impl From<DbMessage> for MessageDto {
             content: m.content_text, // 使用 content_text 作为显示内容
             timestamp: Some(ms_to_local_iso(m.timestamp)),
             created_at: ms_to_local_iso(m.timestamp),
+        }
+    }
+}
+
+impl From<DbSearchResult> for SearchResult {
+    fn from(r: DbSearchResult) -> Self {
+        SearchResult {
+            message_id: r.message_id,
+            session_id: r.session_id,
+            project_id: r.project_id,
+            project_name: r.project_name,
+            r#type: r.r#type,
+            content: r.content_full,
+            snippet: r.snippet,
+            score: r.score,
+            timestamp: r.timestamp.map(ms_to_local_iso),
         }
     }
 }

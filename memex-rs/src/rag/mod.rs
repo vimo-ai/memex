@@ -13,9 +13,9 @@ use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::db::Database;
 use crate::embedding::OllamaClient;
 use crate::search::{HybridSearchOptions, HybridSearchService, SearchMode};
+use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::VectorStore;
 
 /// RAG 响应结果
@@ -84,7 +84,7 @@ struct SourceWithContext {
 
 /// RAG 服务
 pub struct RagService {
-    db: Database,
+    db: Arc<SharedDbAdapter>,
     ollama: Option<Arc<OllamaClient>>,
     hybrid_search: HybridSearchService,
     chat_model: String,
@@ -93,7 +93,7 @@ pub struct RagService {
 impl RagService {
     /// 创建 RAG 服务
     pub fn new(
-        db: Database,
+        db: Arc<SharedDbAdapter>,
         ollama: Option<Arc<OllamaClient>>,
         vector: Option<Arc<RwLock<VectorStore>>>,
         chat_model: String,
@@ -154,7 +154,7 @@ impl RagService {
                 &result.session_id,
                 result.message_id,
                 context_window,
-            )?;
+            ).await?;
 
             sources_with_context.push(SourceWithContext {
                 session_id: result.session_id.clone(),
@@ -229,13 +229,13 @@ impl RagService {
     }
 
     /// 构建消息上下文
-    fn build_message_context(
+    async fn build_message_context(
         &self,
         session_id: &str,
         message_id: i64,
         context_window: usize,
     ) -> Result<MessageContext> {
-        let all_messages = self.db.get_messages(session_id)?;
+        let all_messages = self.db.get_messages(session_id).await?;
 
         // 查找当前消息的索引
         let message_index = all_messages
@@ -251,7 +251,7 @@ impl RagService {
         let context_messages: Vec<String> = all_messages[start_idx..end_idx]
             .iter()
             .map(|msg| {
-                let content_preview: String = msg.content.chars().take(500).collect();
+                let content_preview: String = msg.content_text.chars().take(500).collect();
                 format!("[{}] {}", msg.r#type, content_preview)
             })
             .collect();

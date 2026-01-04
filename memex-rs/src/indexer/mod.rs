@@ -4,8 +4,8 @@ use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
-use crate::db::Database;
 use crate::embedding::{Chunker, OllamaClient};
+use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::{VectorRecord, VectorStore};
 
 // ==================== 索引队列 ====================
@@ -59,7 +59,7 @@ impl IndexQueue {
 /// 向量索引服务
 #[derive(Clone)]
 pub struct VectorIndexer {
-    db: Database,
+    db: Arc<SharedDbAdapter>,
     ollama: Arc<OllamaClient>,
     vector: Arc<RwLock<VectorStore>>,
     chunker: Chunker,
@@ -78,7 +78,7 @@ pub struct IndexResult {
 impl VectorIndexer {
     /// 创建索引服务
     pub fn new(
-        db: Database,
+        db: Arc<SharedDbAdapter>,
         ollama: Arc<OllamaClient>,
         vector: Arc<RwLock<VectorStore>>,
     ) -> Self {
@@ -108,7 +108,7 @@ impl VectorIndexer {
         // 批量标记（每次 1000 条，避免 SQL 语句过长）
         let mut total_marked = 0;
         for chunk in indexed_ids.chunks(1000) {
-            match self.db.mark_messages_indexed(chunk) {
+            match self.db.mark_messages_indexed(chunk).await {
                 Ok(n) => total_marked += n,
                 Err(e) => tracing::error!("标记已索引失败: {}", e),
             }
@@ -129,10 +129,10 @@ impl VectorIndexer {
         };
 
         // 获取所有会话
-        let sessions = self.db.get_sessions(None, 10000)?;
+        let sessions = self.db.get_sessions(None, 10000).await?;
 
         for session in sessions {
-            match self.index_session(&session.id).await {
+            match self.index_session(&session.session_id).await {
                 Ok(session_result) => {
                     result.total_messages += session_result.total_messages;
                     result.indexed_messages += session_result.indexed_messages;
@@ -140,7 +140,7 @@ impl VectorIndexer {
                     result.skipped += session_result.skipped;
                 }
                 Err(e) => {
-                    result.errors.push(format!("会话 {} 索引失败: {}", session.id, e));
+                    result.errors.push(format!("会话 {} 索引失败: {}", session.session_id, e));
                 }
             }
         }
@@ -171,20 +171,20 @@ impl VectorIndexer {
             errors: vec![],
         };
 
-        let messages = self.db.get_messages(session_id)?;
+        let messages = self.db.get_messages(session_id).await?;
         result.total_messages = messages.len();
 
         let mut indexed_ids = Vec::new();
 
         for message in messages {
             // 只处理 assistant 类型
-            if message.r#type != "assistant" {
+            if message.r#type.to_string() != "assistant" {
                 result.skipped += 1;
                 continue;
             }
 
             // 分片
-            let chunks = self.chunker.chunk(&message.content);
+            let chunks = self.chunker.chunk(&message.content_text);
             let mut records = Vec::new();
             let mut chunk_success = true;
 
@@ -226,7 +226,7 @@ impl VectorIndexer {
 
         // 批量标记已索引
         if !indexed_ids.is_empty() {
-            if let Err(e) = self.db.mark_messages_indexed(&indexed_ids) {
+            if let Err(e) = self.db.mark_messages_indexed(&indexed_ids).await {
                 tracing::error!("标记已索引失败: {}", e);
             }
         }
@@ -251,18 +251,18 @@ impl VectorIndexer {
         }
 
         // 按 ID 获取消息
-        let messages = self.db.get_messages_by_ids(message_ids)?;
+        let messages = self.db.get_messages_by_ids(message_ids).await?;
         let mut indexed_ids = Vec::new();
 
         for message in &messages {
             // 只处理 assistant 类型的消息
-            if message.r#type != "assistant" {
+            if message.r#type.to_string() != "assistant" {
                 result.skipped += 1;
                 continue;
             }
 
             // 分片
-            let chunks = self.chunker.chunk(&message.content);
+            let chunks = self.chunker.chunk(&message.content_text);
             let mut records = Vec::new();
             let mut chunk_success = true;
 
@@ -306,7 +306,7 @@ impl VectorIndexer {
 
         // 批量标记已索引
         if !indexed_ids.is_empty() {
-            if let Err(e) = self.db.mark_messages_indexed(&indexed_ids) {
+            if let Err(e) = self.db.mark_messages_indexed(&indexed_ids).await {
                 tracing::error!("标记已索引失败: {}", e);
             }
         }
@@ -335,7 +335,7 @@ impl VectorIndexer {
         };
 
         // 直接获取未索引的消息（高效！只查询 vector_indexed = 0 的记录）
-        let messages = self.db.get_unindexed_messages(limit)?;
+        let messages = self.db.get_unindexed_messages(limit).await?;
         result.total_messages = messages.len();
 
         if messages.is_empty() {
@@ -348,7 +348,7 @@ impl VectorIndexer {
 
         for message in messages {
             // 分片并索引
-            let chunks = self.chunker.chunk(&message.content);
+            let chunks = self.chunker.chunk(&message.content_text);
             let mut records = Vec::new();
             let mut chunk_success = true;
 
@@ -388,7 +388,7 @@ impl VectorIndexer {
 
         // 批量标记已索引
         if !indexed_ids.is_empty() {
-            if let Err(e) = self.db.mark_messages_indexed(&indexed_ids) {
+            if let Err(e) = self.db.mark_messages_indexed(&indexed_ids).await {
                 tracing::error!("标记已索引失败: {}", e);
             }
         }

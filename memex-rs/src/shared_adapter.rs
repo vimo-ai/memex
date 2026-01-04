@@ -5,7 +5,7 @@
 use anyhow::Result;
 use claude_session_db::{
     coordination::{Role, WriterHealth, WriterType},
-    db::MessageInput,
+    db::{MessageInput, SessionInput},
     DbConfig, Message, Project, SearchResult, Session, SessionDB,
 };
 use std::path::PathBuf;
@@ -223,11 +223,22 @@ impl SharedDbAdapter {
         Ok(db.get_or_create_project(name, path, source)?)
     }
 
-    /// Upsert 会话
-    pub async fn upsert_session(&self, session_id: &str, project_id: i64) -> Result<()> {
-        // 写操作，使用 write 锁
+    /// 获取或创建项目（支持 encoded_dir_name）
+    pub async fn get_or_create_project_with_encoded(
+        &self,
+        name: &str,
+        path: &str,
+        source: &str,
+        encoded_dir_name: Option<&str>,
+    ) -> Result<i64> {
         let db = self.db.write().await;
-        Ok(db.upsert_session(session_id, project_id)?)
+        Ok(db.get_or_create_project_with_encoded(name, path, source, encoded_dir_name)?)
+    }
+
+    /// Upsert 会话（完整版，支持所有元数据字段）
+    pub async fn upsert_session(&self, input: &SessionInput) -> Result<()> {
+        let db = self.db.write().await;
+        Ok(db.upsert_session_full(input)?)
     }
 
     /// 批量插入消息
@@ -241,6 +252,12 @@ impl SharedDbAdapter {
     pub async fn list_projects(&self) -> Result<Vec<Project>> {
         let db = self.db.read().await;
         Ok(db.list_projects()?)
+    }
+
+    /// 列出项目（带统计信息）
+    pub async fn list_projects_with_stats(&self) -> Result<Vec<claude_session_db::ProjectWithStats>> {
+        let db = self.db.read().await;
+        Ok(db.list_projects_with_stats()?)
     }
 
     /// 列出会话
@@ -327,6 +344,12 @@ impl SharedDbAdapter {
     pub async fn get_session_message_count(&self, session_id: &str) -> Result<i64> {
         let db = self.db.read().await;
         Ok(db.get_session_message_count(session_id)?)
+    }
+
+    /// 获取 Session 的最新消息时间戳（毫秒）
+    pub async fn get_session_latest_timestamp(&self, session_id: &str) -> Result<Option<i64>> {
+        let db = self.db.read().await;
+        Ok(db.get_session_latest_timestamp(session_id)?)
     }
 
     /// 获取 Sessions (支持可选的 project_id 过滤)

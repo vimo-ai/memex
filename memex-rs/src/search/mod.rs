@@ -9,8 +9,9 @@ use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::db::Database;
+use crate::domain::ms_to_local_iso;
 use crate::embedding::OllamaClient;
+use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::VectorStore;
 
 /// RRF 融合常数 (标准值为 60)
@@ -97,7 +98,7 @@ pub enum SearchMode {
 
 /// 混合检索服务
 pub struct HybridSearchService {
-    db: Database,
+    db: Arc<SharedDbAdapter>,
     ollama: Option<Arc<OllamaClient>>,
     vector: Option<Arc<RwLock<VectorStore>>>,
 }
@@ -105,7 +106,7 @@ pub struct HybridSearchService {
 impl HybridSearchService {
     /// 创建混合检索服务
     pub fn new(
-        db: Database,
+        db: Arc<SharedDbAdapter>,
         ollama: Option<Arc<OllamaClient>>,
         vector: Option<Arc<RwLock<VectorStore>>>,
     ) -> Self {
@@ -142,10 +143,11 @@ impl HybridSearchService {
 
         // FTS 搜索
         if mode == SearchMode::Fts || mode == SearchMode::Hybrid {
-            match self.db.search(&query, limit * 2, project_id) {
+            match self.db.search_fts_with_project(&query, limit * 2, project_id).await {
                 Ok(results) => {
                     tracing::debug!("[FTS] 返回 {} 条结果", results.len());
-                    fts_results = results;
+                    // 转换为 domain::SearchResult
+                    fts_results = results.into_iter().map(Into::into).collect();
                 }
                 Err(e) => {
                     tracing::warn!("[FTS] 搜索失败: {}", e);
@@ -224,10 +226,11 @@ impl HybridSearchService {
         // 执行向量搜索
         let vector_store = vector.read().await;
         let results = vector_store.search(&query_embedding, limit).await?;
+        drop(vector_store);
 
         // 获取消息详情
         let message_ids: Vec<i64> = results.iter().map(|r| r.message_id).collect();
-        let messages = self.db.get_messages_by_ids(&message_ids)?;
+        let messages = self.db.get_messages_by_ids(&message_ids).await?;
 
         // 构建结果 (需要关联会话和项目信息)
         let mut items = Vec::new();
@@ -236,18 +239,25 @@ impl HybridSearchService {
             let msg = messages.iter().find(|m| m.id == result.message_id);
             if let Some(msg) = msg {
                 // 获取会话信息
-                if let Ok(Some(session)) = self.db.get_session(&msg.session_id) {
+                if let Ok(Some(session)) = self.db.get_session(&msg.session_id).await {
+                    // 获取项目名称
+                    let project_name = if let Ok(Some(project)) = self.db.get_project(session.project_id).await {
+                        project.name
+                    } else {
+                        "Unknown".to_string()
+                    };
+
                     items.push(VectorSearchItem {
                         message_id: result.message_id,
                         session_id: msg.session_id.clone(),
                         project_id: session.project_id,
-                        project_name: session.project_name,
-                        message_type: msg.r#type.clone(),
-                        content: msg.content.clone(),
+                        project_name,
+                        message_type: msg.r#type.to_string(),
+                        content: msg.content_text.clone(),
                         chunk_content: result.content,
                         chunk_index: result.chunk_index,
                         distance: result.distance,
-                        timestamp: msg.timestamp.clone(),
+                        timestamp: Some(ms_to_local_iso(msg.timestamp)),
                     });
                 }
             }

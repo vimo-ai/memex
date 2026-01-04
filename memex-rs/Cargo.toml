@@ -16,7 +16,6 @@ required-features = ["cli"]
 [features]
 default = ["cli"]
 cli = ["notify", "notify-debouncer-mini", "axum", "tower-http", "tokio-cron-scheduler"]
-ffi = []
 
 [dependencies]
 # HTTP 框架 (CLI only)

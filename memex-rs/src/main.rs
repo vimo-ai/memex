@@ -17,7 +17,6 @@ use memex::archive::ArchiveService;
 use memex::backup::BackupService;
 use memex::collector::Collector;
 use memex::config::Config;
-use memex::db::Database;
 use memex::embedding::OllamaClient;
 use memex::indexer::{IndexQueue, VectorIndexer};
 use memex::rag::RagService;
@@ -147,11 +146,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("📁 数据目录: {:?}", config.data_dir);
     tracing::info!("📁 Claude 项目: {:?}", config.claude_projects_path);
 
-    // 打开数据库
-    let db = Database::open(&config.db_path())?;
-
     // 获取统计信息
-    let stats = db.get_stats()?;
+    let stats = shared_db.get_stats().await?;
     tracing::info!(
         "📊 数据库: {} 项目, {} 会话, {} 消息",
         stats.project_count,
@@ -159,8 +155,8 @@ async fn main() -> anyhow::Result<()> {
         stats.message_count
     );
 
-    // 创建采集服务
-    let collector = Collector::new(config.clone(), db.clone(), Some(shared_db.clone()));
+    // 创建采集服务（统一使用 SharedDbAdapter）
+    let collector = Collector::new(config.clone(), shared_db.clone());
 
     // 创建备份服务
     let backup = BackupService::new(config.db_path(), config.backup_dir());
@@ -261,7 +257,7 @@ async fn main() -> anyhow::Result<()> {
     let indexer = match (&ollama, &vector) {
         (Some(o), Some(v)) => {
             Some(VectorIndexer::new(
-                db.clone(),
+                shared_db.clone(),
                 o.clone(),
                 v.clone(),
             ))
@@ -271,7 +267,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 同步 LanceDB 索引状态到 SQLite（首次迁移用）
     if let Some(ref indexer) = indexer {
-        let unindexed = db.count_unindexed_messages().unwrap_or(0);
+        let unindexed = shared_db.count_unindexed_messages().await.unwrap_or(0);
         if unindexed > 1000 {
             // 只有大量未索引时才执行同步（说明可能是迁移后首次启动）
             tracing::info!("🔄 检测到 {} 条未同步消息，执行 LanceDB 状态同步...", unindexed);
@@ -293,14 +289,14 @@ async fn main() -> anyhow::Result<()> {
 
     // 创建混合检索服务
     let hybrid_search = HybridSearchService::new(
-        db.clone(),
+        shared_db.clone(),
         ollama.clone(),
         vector.clone(),
     );
 
     // 创建 RAG 服务
     let rag_service = RagService::new(
-        db.clone(),
+        shared_db.clone(),
         ollama.clone(),
         vector.clone(),
         config.chat_model.clone(),
@@ -310,7 +306,6 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         config: config.clone(),
         db: shared_db,
-        legacy_db: db,
         collector,
         backup,
         ollama,

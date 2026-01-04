@@ -68,9 +68,14 @@ impl Config {
         }
     }
 
-    /// 数据库路径
+    /// 数据库路径 (使用共享数据库，不受 MEMEX_DATA_DIR 影响)
     pub fn db_path(&self) -> PathBuf {
-        self.data_dir.join("ai-cli-session.db")
+        // 统一使用共享数据库路径 ~/.vimo/db/ai-cli-session.db
+        let home = dirs::home_dir().unwrap_or_default();
+        let vimo_root = std::env::var("VIMO_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| home.join(".vimo"));
+        vimo_root.join("db/ai-cli-session.db")
     }
 
     /// LanceDB 路径

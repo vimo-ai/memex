@@ -18,7 +18,17 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::api::AppState;
-use crate::domain::to_local_time;
+
+/// 毫秒时间戳转本地时间字符串
+fn ms_to_local_time(ts: Option<i64>) -> Option<String> {
+    ts.map(|ms| {
+        use chrono::{Local, TimeZone};
+        Local.timestamp_millis_opt(ms)
+            .single()
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+            .unwrap_or_else(|| format!("{}", ms))
+    })
+}
 
 /// 安全截断字符串（按字符数，非字节数）
 fn truncate_str(s: &str, max_chars: usize) -> String {
@@ -271,13 +281,13 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
 
     // 根据 cwd 查找项目 ID
     let project_id = if let Some(cwd_path) = cwd {
-        find_project_by_cwd(state, cwd_path)
+        find_project_by_cwd(state, cwd_path).await
     } else {
         None
     };
 
-    // 执行 FTS 搜索
-    let results = state.legacy_db.search(query, limit, project_id)
+    // 执行 FTS 搜索（使用 SharedDbAdapter）
+    let results = state.db.search_fts_with_project(query, limit, project_id).await
         .map_err(|e| e.to_string())?;
 
     let formatted: Vec<Value> = results.iter().map(|r| {
@@ -287,10 +297,10 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
             "projectId": r.project_id,
             "projectName": r.project_name,
             "type": r.r#type,
-            "content": truncate_str(&r.content, 500),
+            "content": truncate_str(&r.content_full, 500),
             "snippet": r.snippet,
             "score": r.score,
-            "timestamp": to_local_time(r.timestamp.as_deref())
+            "timestamp": ms_to_local_time(r.timestamp)
         })
     }).collect();
 
@@ -313,12 +323,12 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
     let desc = order == "desc";
 
     // 支持前缀匹配：先解析完整 session ID
-    let session_id = state.legacy_db.resolve_session_id(session_id_input)
+    let session_id = state.db.resolve_session_id(session_id_input).await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Session not found: {}", session_id_input))?;
 
     // 获取消息总数
-    let total_count = state.legacy_db.get_session_message_count(&session_id)
+    let total_count = state.db.get_session_message_count(&session_id).await
         .map_err(|e| e.to_string())? as usize;
 
     if total_count == 0 {
@@ -327,12 +337,12 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
 
     // 如果有搜索词，需要获取全部消息来定位
     let messages: Vec<Value> = if let Some(keyword) = search {
-        let all_messages = state.legacy_db.get_messages(&session_id)
+        let all_messages = state.db.get_messages(&session_id).await
             .map_err(|e| e.to_string())?;
 
         let keyword_lower = keyword.to_lowercase();
         let offset = all_messages.iter()
-            .position(|m| m.content.to_lowercase().contains(&keyword_lower))
+            .position(|m| m.content_full.to_lowercase().contains(&keyword_lower))
             .unwrap_or(0);
 
         all_messages.iter()
@@ -341,40 +351,40 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
             .enumerate()
             .map(|(idx, m)| {
                 let content = if limit > 5 {
-                    truncate_str(&m.content, 500)
+                    truncate_str(&m.content_full, 500)
                 } else {
-                    m.content.clone()
+                    m.content_full.clone()
                 };
                 json!({
                     "id": m.id,
                     "uuid": m.uuid,
-                    "type": m.r#type,
+                    "type": format!("{:?}", m.r#type),
                     "content": content,
-                    "timestamp": to_local_time(m.timestamp.as_deref()),
+                    "timestamp": ms_to_local_time(Some(m.timestamp)),
                     "index": offset + idx
                 })
             })
             .collect()
     } else {
         // 直接使用数据库排序和分页
-        let db_messages = state.legacy_db.get_messages_with_options(&session_id, Some(limit), desc)
+        let db_messages = state.db.get_messages_with_options(&session_id, Some(limit), desc).await
             .map_err(|e| e.to_string())?;
 
         db_messages.iter()
             .enumerate()
             .map(|(idx, m)| {
                 let content = if limit > 5 {
-                    truncate_str(&m.content, 500)
+                    truncate_str(&m.content_full, 500)
                 } else {
-                    m.content.clone()
+                    m.content_full.clone()
                 };
                 let index = if desc { total_count - 1 - idx } else { idx };
                 json!({
                     "id": m.id,
                     "uuid": m.uuid,
-                    "type": m.r#type,
+                    "type": format!("{:?}", m.r#type),
                     "content": content,
-                    "timestamp": to_local_time(m.timestamp.as_deref()),
+                    "timestamp": ms_to_local_time(Some(m.timestamp)),
                     "index": index
                 })
             })
@@ -401,22 +411,20 @@ async fn get_recent_sessions(state: &AppState, args: Value) -> Result<Value, Str
     let cwd = args.get("cwd").and_then(|c| c.as_str());
 
     let project_id = if let Some(cwd_path) = cwd {
-        find_project_by_cwd(state, cwd_path)
+        find_project_by_cwd(state, cwd_path).await
     } else {
         None
     };
 
-    let sessions = state.legacy_db.get_sessions(project_id, limit)
+    let sessions = state.db.get_sessions(project_id, limit).await
         .map_err(|e| e.to_string())?;
 
     let formatted: Vec<Value> = sessions.iter().map(|s| {
         json!({
-            "id": s.id,
+            "id": s.session_id,
             "projectId": s.project_id,
-            "projectName": s.project_name,
             "messageCount": s.message_count,
-            "firstMessage": to_local_time(s.first_message.as_deref()),
-            "lastMessage": to_local_time(s.last_message.as_deref())
+            "lastMessage": ms_to_local_time(s.last_message_at)
         })
     }).collect();
 
@@ -428,7 +436,7 @@ async fn get_recent_sessions(state: &AppState, args: Value) -> Result<Value, Str
 
 /// 列出所有项目
 async fn list_projects(state: &AppState, _args: Value) -> Result<Value, String> {
-    let projects = state.legacy_db.get_projects()
+    let projects = state.db.list_projects_with_stats().await
         .map_err(|e| e.to_string())?;
 
     let formatted: Vec<Value> = projects.iter().map(|p| {
@@ -438,7 +446,7 @@ async fn list_projects(state: &AppState, _args: Value) -> Result<Value, String> 
             "path": p.path,
             "sessionCount": p.session_count,
             "messageCount": p.message_count,
-            "lastActive": to_local_time(p.last_active.as_deref())
+            "lastActive": ms_to_local_time(p.last_active)
         })
     }).collect();
 
@@ -449,8 +457,8 @@ async fn list_projects(state: &AppState, _args: Value) -> Result<Value, String> 
 }
 
 /// 根据 cwd 查找项目
-fn find_project_by_cwd(state: &AppState, cwd: &str) -> Option<i64> {
-    let projects = state.legacy_db.get_projects().ok()?;
+async fn find_project_by_cwd(state: &AppState, cwd: &str) -> Option<i64> {
+    let projects = state.db.list_projects_with_stats().await.ok()?;
 
     // 精确匹配
     if let Some(p) = projects.iter().find(|p| p.path == cwd) {
