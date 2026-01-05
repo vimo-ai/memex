@@ -1,3 +1,9 @@
+# Memex Release CI
+#
+# Triggered on tag push (v*)
+# Builds memex binary for macOS arm64
+# Uploads to GitHub Release with sha256 checksum
+
 name: Release
 
 on:
@@ -9,24 +15,34 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Build ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            os: macos-14
-            artifact_name: memex
-            asset_name: memex-darwin-arm64
-          - target: x86_64-apple-darwin
-            os: macos-14
-            artifact_name: memex
-            asset_name: memex-darwin-x86_64
+  build-macos:
+    name: Build macOS arm64
+    runs-on: macos-14  # Apple Silicon runner
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Checkout ai-cli-session-db (as claude-session-db)
+        uses: actions/checkout@v4
+        with:
+          repository: vimo-ai/ai-cli-session-db
+          path: deps/ai-cli-session-db
+
+      - name: Checkout ai-cli-session-collector
+        uses: actions/checkout@v4
+        with:
+          repository: vimo-ai/ai-cli-session-collector
+          path: deps/ai-cli-session-collector
+
+      - name: Create symlinks for dependencies
+        run: |
+          # memex-rs/Cargo.toml uses path = "../../claude-session-db"
+          # From memex-rs/, ../../ goes to parent of memex repo
+          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-db $GITHUB_WORKSPACE/../claude-session-db
+          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-collector $GITHUB_WORKSPACE/../ai-cli-session-collector
 
       - name: Install protobuf
         run: brew install protobuf
@@ -34,44 +50,75 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-apple-darwin
 
       - name: Build
         working-directory: memex-rs
         run: |
-          cargo build --release --target ${{ matrix.target }}
+          cargo build --release --target aarch64-apple-darwin
 
       - name: Prepare artifact
+        id: artifact
         run: |
-          cp memex-rs/target/${{ matrix.target }}/release/${{ matrix.artifact_name }} ${{ matrix.asset_name }}
-          chmod +x ${{ matrix.asset_name }}
+          BINARY="memex-rs/target/aarch64-apple-darwin/release/memex"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.asset_name }}
-          path: ${{ matrix.asset_name }}
+          # Get size
+          SIZE=$(stat -f%z "$BINARY")
+          SIZE_MB=$(echo "scale=2; $SIZE / 1048576" | bc)
 
-  release:
-    name: Create Release
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+          # Get sha256
+          SHA256=$(shasum -a 256 "$BINARY" | cut -d' ' -f1)
 
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
+          # Get version from tag
+          VERSION=${GITHUB_REF#refs/tags/v}
 
-      - name: Display structure
-        run: ls -la artifacts/
+          # Copy to final location
+          cp "$BINARY" memex-darwin-arm64
+          chmod +x memex-darwin-arm64
+
+          # Create checksum file
+          shasum -a 256 memex-darwin-arm64 > memex-darwin-arm64.sha256
+
+          # Sign binary (ad-hoc)
+          codesign -f -s - memex-darwin-arm64
+
+          echo "size=$SIZE" >> $GITHUB_OUTPUT
+          echo "size_mb=$SIZE_MB" >> $GITHUB_OUTPUT
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          echo "### Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Size**: ${SIZE_MB}MB" >> $GITHUB_STEP_SUMMARY
+          echo "- **SHA256**: \`$SHA256\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/memex-darwin-arm64/memex-darwin-arm64
-            artifacts/memex-darwin-x86_64/memex-darwin-x86_64
-          generate_release_notes: true
+            memex-darwin-arm64
+            memex-darwin-arm64.sha256
+          body: |
+            ## Memex v${{ steps.artifact.outputs.version }}
+
+            macOS arm64 二进制 - Claude Code 会话历史管理
+
+            ### 安装
+
+            ```bash
+            mkdir -p ~/.vimo/bin
+            curl -L -o ~/.vimo/bin/memex \
+              https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memex-darwin-arm64
+            chmod +x ~/.vimo/bin/memex
+            ```
+
+            ### 校验
+
+            ```
+            SHA256: ${{ steps.artifact.outputs.sha256 }}
+            Size: ${{ steps.artifact.outputs.size_mb }}MB
+            ```
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
