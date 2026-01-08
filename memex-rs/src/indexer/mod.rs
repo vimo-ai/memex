@@ -1,6 +1,7 @@
 //! 向量索引服务 - 将消息内容向量化并存储到 LanceDB
 
 use anyhow::Result;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
@@ -63,6 +64,8 @@ pub struct VectorIndexer {
     ollama: Arc<OllamaClient>,
     vector: Arc<RwLock<VectorStore>>,
     chunker: Chunker,
+    /// 后台全量索引任务是否正在运行
+    running: Arc<AtomicBool>,
 }
 
 /// 索引结果
@@ -72,6 +75,7 @@ pub struct IndexResult {
     pub indexed_messages: usize,
     pub indexed_chunks: usize,
     pub skipped: usize,
+    pub failed: usize,  // 新增：标记为失败的消息数量
     pub errors: Vec<String>,
 }
 
@@ -87,7 +91,18 @@ impl VectorIndexer {
             ollama,
             vector,
             chunker: Chunker::default(),
+            running: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// 检查后台全量索引任务是否正在运行
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    /// 设置运行状态
+    pub fn set_running(&self, running: bool) {
+        self.running.store(running, Ordering::SeqCst);
     }
 
     /// 同步 LanceDB 已索引状态到 SQLite
@@ -125,6 +140,7 @@ impl VectorIndexer {
             indexed_messages: 0,
             indexed_chunks: 0,
             skipped: 0,
+            failed: 0,
             errors: vec![],
         };
 
@@ -132,12 +148,14 @@ impl VectorIndexer {
         let sessions = self.db.get_sessions(None, 10000).await?;
 
         for session in sessions {
+            #[allow(deprecated)]
             match self.index_session(&session.session_id).await {
                 Ok(session_result) => {
                     result.total_messages += session_result.total_messages;
                     result.indexed_messages += session_result.indexed_messages;
                     result.indexed_chunks += session_result.indexed_chunks;
                     result.skipped += session_result.skipped;
+                    result.failed += session_result.failed;
                 }
                 Err(e) => {
                     result.errors.push(format!("会话 {} 索引失败: {}", session.session_id, e));
@@ -168,6 +186,7 @@ impl VectorIndexer {
             indexed_messages: 0,
             indexed_chunks: 0,
             skipped: 0,
+            failed: 0,
             errors: vec![],
         };
 
@@ -236,13 +255,14 @@ impl VectorIndexer {
 
     /// 按消息 ID 列表索引（用于实时索引新消息）
     ///
-    /// 这些消息是刚插入的，所以不需要检查是否已索引
+    /// 并发 embedding + 批量 insert
     pub async fn index_by_ids(&self, message_ids: &[i64]) -> Result<IndexResult> {
         let mut result = IndexResult {
             total_messages: message_ids.len(),
             indexed_messages: 0,
             indexed_chunks: 0,
             skipped: 0,
+            failed: 0,
             errors: vec![],
         };
 
@@ -252,7 +272,16 @@ impl VectorIndexer {
 
         // 按 ID 获取消息
         let messages = self.db.get_messages_by_ids(message_ids).await?;
-        let mut indexed_ids = Vec::new();
+
+        // 收集需要索引的 assistant 消息
+        struct ChunkInfo {
+            message_id: i64,
+            chunk_index: i64,
+            content: String,
+        }
+
+        let mut all_chunks: Vec<ChunkInfo> = Vec::new();
+        let mut assistant_ids: Vec<i64> = Vec::new();
 
         for message in &messages {
             // 只处理 assistant 类型的消息
@@ -261,59 +290,73 @@ impl VectorIndexer {
                 continue;
             }
 
-            // 分片
+            assistant_ids.push(message.id);
             let chunks = self.chunker.chunk(&message.content_text);
-            let mut records = Vec::new();
-            let mut chunk_success = true;
-
             for chunk in chunks {
-                // 生成 embedding
-                match self.ollama.embed(&chunk.content).await {
-                    Ok(embedding) => {
-                        records.push(VectorRecord {
-                            message_id: message.id,
-                            chunk_index: chunk.index as i64,
-                            content: chunk.content.clone(),
-                            embedding,
-                        });
-                    }
-                    Err(e) => {
-                        result.errors.push(format!(
-                            "消息 {} 块 {} embedding 失败: {}",
-                            message.id, chunk.index, e
-                        ));
-                        chunk_success = false;
-                        break;
-                    }
-                }
-            }
-
-            // 只有所有 chunk 成功才插入向量库并标记
-            if chunk_success && !records.is_empty() {
-                let mut vector_store = self.vector.write().await;
-                match vector_store.insert(&records).await {
-                    Ok(n) => {
-                        result.indexed_chunks += n;
-                        result.indexed_messages += 1;
-                        indexed_ids.push(message.id);
-                    }
-                    Err(e) => {
-                        result.errors.push(format!("插入失败: {}", e));
-                    }
-                }
+                all_chunks.push(ChunkInfo {
+                    message_id: message.id,
+                    chunk_index: chunk.index as i64,
+                    content: chunk.content,
+                });
             }
         }
 
-        // 批量标记已索引
-        if !indexed_ids.is_empty() {
-            if let Err(e) = self.db.mark_messages_indexed(&indexed_ids).await {
-                tracing::error!("标记已索引失败: {}", e);
+        if all_chunks.is_empty() {
+            return Ok(result);
+        }
+
+        // 并发 embedding
+        let texts: Vec<String> = all_chunks.iter().map(|c| c.content.clone()).collect();
+        let embeddings = match self.ollama.embed_batch(texts).await {
+            Ok(embs) => embs,
+            Err(e) => {
+                result.errors.push(format!("批量 embedding 失败: {}", e));
+                result.failed = assistant_ids.len();
+                if let Err(e) = self.db.mark_messages_index_failed(&assistant_ids).await {
+                    tracing::error!("标记索引失败状态失败: {}", e);
+                }
+                return Ok(result);
             }
+        };
+
+        // 组装 VectorRecord
+        let all_records: Vec<VectorRecord> = all_chunks
+            .into_iter()
+            .zip(embeddings.into_iter())
+            .map(|(chunk, embedding)| VectorRecord {
+                message_id: chunk.message_id,
+                chunk_index: chunk.chunk_index,
+                content: chunk.content,
+                embedding,
+            })
+            .collect();
+
+        result.indexed_chunks = all_records.len();
+        result.indexed_messages = assistant_ids.len();
+
+        // 一次性批量插入
+        if !all_records.is_empty() {
+            let mut vector_store = self.vector.write().await;
+            if let Err(e) = vector_store.insert(&all_records).await {
+                tracing::error!("批量插入失败: {}", e);
+                result.failed = result.indexed_messages;
+                result.indexed_messages = 0;
+                result.indexed_chunks = 0;
+                if let Err(e) = self.db.mark_messages_index_failed(&assistant_ids).await {
+                    tracing::error!("标记索引失败状态失败: {}", e);
+                }
+                return Ok(result);
+            }
+        }
+
+        // 标记已索引
+        if let Err(e) = self.db.mark_messages_indexed(&assistant_ids).await {
+            tracing::error!("标记已索引失败: {}", e);
         }
 
         if result.indexed_messages > 0 {
             tracing::debug!(
-                "实时索引完成: {} 消息, {} 块",
+                "实时索引完成: {} 消息, {} 块（并发 embedding）",
                 result.indexed_messages,
                 result.indexed_chunks
             );
@@ -324,17 +367,21 @@ impl VectorIndexer {
 
     /// 索引指定数量的消息（用于增量索引）
     ///
-    /// 优化版本：直接从 SQLite 查询未索引的消息，避免遍历所有消息
+    /// 优化版本：
+    /// 1. 直接从 SQLite 查询未索引的消息
+    /// 2. 并发调用 Ollama embedding（10 个同时）
+    /// 3. 批量 insert 到 LanceDB（减少版本数）
     pub async fn index_batch(&self, limit: usize) -> Result<IndexResult> {
         let mut result = IndexResult {
             total_messages: 0,
             indexed_messages: 0,
             indexed_chunks: 0,
             skipped: 0,
+            failed: 0,
             errors: vec![],
         };
 
-        // 直接获取未索引的消息（高效！只查询 vector_indexed = 0 的记录）
+        // 直接获取未索引的消息
         let messages = self.db.get_unindexed_messages(limit).await?;
         result.total_messages = messages.len();
 
@@ -344,58 +391,90 @@ impl VectorIndexer {
 
         tracing::debug!("增量索引: 找到 {} 条未索引消息", messages.len());
 
-        let mut indexed_ids = Vec::new();
+        // 1. 收集所有 chunks（带 message_id 信息）
+        struct ChunkInfo {
+            message_id: i64,
+            chunk_index: i64,
+            content: String,
+        }
 
-        for message in messages {
-            // 分片并索引
+        let mut all_chunks: Vec<ChunkInfo> = Vec::new();
+        let mut message_chunk_counts: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+
+        for message in &messages {
             let chunks = self.chunker.chunk(&message.content_text);
-            let mut records = Vec::new();
-            let mut chunk_success = true;
-
+            message_chunk_counts.insert(message.id, chunks.len());
             for chunk in chunks {
-                match self.ollama.embed(&chunk.content).await {
-                    Ok(embedding) => {
-                        records.push(VectorRecord {
-                            message_id: message.id,
-                            chunk_index: chunk.index as i64,
-                            content: chunk.content,
-                            embedding,
-                        });
-                    }
-                    Err(e) => {
-                        result.errors.push(format!("Embedding 失败: {}", e));
-                        chunk_success = false;
-                        break;
-                    }
-                }
-            }
-
-            // 只有所有 chunk 成功才插入向量库并标记
-            if chunk_success && !records.is_empty() {
-                let mut vector_store = self.vector.write().await;
-                match vector_store.insert(&records).await {
-                    Ok(n) => {
-                        result.indexed_chunks += n;
-                        result.indexed_messages += 1;
-                        indexed_ids.push(message.id);
-                    }
-                    Err(e) => {
-                        result.errors.push(format!("插入失败: {}", e));
-                    }
-                }
+                all_chunks.push(ChunkInfo {
+                    message_id: message.id,
+                    chunk_index: chunk.index as i64,
+                    content: chunk.content,
+                });
             }
         }
 
-        // 批量标记已索引
-        if !indexed_ids.is_empty() {
-            if let Err(e) = self.db.mark_messages_indexed(&indexed_ids).await {
-                tracing::error!("标记已索引失败: {}", e);
+        if all_chunks.is_empty() {
+            return Ok(result);
+        }
+
+        tracing::debug!("并发 embedding: {} 个 chunks", all_chunks.len());
+
+        // 2. 并发调用 embedding
+        let texts: Vec<String> = all_chunks.iter().map(|c| c.content.clone()).collect();
+        let embeddings = match self.ollama.embed_batch(texts).await {
+            Ok(embs) => embs,
+            Err(e) => {
+                // 全部失败
+                result.errors.push(format!("批量 embedding 失败: {}", e));
+                let failed_ids: Vec<i64> = messages.iter().map(|m| m.id).collect();
+                result.failed = failed_ids.len();
+                if let Err(e) = self.db.mark_messages_index_failed(&failed_ids).await {
+                    tracing::error!("标记索引失败状态失败: {}", e);
+                }
+                return Ok(result);
             }
+        };
+
+        // 3. 组装 VectorRecord
+        let all_records: Vec<VectorRecord> = all_chunks
+            .into_iter()
+            .zip(embeddings.into_iter())
+            .map(|(chunk, embedding)| VectorRecord {
+                message_id: chunk.message_id,
+                chunk_index: chunk.chunk_index,
+                content: chunk.content,
+                embedding,
+            })
+            .collect();
+
+        result.indexed_chunks = all_records.len();
+        result.indexed_messages = messages.len();
+        let indexed_ids: Vec<i64> = messages.iter().map(|m| m.id).collect();
+
+        // 4. 一次性批量插入
+        if !all_records.is_empty() {
+            let mut vector_store = self.vector.write().await;
+            if let Err(e) = vector_store.insert(&all_records).await {
+                tracing::error!("批量插入失败: {}", e);
+                // 插入失败，全部标记为失败
+                result.failed = result.indexed_messages;
+                result.indexed_messages = 0;
+                result.indexed_chunks = 0;
+                if let Err(e) = self.db.mark_messages_index_failed(&indexed_ids).await {
+                    tracing::error!("标记索引失败状态失败: {}", e);
+                }
+                return Ok(result);
+            }
+        }
+
+        // 5. 标记已索引
+        if let Err(e) = self.db.mark_messages_indexed(&indexed_ids).await {
+            tracing::error!("标记已索引失败: {}", e);
         }
 
         if result.indexed_messages > 0 {
             tracing::info!(
-                "增量索引完成: {} 消息, {} chunks",
+                "增量索引完成: {} 消息, {} chunks（并发 embedding + 单次 insert）",
                 result.indexed_messages,
                 result.indexed_chunks
             );
@@ -403,4 +482,78 @@ impl VectorIndexer {
 
         Ok(result)
     }
+
+    /// 索引所有待处理的消息（用于定时任务清空增量）
+    ///
+    /// 与 index_batch 的区别：
+    /// - index_batch(100): 固定索引 100 条
+    /// - index_pending(3000): 索引所有待处理的消息，但最多 3000 条（防止 Ollama 过载）
+    ///
+    /// 适用场景：
+    /// - 定时任务每小时清空增量
+    /// - 新用户首次启动时快速追赶历史数据
+    pub async fn index_pending(&self, max_limit: usize) -> Result<IndexResult> {
+        let pending_count = self.db.count_unindexed_messages().await? as usize;
+
+        if pending_count == 0 {
+            return Ok(IndexResult {
+                total_messages: 0,
+                indexed_messages: 0,
+                indexed_chunks: 0,
+                skipped: 0,
+                failed: 0,
+                errors: vec![],
+            });
+        }
+
+        // 实际处理数量 = min(待处理数量, 上限)
+        let actual_limit = pending_count.min(max_limit);
+
+        if pending_count > max_limit {
+            tracing::info!(
+                "📊 待索引 {} 条，本次处理 {} 条（上限 {}），剩余留到下一小时",
+                pending_count,
+                actual_limit,
+                max_limit
+            );
+        } else {
+            tracing::info!("📊 待索引 {} 条，将全部处理", pending_count);
+        }
+
+        self.index_batch(actual_limit).await
+    }
+
+    /// 获取索引状态统计
+    pub async fn get_index_stats(&self) -> Result<IndexStats> {
+        let pending = self.db.count_unindexed_messages().await? as usize;
+        let failed = self.db.count_failed_indexed_messages().await? as usize;
+
+        let vector_count = {
+            let vector_store = self.vector.read().await;
+            vector_store.count().await.unwrap_or(0)
+        };
+
+        Ok(IndexStats {
+            pending,
+            failed,
+            indexed: vector_count,
+        })
+    }
+
+    /// 压缩向量数据库（合并文件、清理旧版本）
+    pub async fn compact(&self) -> Result<()> {
+        let vector_store = self.vector.read().await;
+        vector_store.compact().await
+    }
+}
+
+/// 索引状态统计
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct IndexStats {
+    /// 待索引数量（vector_indexed = 0）
+    pub pending: usize,
+    /// 索引失败数量（vector_indexed = -1）
+    pub failed: usize,
+    /// 已索引数量（LanceDB 中的记录数）
+    pub indexed: usize,
 }

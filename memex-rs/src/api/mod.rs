@@ -75,8 +75,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/backup/list", get(list_backups))
         // Embedding 状态
         .route("/api/embedding/status", get(embedding_status))
+        .route("/api/embedding/stats", get(embedding_stats))
         .route("/api/embedding/trigger", post(embedding_trigger))
+        .route("/api/embedding/trigger-all", post(embedding_trigger_all))
         .route("/api/embedding/failed", get(embedding_failed))
+        .route("/api/embedding/reset-failed", post(embedding_reset_failed))
+        .route("/api/embedding/compact", post(embedding_compact))
         // Admin
         .route("/api/admin/stats", get(get_stats))
         .route("/api/admin/fix-metadata", post(fix_metadata))
@@ -751,20 +755,239 @@ struct EmbeddingFailedResponse {
 struct FailedMessage {
     message_id: i64,
     session_id: String,
-    error: String,
+    content_preview: String,
+}
+
+/// 索引状态统计
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EmbeddingStatsResponse {
+    /// 待索引数量
+    pending: usize,
+    /// 索引失败数量
+    failed: usize,
+    /// 已索引数量（向量库中的 chunks）
+    indexed: usize,
+    /// Ollama 是否可用
+    ollama_available: bool,
+    /// Embedding 模型
+    embedding_model: String,
+    /// 后台索引任务是否正在运行
+    is_running: bool,
+}
+
+async fn embedding_stats(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, AppError> {
+    let indexer = match &state.indexer {
+        Some(i) => i,
+        None => {
+            return Ok(Json(EmbeddingStatsResponse {
+                pending: 0,
+                failed: 0,
+                indexed: 0,
+                ollama_available: false,
+                embedding_model: state.config.embedding_model.clone(),
+                is_running: false,
+            })
+            .into_response());
+        }
+    };
+
+    let stats = indexer.get_index_stats().await?;
+    let ollama_available = if let Some(ollama) = &state.ollama {
+        ollama.is_available().await
+    } else {
+        false
+    };
+
+    Ok(Json(EmbeddingStatsResponse {
+        pending: stats.pending,
+        failed: stats.failed,
+        indexed: stats.indexed,
+        ollama_available,
+        embedding_model: state.config.embedding_model.clone(),
+        is_running: indexer.is_running(),
+    })
+    .into_response())
 }
 
 async fn embedding_failed(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, AppError> {
-    // 目前 Rust 实现没有持久化失败记录，返回空列表
-    // 未来可以在 indexer 中添加失败追踪
-    let _ = state; // 使用 state 避免警告
+    // 从数据库获取失败的消息列表
+    let failed_messages = state.db.get_failed_indexed_messages(100).await?;
+    let failed_count = state.db.count_failed_indexed_messages().await? as usize;
+
+    let messages: Vec<FailedMessage> = failed_messages
+        .into_iter()
+        .map(|m| {
+            // 截取内容预览（前 100 字符）
+            let preview = if m.content_text.len() > 100 {
+                format!("{}...", &m.content_text[..100])
+            } else {
+                m.content_text.clone()
+            };
+            FailedMessage {
+                message_id: m.id,
+                session_id: m.session_id,
+                content_preview: preview,
+            }
+        })
+        .collect();
 
     Ok(Json(EmbeddingFailedResponse {
-        failed_count: 0,
-        failed_messages: vec![],
+        failed_count,
+        failed_messages: messages,
     }))
+}
+
+/// 全量索引触发（后台持续索引直到完成）
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EmbeddingTriggerAllResponse {
+    triggered: bool,
+    message: String,
+}
+
+async fn embedding_trigger_all(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, AppError> {
+    let indexer = match &state.indexer {
+        Some(i) => i.clone(),
+        None => {
+            return Ok(Json(EmbeddingTriggerAllResponse {
+                triggered: false,
+                message: "索引服务不可用，需要启用 RAG".to_string(),
+            })
+            .into_response());
+        }
+    };
+
+    // 检查是否已经在运行
+    if indexer.is_running() {
+        return Ok(Json(EmbeddingTriggerAllResponse {
+            triggered: false,
+            message: "索引任务已在运行中".to_string(),
+        })
+        .into_response());
+    }
+
+    // 标记开始运行
+    indexer.set_running(true);
+
+    // 启动后台任务
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        tracing::info!("🚀 开始后台全量索引任务");
+        let mut total_indexed = 0usize;
+        let mut total_failed = 0usize;
+        let batch_size = 500; // 每批处理 500 条
+
+        loop {
+            // 检查是否还有待索引的消息
+            let pending = match db.count_unindexed_messages().await {
+                Ok(n) => n as usize,
+                Err(e) => {
+                    tracing::error!("获取待索引数量失败: {}", e);
+                    break;
+                }
+            };
+
+            if pending == 0 {
+                tracing::info!("✅ 后台索引完成: 共索引 {} 条, 失败 {} 条", total_indexed, total_failed);
+                break;
+            }
+
+            // 处理一批
+            match indexer.index_pending(batch_size).await {
+                Ok(result) => {
+                    total_indexed += result.indexed_messages;
+                    total_failed += result.failed;
+                    tracing::info!(
+                        "📦 索引进度: 本批 {} 条, 累计 {} 条, 失败 {} 条, 剩余 {} 条",
+                        result.indexed_messages,
+                        total_indexed,
+                        total_failed,
+                        pending.saturating_sub(result.indexed_messages)
+                    );
+                }
+                Err(e) => {
+                    tracing::error!("索引批次失败: {}", e);
+                    // 继续尝试下一批
+                }
+            }
+
+            // 短暂休息，避免过载
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        // 标记结束运行
+        indexer.set_running(false);
+    });
+
+    Ok(Json(EmbeddingTriggerAllResponse {
+        triggered: true,
+        message: "后台索引任务已启动，可通过 /api/embedding/stats 查看进度".to_string(),
+    })
+    .into_response())
+}
+
+/// 重置失败状态
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EmbeddingResetFailedResponse {
+    reset_count: usize,
+    message: String,
+}
+
+async fn embedding_reset_failed(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, AppError> {
+    let reset_count = state.db.reset_failed_indexed_messages().await?;
+
+    Ok(Json(EmbeddingResetFailedResponse {
+        reset_count,
+        message: format!("已重置 {} 条失败消息，可重新索引", reset_count),
+    }))
+}
+
+/// LanceDB 压缩（合并文件片段、清理旧版本）
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EmbeddingCompactResponse {
+    success: bool,
+    message: String,
+}
+
+async fn embedding_compact(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, AppError> {
+    let vector = match &state.vector {
+        Some(v) => v,
+        None => {
+            return Ok(Json(EmbeddingCompactResponse {
+                success: false,
+                message: "向量存储不可用".to_string(),
+            })
+            .into_response());
+        }
+    };
+
+    // 执行压缩
+    let store = vector.read().await;
+    match store.compact().await {
+        Ok(()) => Ok(Json(EmbeddingCompactResponse {
+            success: true,
+            message: "LanceDB 压缩完成（合并文件片段、清理 7 天前旧版本）".to_string(),
+        })
+        .into_response()),
+        Err(e) => Ok(Json(EmbeddingCompactResponse {
+            success: false,
+            message: format!("压缩失败: {}", e),
+        })
+        .into_response()),
+    }
 }
 
 // ==================== 索引 ====================

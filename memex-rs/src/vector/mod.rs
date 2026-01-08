@@ -270,19 +270,15 @@ impl VectorStore {
         Ok(batches.iter().any(|b| b.num_rows() > 0))
     }
 
-    /// 获取已索引的消息数量
+    /// 获取已索引的 chunk 数量
     pub async fn count(&self) -> Result<usize> {
         let table = match &self.table {
             Some(t) => t,
             None => return Ok(0),
         };
 
-        use futures::TryStreamExt;
-
-        let results = table.query().execute().await?;
-        let batches: Vec<RecordBatch> = results.try_collect().await?;
-
-        Ok(batches.iter().map(|b| b.num_rows()).sum())
+        // 使用 count_rows() 获取准确数量，避免 query() 的默认 limit
+        Ok(table.count_rows(None).await? as usize)
     }
 
     /// 删除消息的向量
@@ -327,5 +323,37 @@ impl VectorStore {
         }
 
         Ok(ids.into_iter().collect())
+    }
+
+    /// 压缩数据库（合并小文件、清理旧版本）
+    ///
+    /// 执行两个操作：
+    /// 1. compact_files: 合并小文件片段
+    /// 2. cleanup_old_versions: 清理 7 天前的旧版本
+    pub async fn compact(&self) -> Result<()> {
+        let table = match &self.table {
+            Some(t) => t,
+            None => return Ok(()),
+        };
+
+        use lancedb::table::OptimizeAction;
+
+        // 1. 合并小文件片段
+        tracing::info!("🔧 开始压缩 LanceDB 数据文件...");
+        table.optimize(OptimizeAction::Compact {
+            options: Default::default(),
+            remap_options: None,
+        }).await.context("compact_files 失败")?;
+
+        // 2. 清理所有旧版本（memex 不需要版本历史）
+        tracing::info!("🧹 清理旧版本...");
+        table.optimize(OptimizeAction::Prune {
+            older_than: Some(chrono::TimeDelta::zero()),  // 不保留任何旧版本
+            delete_unverified: Some(true),
+            error_if_tagged_old_versions: None,
+        }).await.context("cleanup 失败")?;
+
+        tracing::info!("✅ LanceDB 压缩完成");
+        Ok(())
     }
 }

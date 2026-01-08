@@ -341,6 +341,20 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
 
+    // 启动时执行一次 compact（防止错过定时任务）
+    if let Some(indexer) = &state.indexer {
+        let indexer = indexer.clone();
+        tokio::spawn(async move {
+            // 延迟 10 秒执行，让服务先完全启动
+            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+            tracing::info!("🔧 启动时 compact: 检查向量库...");
+            match indexer.compact().await {
+                Ok(()) => tracing::info!("✅ 启动时 compact 完成"),
+                Err(e) => tracing::warn!("⚠️ 启动时 compact 失败: {}", e),
+            }
+        });
+    }
+
     // 启动文件监听服务（带可选的实时索引队列）
     let file_watcher = Arc::new(FileWatcher::new(
         config.clone(),
@@ -391,8 +405,11 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("   POST /api/backup          - 创建备份");
     tracing::info!("   GET  /api/backup/list     - 备份列表");
     tracing::info!("   GET  /api/embedding/status - Embedding 状态");
-    tracing::info!("   POST /api/embedding/trigger - 增量索引触发");
+    tracing::info!("   GET  /api/embedding/stats  - 索引统计 (待索引/已索引/失败)");
+    tracing::info!("   POST /api/embedding/trigger - 增量索引 (100条)");
+    tracing::info!("   POST /api/embedding/trigger-all - 全量索引 (上限3000条)");
     tracing::info!("   GET  /api/embedding/failed - 失败索引列表");
+    tracing::info!("   POST /api/embedding/reset-failed - 重置失败状态");
     tracing::info!("   GET  /api/mcp             - MCP JSON-RPC");
     tracing::info!("   POST /api/mcp             - MCP JSON-RPC");
     tracing::info!("   GET  /api/mcp/info        - MCP 服务信息");
@@ -467,19 +484,25 @@ async fn setup_scheduler(
     tracing::info!("📅 定时任务已注册: 采集 (每日 02:30)");
 
     // 每小时执行向量索引（如果启用 RAG）
+    // 改进：使用 index_pending 清空增量，上限 3000 条（防止 Ollama 过载）
+    let indexer_for_compact = indexer.clone(); // 用于后面的 compact 任务
     if let Some(indexer) = indexer {
         scheduler
             .add(Job::new_async("0 0 * * * *", move |_uuid, _lock| {
                 let indexer = indexer.clone();
                 Box::pin(async move {
                     tracing::info!("⏰ 定时任务: 开始增量索引...");
-                    match indexer.index_batch(100).await {
+                    // 使用 index_pending(3000) 替代 index_batch(100)
+                    // - 清空本小时产生的所有增量
+                    // - 上限 3000 条，超过的留到下一小时继续
+                    match indexer.index_pending(3000).await {
                         Ok(result) => {
-                            if result.indexed_messages > 0 {
+                            if result.indexed_messages > 0 || result.failed > 0 {
                                 tracing::info!(
-                                    "✅ 索引完成: {} 消息, {} chunks",
+                                    "✅ 索引完成: {} 消息, {} chunks, {} 失败",
                                     result.indexed_messages,
-                                    result.indexed_chunks
+                                    result.indexed_chunks,
+                                    result.failed
                                 );
                             }
                         }
@@ -490,7 +513,7 @@ async fn setup_scheduler(
                 })
             })?)
             .await?;
-        tracing::info!("📅 定时任务已注册: 向量索引 (每小时)");
+        tracing::info!("📅 定时任务已注册: 向量索引 (每小时，上限 3000 条)");
     }
 
     // 每日 03:00 执行归档检查（统一入口，包含日/周/月/年的补偿逻辑）
@@ -544,6 +567,27 @@ async fn setup_scheduler(
         })?)
         .await?;
     tracing::info!("📅 定时任务已注册: 归档检查 (每日 03:00)");
+
+    // 每日 03:30 执行向量库压缩（合并文件、清理旧版本）
+    if let Some(indexer) = indexer_for_compact {
+        scheduler
+            .add(Job::new_async("0 30 3 * * *", move |_uuid, _lock| {
+                let indexer = indexer.clone();
+                Box::pin(async move {
+                    tracing::info!("⏰ 定时任务: 开始向量库压缩...");
+                    match indexer.compact().await {
+                        Ok(()) => {
+                            tracing::info!("✅ 向量库压缩完成");
+                        }
+                        Err(e) => {
+                            tracing::error!("❌ 向量库压缩失败: {}", e);
+                        }
+                    }
+                })
+            })?)
+            .await?;
+        tracing::info!("📅 定时任务已注册: 向量库压缩 (每日 03:30)");
+    }
 
     // 启动调度器
     scheduler.start().await?;

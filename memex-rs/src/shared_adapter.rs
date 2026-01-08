@@ -320,6 +320,36 @@ impl SharedDbAdapter {
         Ok(db.count_unindexed_messages()?)
     }
 
+    /// 标记消息向量索引失败
+    pub async fn mark_message_index_failed(&self, message_id: i64) -> Result<()> {
+        let db = self.db.write().await;
+        Ok(db.mark_message_index_failed(message_id)?)
+    }
+
+    /// 批量标记消息向量索引失败
+    pub async fn mark_messages_index_failed(&self, message_ids: &[i64]) -> Result<usize> {
+        let db = self.db.write().await;
+        Ok(db.mark_messages_index_failed(message_ids)?)
+    }
+
+    /// 获取索引失败的消息
+    pub async fn get_failed_indexed_messages(&self, limit: usize) -> Result<Vec<claude_session_db::Message>> {
+        let db = self.db.read().await;
+        Ok(db.get_failed_indexed_messages(limit)?)
+    }
+
+    /// 统计索引失败的消息数量
+    pub async fn count_failed_indexed_messages(&self) -> Result<i64> {
+        let db = self.db.read().await;
+        Ok(db.count_failed_indexed_messages()?)
+    }
+
+    /// 重置失败的索引状态（将 -1 改为 0，可重新索引）
+    pub async fn reset_failed_indexed_messages(&self) -> Result<usize> {
+        let db = self.db.write().await;
+        Ok(db.reset_failed_indexed_messages()?)
+    }
+
     /// 按 ID 列表获取消息
     pub async fn get_messages_by_ids(&self, ids: &[i64]) -> Result<Vec<claude_session_db::Message>> {
         let db = self.db.read().await;

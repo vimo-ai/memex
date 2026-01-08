@@ -132,14 +132,20 @@ impl OllamaClient {
         Ok(result.embedding)
     }
 
-    /// 批量生成 embedding
-    pub async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let mut embeddings = Vec::with_capacity(texts.len());
-        for text in texts {
-            let embedding = self.embed(text).await?;
-            embeddings.push(embedding);
-        }
-        Ok(embeddings)
+    /// 批量生成 embedding（并发，限制 10 个同时）
+    pub async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        use futures::stream::{self, StreamExt};
+
+        const CONCURRENCY: usize = 10;
+
+        let results: Vec<Result<Vec<f32>>> = stream::iter(texts.into_iter())
+            .map(|text| async move { self.embed(&text).await })
+            .buffer_unordered(CONCURRENCY)
+            .collect()
+            .await;
+
+        // 收集结果，任何一个失败就返回错误
+        results.into_iter().collect()
     }
 
     /// Chat 生成
