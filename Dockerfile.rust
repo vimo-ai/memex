@@ -3,25 +3,32 @@
 # 目标: 最小镜像、快速启动、低资源占用
 # ============================================
 
-# Stage 1: Rust 编译 (需要 1.85+ 支持 edition2024)
+# Stage 1: Rust 编译
 # 使用 Debian Trixie 保证 GLIBC 版本一致
 FROM rust:latest AS builder
 
 WORKDIR /build
 
+# 安装编译依赖 + git (用于拉取 git 依赖)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config libssl-dev build-essential protobuf-compiler libprotobuf-dev \
+    pkg-config libssl-dev build-essential protobuf-compiler libprotobuf-dev git \
     && rm -rf /var/lib/apt/lists/*
 
-# 预编译依赖 (Docker 层缓存)
+# 复制 Cargo 配置（包含 git 依赖）
 COPY memex-rs/Cargo.toml memex-rs/Cargo.lock ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs \
-    && cargo build --release \
-    && rm -rf src target/release/memex-rs* target/release/deps/memex_rs*
+
+# 预编译依赖 (Docker 层缓存)
+# git 依赖会被自动拉取：claude-session-db → ai-cli-session-collector
+# 创建空的模块结构以匹配真实的 lib.rs
+RUN mkdir -p src && \
+    echo "fn main() {}" > src/main.rs && \
+    echo "pub mod adapter { pub struct ParsedMessage; }" > src/lib.rs && \
+    cargo build --release --features cli 2>/dev/null || true && \
+    rm -rf src target/release/memex target/release/libmemex* target/release/deps/memex* target/release/deps/libmemex*
 
 # 编译应用
 COPY memex-rs/src ./src
-RUN cargo build --release && strip target/release/memex-rs
+RUN cargo build --release --features cli && strip target/release/memex
 
 
 # Stage 2: 前端构建
@@ -41,8 +48,9 @@ RUN pnpm build
 FROM debian:trixie-slim
 
 # 单层安装 + 清理，最小化镜像
+# 添加 xz-utils (归档压缩) + curl (健康检查)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates xz-utils curl \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
     && useradd -r -u 1000 -m memex \
     && mkdir -p /data /claude-sessions /codex \
@@ -50,20 +58,23 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY --from=builder /build/target/release/memex-rs ./memex
+COPY --from=builder /build/target/release/memex ./memex
 COPY --from=web /build/dist ./public
 
 RUN chown -R memex:memex /app
 
 USER memex
 
-ENV RUST_LOG=memex_rs=info \
+ENV RUST_LOG=memex=info \
     PORT=3000 \
     MEMEX_DATA_DIR=/data \
     CLAUDE_PROJECTS_PATH=/claude-sessions \
     CODEX_PATH=/codex \
-    ENABLE_RAG=false
+    ENABLE_AI_CHAT=false
 
 EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:3000/health || exit 1
 
 ENTRYPOINT ["/app/memex"]

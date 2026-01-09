@@ -6,6 +6,20 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// 正确处理 .tar.xz 双扩展名
+/// "08.tar.xz" → "08"
+/// "08.tar.xz.tmp" → "08"
+fn strip_tar_xz_extension(path: &Path) -> PathBuf {
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let stem = name
+        .strip_suffix(".tar.xz.tmp")
+        .or_else(|| name.strip_suffix(".tar.xz"))
+        .or_else(|| name.strip_suffix(".xz"))
+        .or_else(|| name.strip_suffix(".tar"))
+        .unwrap_or(name);
+    path.with_file_name(stem)
+}
+
 /// 压缩器
 pub struct Compressor {
     /// 压缩级别
@@ -52,9 +66,9 @@ impl Compressor {
 
     /// 压缩文件列表到 tar.xz
     pub fn compress_files(&self, files: &[impl AsRef<Path>], output: &Path) -> Result<()> {
-        // 创建临时 tar 文件（用 .tar 替换 .xz 后缀）
-        // 27.tar.xz.tmp → 27.tar.xz.tar
-        let tar_path = output.with_extension("tar");
+        // 创建临时 tar 文件
+        // 正确处理 .tar.xz 双扩展名：08.tar.xz → 08.tar
+        let tar_path = strip_tar_xz_extension(output).with_extension("tar");
 
         // 使用 tar 打包
         let mut tar_cmd = Command::new("tar");

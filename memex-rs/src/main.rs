@@ -161,42 +161,48 @@ async fn main() -> anyhow::Result<()> {
     // 创建备份服务
     let backup = BackupService::new(config.db_path(), config.backup_dir());
 
-    // 启动时执行归档补偿检查
+    // 启动时执行归档补偿检查（后台异步，不阻塞 HTTP 启动）
     {
         let archive_dir = config.data_dir.join("archive");
-        match ArchiveService::new(config.claude_projects_path.clone(), archive_dir) {
-            Ok(mut service) => {
-                if let Ok(Some(_lock)) = service.try_lock() {
-                    tracing::info!("📦 启动时归档检查...");
-                    match service.check_and_archive_all() {
-                        Ok(result) => {
-                            if result.has_work() {
-                                tracing::info!(
-                                    "✅ 补偿归档完成: {} 日归档, {} 周合并, {} 月合并, {} 年合并",
-                                    result.daily_archived,
-                                    result.weekly_merged,
-                                    result.monthly_merged,
-                                    result.yearly_merged
-                                );
-                            } else {
-                                tracing::info!("📦 归档状态正常，无需补偿");
-                            }
-                            if result.has_errors() {
-                                for err in &result.errors {
-                                    tracing::warn!("归档警告: {}", err);
+        let claude_projects = config.claude_projects_path.clone();
+        tokio::spawn(async move {
+            // 延迟 5 秒，让 HTTP 服务先启动
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+            match ArchiveService::new(claude_projects, archive_dir) {
+                Ok(mut service) => {
+                    if let Ok(Some(_lock)) = service.try_lock() {
+                        tracing::info!("📦 后台归档检查开始...");
+                        match service.check_and_archive_all() {
+                            Ok(result) => {
+                                if result.has_work() {
+                                    tracing::info!(
+                                        "✅ 补偿归档完成: {} 日归档, {} 周合并, {} 月合并, {} 年合并",
+                                        result.daily_archived,
+                                        result.weekly_merged,
+                                        result.monthly_merged,
+                                        result.yearly_merged
+                                    );
+                                } else {
+                                    tracing::info!("📦 归档状态正常，无需补偿");
+                                }
+                                if result.has_errors() {
+                                    for err in &result.errors {
+                                        tracing::warn!("归档警告: {}", err);
+                                    }
                                 }
                             }
-                        }
-                        Err(e) => {
-                            tracing::warn!("⚠️ 启动归档检查失败: {}，将在定时任务中重试", e);
+                            Err(e) => {
+                                tracing::warn!("⚠️ 归档检查失败: {}，将在定时任务中重试", e);
+                            }
                         }
                     }
                 }
+                Err(e) => {
+                    tracing::warn!("⚠️ 创建归档服务失败: {}，将在定时任务中重试", e);
+                }
             }
-            Err(e) => {
-                tracing::warn!("⚠️ 创建归档服务失败: {}，将在定时任务中重试", e);
-            }
-        }
+        });
     }
 
     // 初始化 Ollama 客户端 (语义搜索核心功能)
@@ -315,22 +321,31 @@ async fn main() -> anyhow::Result<()> {
         rag_service,
     });
 
-    // 执行一次采集
-    tracing::info!("📥 执行初始采集...");
-    match state.collector.collect_all() {
-        Ok(result) => {
-            if result.messages_inserted > 0 {
-                tracing::info!(
-                    "✅ 采集完成: {} 项目, {} 会话, {} 新消息",
-                    result.projects_scanned,
-                    result.sessions_scanned,
-                    result.messages_inserted
-                );
+    // 后台执行初始采集（不阻塞 HTTP 启动）
+    {
+        let collector = state.collector.clone();
+        tokio::spawn(async move {
+            // 延迟 2 秒，让 HTTP 先启动
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            tracing::info!("📥 后台初始采集开始...");
+            match collector.collect_all() {
+                Ok(result) => {
+                    if result.messages_inserted > 0 {
+                        tracing::info!(
+                            "✅ 采集完成: {} 项目, {} 会话, {} 新消息",
+                            result.projects_scanned,
+                            result.sessions_scanned,
+                            result.messages_inserted
+                        );
+                    } else {
+                        tracing::info!("📥 初始采集完成，无新消息");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️ 初始采集失败: {}", e);
+                }
             }
-        }
-        Err(e) => {
-            tracing::warn!("⚠️ 初始采集失败: {}", e);
-        }
+        });
     }
 
     // 启动定时任务调度器
