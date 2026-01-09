@@ -58,10 +58,8 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY --from=builder /build/target/release/memex ./memex
-COPY --from=web /build/dist ./public
-
-RUN chown -R memex:memex /app
+COPY --chown=memex:memex --from=builder /build/target/release/memex ./memex
+COPY --chown=memex:memex --from=web /build/dist ./public
 
 USER memex
 
