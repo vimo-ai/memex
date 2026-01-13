@@ -1,0 +1,68 @@
+# Memex CI
+#
+# Triggered on push to main and pull requests
+# Runs cargo check, clippy, and tests
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout ai-cli-session-db
+        uses: actions/checkout@v4
+        with:
+          repository: vimo-ai/ai-cli-session-db
+          path: deps/ai-cli-session-db
+
+      - name: Checkout ai-cli-session-collector
+        uses: actions/checkout@v4
+        with:
+          repository: vimo-ai/ai-cli-session-collector
+          path: deps/ai-cli-session-collector
+
+      - name: Create symlinks for dependencies
+        run: |
+          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-db $GITHUB_WORKSPACE/../claude-session-db
+          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-collector $GITHUB_WORKSPACE/../ai-cli-session-collector
+
+      - name: Install protobuf
+        run: sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: memex-rs
+
+      - name: Check
+        working-directory: memex-rs
+        run: cargo check --all-features
+
+      - name: Clippy
+        working-directory: memex-rs
+        run: cargo clippy --all-features -- -D warnings
+
+      - name: Test
+        working-directory: memex-rs
+        run: cargo test --all-features
