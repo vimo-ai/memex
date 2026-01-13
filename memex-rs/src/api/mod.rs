@@ -189,6 +189,7 @@ async fn get_project_sessions(
 
 #[derive(Debug, Deserialize)]
 pub struct SessionsQuery {
+    #[serde(rename = "projectId")]
     project_id: Option<i64>,
     #[serde(default = "default_limit")]
     limit: usize,
@@ -317,6 +318,7 @@ pub struct SearchQuery {
     q: String,
     #[serde(default = "default_search_limit")]
     limit: usize,
+    #[serde(rename = "projectId")]
     project_id: Option<i64>,
 }
 
@@ -461,10 +463,13 @@ pub struct HybridSearchQuery {
     q: String,
     #[serde(default = "default_search_limit")]
     limit: usize,
+    #[serde(rename = "projectId")]
     project_id: Option<i64>,
     #[serde(default)]
     mode: Option<String>,
+    #[serde(rename = "startDate")]
     start_date: Option<String>,
+    #[serde(rename = "endDate")]
     end_date: Option<String>,
 }
 
@@ -533,11 +538,11 @@ async fn ask(
 #[derive(Debug, Deserialize)]
 pub struct AskQuery {
     q: String,
-    #[serde(default)]
+    #[serde(default, rename = "contextWindow")]
     context_window: Option<usize>,
-    #[serde(default)]
+    #[serde(default, rename = "maxSources")]
     max_sources: Option<usize>,
-    #[serde(default)]
+    #[serde(default, rename = "projectId")]
     project_id: Option<i64>,
 }
 

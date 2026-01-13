@@ -12,409 +12,215 @@ Claude Code 的本地对话数据会在 30 天后过期，导致：
 - 知识无法沉淀和复用
 
 Memex 解决这些问题：
-- ✅ 自动备份所有 Claude Code 会话
-- ✅ 强大的全文和语义搜索
-- ✅ MCP 协议支持，在 Claude 中直接搜索历史
-- ✅ Web UI 浏览和管理会话
+- 自动备份所有 Claude Code 会话
+- 强大的全文和语义搜索
+- MCP 协议支持，在 Claude 中直接搜索历史
+- REST API 便于集成
 
 ## 功能特性
 
 ### 数据采集与备份
 - 自动扫描 `~/.claude/projects/` 下所有会话
 - 解析 JSONL 格式对话内容
-- 存储到 SQLite 数据库
-- 支持每日增量备份
+- 存储到 SQLite 数据库（FTS5 全文索引）
+- 每日增量备份
 
 ### 搜索能力
 - **全文搜索**: 基于 SQLite FTS5，快速关键词检索
-- **语义搜索**: 使用 Ollama + LanceDB 实现语义理解
-- **混合检索**: RRF 融合排序，同时利用关键词和语义相关性
-- **高级过滤**: 按项目、时间范围、Session ID 前缀过滤
+- **语义搜索**: 使用 Ollama + LanceDB 实现向量搜索
+- **混合搜索**: RRF 融合排序，同时利用关键词和语义相关性
+- **过滤功能**: 按项目、时间范围、Session ID 前缀过滤
 
 ### MCP 集成
-支持在 Claude Code 中通过 MCP 协议搜索历史对话：
-- `search_history` - 搜索历史对话
-- `get_session` - 获取会话详情（支持分页和会话内搜索）
-- `get_recent_sessions` - 获取最近的会话
+在 Claude Code 中直接搜索历史对话：
+- `search_history` - 搜索对话（FTS/向量/混合）
+- `get_session` - 获取会话详情（支持分页）
+- `get_recent_sessions` - 获取项目最近会话
 - `list_projects` - 列出所有项目
-
-### Web UI
-- Cyberpunk 风格界面
-- 项目列表和会话浏览
-- Session ID 前缀快速查找
-- 支持全文/语义/混合搜索
 
 ## 技术栈
 
-- **后端**: NestJS (DDD 架构)
-- **数据库**: SQLite + FTS5 (全文搜索)
+- **后端**: Rust + Axum
+- **数据库**: SQLite + FTS5
 - **向量存储**: LanceDB
-- **LLM 运行时**: Ollama (本地)
-- **前端**: Vue 3
-- **通信**: HTTP + JSON-RPC (MCP)
+- **Embeddings**: Ollama (bge-m3)
+- **协议**: HTTP + JSON-RPC (MCP)
 
-## 快速开始 (Docker)
+## 快速开始
 
-最快的启动方式 - 无需安装 Node.js 或构建工具。
+### Docker（推荐）
 
 ```bash
-# 一行命令启动
-docker run -d \
-  --name memex \
-  -p 3000:3000 \
-  -v ~/.claude/projects:/claude-sessions:ro \
-  -v memex-data:/data \
+docker run -d -p 10013:10013 \
+  -v ~/.claude:/data/claude \
+  -v ~/.vimo:/data/vimo \
+  -e VIMO_HOME=/data/vimo \
+  -e CLAUDE_PROJECTS_PATH=/data/claude/projects \
   ghcr.io/vimo-ai/memex:latest
-
-# 或使用 docker-compose
-curl -sL https://raw.githubusercontent.com/vimo-ai/memex/main/docker-compose.yml -o docker-compose.yml
-docker-compose up -d
 ```
 
-然后访问 **http://localhost:3000**
-
-### 包含功能
-
-- Web UI 浏览会话
-- 全文搜索 (FTS5)
-- MCP 端点 `/api/mcp`
-- 自动导入 `~/.claude/projects/`
-
-### 可选：启用语义搜索
-
-如需语义搜索和 RAG 功能，需要在宿主机运行 Ollama：
+验证运行状态：
 
 ```bash
-# 安装 Ollama 并拉取模型
+curl http://localhost:10013/health          # → OK
+curl http://localhost:10013/api/stats       # → {"projectCount":...}
+```
+
+### 启用语义搜索
+
+需要在宿主机运行 Ollama：
+
+```bash
+# 安装 Ollama 并拉取 embedding 模型
+ollama serve
 ollama pull bge-m3
-ollama pull qwen3:8b
 
-# 启动 Memex 并连接 Ollama
-docker run -d \
-  --name memex \
-  -p 3000:3000 \
-  -v ~/.claude/projects:/claude-sessions:ro \
-  -v memex-data:/data \
-  -e OLLAMA_API=http://host.docker.internal:11434/api \
+# 启动 Memex 连接 Ollama
+docker run -d -p 10013:10013 \
+  -v ~/.claude:/data/claude \
+  -v ~/.vimo:/data/vimo \
+  -e VIMO_HOME=/data/vimo \
+  -e CLAUDE_PROJECTS_PATH=/data/claude/projects \
+  -e OLLAMA_API=http://host.docker.internal:11434 \
   ghcr.io/vimo-ai/memex:latest
 ```
 
-## 从源码安装
+**Linux 提示**: `host.docker.internal` 在 Docker Desktop 上可用。原生 Linux 需使用 `--add-host=host.docker.internal:host-gateway` 或宿主机 IP。
 
-如果你想从源码构建或进行开发，请按以下步骤操作。
-
-### 前置要求
-
-1. Node.js >= 18
-2. pnpm (推荐)
-3. Ollama (语义搜索和 RAG 必需)
-
-### Ollama 模型
-
-| 模型 | 大小 | 用途 | 是否必需 |
-|------|------|------|----------|
-| `bge-m3` | 1.2 GB | Embedding (1024 维) | 是，用于语义搜索 |
-| `qwen3:8b` | 5.2 GB | 聊天 / RAG 问答 | 是，用于 Ask AI 功能 |
+### 从源码构建
 
 ```bash
-# 安装 Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-
-# 拉取所需模型
-ollama pull bge-m3      # Embedding 模型
-ollama pull qwen3:8b    # RAG 聊天模型
-```
-
-> **注意**: 没有 Ollama 模型时，全文搜索仍可使用。语义搜索和 RAG 需要上述模型。
-
-### 安装项目
-
-```bash
-# 克隆项目
-git clone <repository-url>
-cd memex
-
-# 安装依赖
-pnpm install
-
-# Web UI 依赖
-cd web
-pnpm install
-cd ..
+git clone https://github.com/vimo-ai/memex.git
+cd memex/memex-rs
+cargo build --release
+./target/release/memex serve
 ```
 
 ## 配置
 
-复制并编辑配置文件：
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PORT` | `10013` | HTTP 服务端口 |
+| `VIMO_HOME` | `~/.vimo` | 基础数据目录（SQLite、LanceDB、备份） |
+| `CLAUDE_PROJECTS_PATH` | `~/.claude/projects` | Claude Code 会话路径 |
+| `OLLAMA_API` | `http://localhost:11434` | Ollama API 地址 |
+| `EMBEDDING_MODEL` | `bge-m3` | Ollama embedding 模型 |
+| `ENABLE_AI_CHAT` | `false` | 启用 RAG 问答功能 |
+| `CHAT_MODEL` | `qwen3:8b` | Ollama 聊天模型（用于问答） |
 
-```bash
-cp .env.example .env
-```
+## 入门指南
 
-主要配置项：
+1. **启动 Memex**（见上方快速开始）
 
-```bash
-# 服务端口
-PORT=10013
+2. **验证会话已导入**（启动时自动导入）
+   ```bash
+   curl http://localhost:10013/api/stats
+   # 应显示 sessionCount > 0
+   ```
 
-# 数据存储目录
-MEMEX_DATA_DIR=~/memex-data
+3. **尝试搜索**
+   ```bash
+   curl "http://localhost:10013/api/search?q=authentication&limit=5"
+   ```
 
-# 备份目录
-MEMEX_BACKUP_DIR=~/memex-data/backups
+4. **配置 MCP**（可选）- 见下方 MCP 配置
 
-# Claude Code 数据源路径
-CLAUDE_PROJECTS_PATH=~/.claude/projects
-
-# Ollama API 地址
-OLLAMA_API=http://localhost:11434/api
-
-# Embedding 模型
-EMBEDDING_MODEL=bge-m3
-
-# RAG 聊天模型
-CHAT_MODEL=qwen3:8b
-```
-
-## 运行
-
-### 开发模式
-
-```bash
-# 启动后端
-pnpm dev
-
-# 启动前端 (新终端)
-cd web
-pnpm dev
-```
-
-### 生产模式
-
-```bash
-# 构建后端
-pnpm build
-
-# 构建前端
-cd web
-pnpm build
-cd ..
-
-# 启动服务
-pnpm start:prod
-```
+> **提示**：如果 `sessionCount` 为 0，手动触发采集：`curl -X POST http://localhost:10013/api/collect`
 
 ## MCP 配置
 
-Memex 通过 HTTP 协议提供 MCP 服务，配置简单。
+Memex 通过 HTTP 提供 MCP 服务：`http://localhost:10013/api/mcp`
 
-### 方式一：mcp-router 配置（推荐）
+### Claude Code 配置（使用 mcp-remote）
 
-编辑 mcp-router 配置文件：
-
-```json
-{
-  "mcpServers": {
-    "memex": {
-      "type": "http",
-      "url": "http://127.0.0.1:10013/api/mcp"
-    }
-  }
-}
-```
-
-### 方式二：Claude Code 直接配置
-
-在 Claude Code 的 MCP 设置中添加：
+添加到 `~/.claude.json`：
 
 ```json
 {
   "mcpServers": {
     "memex": {
-      "type": "http",
-      "url": "http://127.0.0.1:10013/api/mcp"
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://localhost:10013/api/mcp"]
     }
   }
 }
 ```
 
-### 验证 MCP 连接
+### 验证 MCP
 
-启动 Claude Code 后，可以通过以下方式验证：
-
+```bash
+curl -X POST http://localhost:10013/api/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
-搜索我最近关于 DDD 架构的讨论
-```
 
-如果 MCP 配置正确，Claude 会调用 `memex/search_history` 工具进行搜索。
+## API 参考
 
-## API 端点
+### 健康检查与统计
+- `GET /health` - 健康检查
+- `GET /api/stats` - 数据库统计
 
-### 项目管理
-- `GET /api/projects` - 获取所有项目列表
-- `GET /api/projects/:id` - 获取项目详情（包含会话列表）
-
-### 会话管理
-- `GET /api/sessions/:id` - 获取会话详情（完整对话内容）
-- `GET /api/sessions/search?idPrefix=xxx` - 通过 Session ID 前缀搜索
+### 项目与会话
+- `GET /api/projects` - 列出所有项目
+- `GET /api/sessions` - 列出会话
+- `GET /api/sessions/{id}` - 获取会话详情
+- `GET /api/sessions/{id}/messages` - 获取会话消息
 
 ### 搜索
-- `GET /api/search?q=xxx&projectId=yyy` - 全文搜索
-  - 查询参数：
-    - `q`: 搜索关键词
-    - `projectId`: 项目筛选（可选）
-    - `startDate`: 开始日期（可选）
-    - `endDate`: 结束日期（可选）
-    - `limit`: 返回数量限制，默认 20
+- `GET /api/search?q=...` - 全文搜索
+- `GET /api/search/semantic?q=...` - 语义搜索
+- `GET /api/search/hybrid?q=...` - 混合搜索
 
-- `GET /api/search/semantic?q=xxx&mode=hybrid` - 语义搜索
-  - 查询参数：
-    - `q`: 搜索内容
-    - `mode`: 搜索模式
-      - `semantic`: 纯语义搜索
-      - `hybrid`: 混合搜索（关键词 + 语义）
-    - `projectId`: 项目筛选（可选）
-    - `limit`: 返回数量限制，默认 10
-
-### RAG 问答
-- `POST /api/ask` - 基于历史对话回答问题
-  - 请求参数：
-    - `question`: 要问的问题
-    - `cwd`: 当前工作目录，用于项目过滤（可选）
-    - `contextWindow`: 上下文消息数，默认 3（可选）
-    - `maxSources`: 最大引用数，默认 5（可选）
-  - 响应: `{ answer, sources, model, tokensUsed }`
+### 数据采集与索引
+- `POST /api/collect` - 触发会话采集
+- `POST /api/index` - 索引指定会话
+- `GET /api/embedding/stats` - 索引统计
 
 ### MCP
 - `POST /api/mcp` - MCP JSON-RPC 端点
-- `GET /api/mcp/info` - 获取 MCP 工具信息
+- `GET /api/mcp/info` - MCP 服务信息
 
-## 使用示例
-
-### Web UI
-
-访问 `http://localhost:10013` 即可使用 Web 界面。
-
-主要功能：
-- 浏览所有项目和会话
-- 通过 Session ID 前缀快速定位
-- 全文搜索对话内容
-- 语义搜索相关讨论
-- 按项目和时间筛选
-
-### 命令行搜索
-
-```bash
-# 全文搜索
-curl "http://localhost:10013/api/search?q=DDD架构"
-
-# 语义搜索
-curl "http://localhost:10013/api/search/semantic?q=如何设计领域模型&mode=hybrid"
-
-# 按项目搜索
-curl "http://localhost:10013/api/search?q=bug&projectId=xxx"
-```
-
-### MCP 使用
-
-在 Claude Code 中直接问：
+## 数据目录
 
 ```
-帮我搜索之前讨论过的关于 NestJS 依赖注入的对话
-
-找一下最近一周的会话，看看我们都做了什么
-
-获取关于数据库设计的完整会话内容
-```
-
-## 数据目录结构
-
-```
-~/memex-data/
-├── memex.db              # SQLite 数据库
-├── vectors/              # LanceDB 向量存储
-│   └── messages/
-└── backups/              # 备份文件
-    └── memex-2025-01-15.db
+~/.vimo/
+├── db/
+│   ├── ai-cli-session.db    # SQLite 数据库
+│   ├── lancedb/             # 向量存储
+│   └── backups/             # 数据库备份
 ```
 
 ## 常见问题
 
-### Q: 如何触发初始数据导入？
+### 如何触发数据导入？
 
-A: 服务启动时会自动扫描 `~/.claude/projects/` 并导入所有会话。你也可以通过 API 手动触发：
-
+服务启动时会自动导入。手动触发：
 ```bash
-curl -X POST http://localhost:10013/api/backup
+curl -X POST http://localhost:10013/api/collect
 ```
 
-### Q: 语义搜索不工作？
+### 语义搜索不工作？
 
-A: 确保：
-1. Ollama 服务正在运行：`ollama serve`
-2. 已下载模型：`ollama pull bge-m3`
-3. `.env` 中 `OLLAMA_API` 配置正确
+1. 确保 Ollama 正在运行：`ollama serve`
+2. 拉取模型：`ollama pull bge-m3`
+3. 检查状态：`curl http://localhost:10013/api/embedding/status`
 
-### Q: 如何清理和重建索引？
+### 没有会话显示？
 
-A: 删除数据目录后重启服务：
+1. 检查 Claude Code 路径：`ls ~/.claude/projects/`
+2. Docker 用户：确保 `CLAUDE_PROJECTS_PATH=/data/claude/projects` 与卷挂载一致
+3. 触发采集：`curl -X POST http://localhost:10013/api/collect`
 
-```bash
-rm -rf ~/memex-data
-pnpm start
-```
+## 文档
 
-### Q: MCP 连接失败？
+完整文档：https://vimoai.dev/docs/memex
 
-A: 检查：
-1. Memex 服务是否运行在 `http://localhost:10013`
-2. MCP 配置中的路径是否正确
-3. Node.js 版本是否 >= 18
-
-## 开发
-
-### 项目结构
-
-```
-memex/
-├── src/
-│   ├── context/                 # DDD 上下文
-│   │   └── brain/              # 核心上下文
-│   │       ├── api/            # API 层
-│   │       ├── application/    # 应用服务
-│   │       ├── domain/         # 领域模型
-│   │       └── infrastructure/ # 基础设施
-│   └── main.ts                 # 应用入口
-├── web/                        # Vue 前端
-└── DESIGN.md                   # 架构设计文档
-```
-
-### 运行测试
-
-```bash
-pnpm test
-```
-
-## 路线图
-
-- [x] Phase 0: 数据采集和备份
-- [x] Phase 1: SQLite + FTS5 全文搜索
-- [x] Phase 2: 语义搜索 (Ollama + LanceDB)
-- [x] Phase 3: MCP 集成
-- [x] Web UI
-- [x] Phase 4: RAG 问答
-- ~~Phase 5: 知识提炼~~ (暂不计划 - RAG 已覆盖大部分使用场景)
-
-### 可能的未来增强
-
-- Session 导出功能 (Markdown/PDF)
-- 书签/标签系统
-- Claude Hooks 集成（近实时索引）
+- [安装指南](https://vimoai.dev/docs/memex/installation)
+- [配置说明](https://vimoai.dev/docs/memex/configuration)
+- [API 参考](https://vimoai.dev/docs/memex/api)
+- [MCP 工具](https://vimoai.dev/docs/memex/mcp)
+- [架构设计](https://vimoai.dev/docs/memex/architecture)
 
 ## 许可证
 
 MIT
-
-## 致谢
-
-感谢 Claude Code 提供了如此优秀的开发体验。

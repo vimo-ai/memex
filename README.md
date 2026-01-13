@@ -12,409 +12,215 @@ Claude Code's local conversation data expires after 30 days, causing:
 - Knowledge cannot be accumulated and reused
 
 Memex solves these problems:
-- ✅ Automatic backup of all Claude Code sessions
-- ✅ Powerful full-text and semantic search
-- ✅ MCP protocol support for searching history directly in Claude
-- ✅ Web UI for browsing and managing sessions
+- Automatic backup of all Claude Code sessions
+- Powerful full-text and semantic search
+- MCP protocol support for searching history directly in Claude
+- REST API for integration
 
 ## Features
 
 ### Data Collection & Backup
 - Automatically scans all sessions under `~/.claude/projects/`
 - Parses JSONL format conversation content
-- Stores in SQLite database
-- Supports daily incremental backups
+- Stores in SQLite database with FTS5 full-text index
+- Daily incremental backups
 
 ### Search Capabilities
 - **Full-text Search**: Fast keyword search based on SQLite FTS5
-- **Semantic Search**: Semantic understanding using Ollama + LanceDB
-- **Hybrid Retrieval**: RRF fusion ranking combining keyword and semantic relevance
-- **Advanced Filtering**: Filter by project, time range, Session ID prefix
+- **Semantic Search**: Vector search using Ollama + LanceDB
+- **Hybrid Search**: RRF fusion ranking combining keyword and semantic relevance
+- **Filtering**: Filter by project, time range, session ID prefix
 
 ### MCP Integration
-Search historical conversations in Claude Code via MCP protocol:
-- `search_history` - Search historical conversations
-- `get_session` - Get session details (supports pagination and in-session search)
-- `get_recent_sessions` - Get recent sessions
+Search historical conversations directly in Claude Code:
+- `search_history` - Search conversations (FTS/vector/hybrid)
+- `get_session` - Get session details with pagination
+- `get_recent_sessions` - Get recent sessions by project
 - `list_projects` - List all projects
-
-### Web UI
-- Cyberpunk-style interface
-- Project list and session browsing
-- Quick lookup by Session ID prefix
-- Supports full-text/semantic/hybrid search
 
 ## Tech Stack
 
-- **Backend**: NestJS (DDD architecture)
-- **Database**: SQLite + FTS5 (full-text search)
+- **Backend**: Rust + Axum
+- **Database**: SQLite + FTS5
 - **Vector Store**: LanceDB
-- **LLM Runtime**: Ollama (local)
-- **Frontend**: Vue 3
-- **Communication**: HTTP + JSON-RPC (MCP)
+- **Embeddings**: Ollama (bge-m3)
+- **Protocol**: HTTP + JSON-RPC (MCP)
 
-## Quick Start (Docker)
+## Quick Start
 
-The fastest way to get started - no Node.js or build tools required.
+### Docker (Recommended)
 
 ```bash
-# One command to start
-docker run -d \
-  --name memex \
-  -p 3000:3000 \
-  -v ~/.claude/projects:/claude-sessions:ro \
-  -v memex-data:/data \
+docker run -d -p 10013:10013 \
+  -v ~/.claude:/data/claude \
+  -v ~/.vimo:/data/vimo \
+  -e VIMO_HOME=/data/vimo \
+  -e CLAUDE_PROJECTS_PATH=/data/claude/projects \
   ghcr.io/vimo-ai/memex:latest
-
-# Or use docker-compose
-curl -sL https://raw.githubusercontent.com/vimo-ai/memex/main/docker-compose.yml -o docker-compose.yml
-docker-compose up -d
 ```
 
-Then visit **http://localhost:3000**
-
-### What's included
-
-- Web UI for browsing sessions
-- Full-text search (FTS5)
-- MCP endpoint at `/api/mcp`
-- Auto-import from `~/.claude/projects/`
-
-### Optional: Enable Semantic Search
-
-For semantic search and RAG, you need Ollama running on your host:
+Verify it's running:
 
 ```bash
-# Install Ollama and pull models
+curl http://localhost:10013/health          # → OK
+curl http://localhost:10013/api/stats       # → {"projectCount":...}
+```
+
+### With Semantic Search
+
+For semantic search, run Ollama on your host:
+
+```bash
+# Install Ollama and pull embedding model
+ollama serve
 ollama pull bge-m3
-ollama pull qwen3:8b
 
 # Run Memex with Ollama access
-docker run -d \
-  --name memex \
-  -p 3000:3000 \
-  -v ~/.claude/projects:/claude-sessions:ro \
-  -v memex-data:/data \
-  -e OLLAMA_API=http://host.docker.internal:11434/api \
+docker run -d -p 10013:10013 \
+  -v ~/.claude:/data/claude \
+  -v ~/.vimo:/data/vimo \
+  -e VIMO_HOME=/data/vimo \
+  -e CLAUDE_PROJECTS_PATH=/data/claude/projects \
+  -e OLLAMA_API=http://host.docker.internal:11434 \
   ghcr.io/vimo-ai/memex:latest
 ```
 
-## Installation (From Source)
+**Linux note**: `host.docker.internal` works on Docker Desktop. On native Linux, use `--add-host=host.docker.internal:host-gateway` or your host's IP.
 
-If you want to build from source or do development, follow these steps.
-
-### Prerequisites
-
-1. Node.js >= 18
-2. pnpm (recommended)
-3. Ollama (required for semantic search and RAG)
-
-### Ollama Models
-
-| Model | Size | Purpose | Required |
-|-------|------|---------|----------|
-| `bge-m3` | 1.2 GB | Embedding (1024 dim) | Yes, for semantic search |
-| `qwen3:8b` | 5.2 GB | Chat / RAG Q&A | Yes, for Ask AI feature |
+### Build from Source
 
 ```bash
-# Install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Pull required models
-ollama pull bge-m3      # Embedding model
-ollama pull qwen3:8b    # Chat model for RAG
-```
-
-> **Note**: Without Ollama models, full-text search still works. Semantic search and RAG require the models above.
-
-### Install Project
-
-```bash
-# Clone project
-git clone <repository-url>
-cd memex
-
-# Install dependencies
-pnpm install
-
-# Web UI dependencies
-cd web
-pnpm install
-cd ..
+git clone https://github.com/vimo-ai/memex.git
+cd memex/memex-rs
+cargo build --release
+./target/release/memex serve
 ```
 
 ## Configuration
 
-Copy and edit the configuration file:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `10013` | HTTP server port |
+| `VIMO_HOME` | `~/.vimo` | Base data directory (SQLite, LanceDB, backups) |
+| `CLAUDE_PROJECTS_PATH` | `~/.claude/projects` | Claude Code session location |
+| `OLLAMA_API` | `http://localhost:11434` | Ollama API endpoint |
+| `EMBEDDING_MODEL` | `bge-m3` | Ollama embedding model |
+| `ENABLE_AI_CHAT` | `false` | Enable RAG Q&A feature |
+| `CHAT_MODEL` | `qwen3:8b` | Ollama chat model for Q&A |
 
-```bash
-cp .env.example .env
-```
+## Getting Started
 
-Main configuration options:
+1. **Start Memex** (see Quick Start above)
 
-```bash
-# Server port
-PORT=10013
+2. **Verify sessions imported** (auto-imports on startup)
+   ```bash
+   curl http://localhost:10013/api/stats
+   # Should show sessionCount > 0
+   ```
 
-# Data storage directory
-MEMEX_DATA_DIR=~/memex-data
+3. **Try a search**
+   ```bash
+   curl "http://localhost:10013/api/search?q=authentication&limit=5"
+   ```
 
-# Backup directory
-MEMEX_BACKUP_DIR=~/memex-data/backups
+4. **Configure MCP** (optional) - see MCP section below
 
-# Claude Code data source path
-CLAUDE_PROJECTS_PATH=~/.claude/projects
-
-# Ollama API address
-OLLAMA_API=http://localhost:11434/api
-
-# Embedding model
-EMBEDDING_MODEL=bge-m3
-
-# Chat model for RAG
-CHAT_MODEL=qwen3:8b
-```
-
-## Running
-
-### Development Mode
-
-```bash
-# Start backend
-pnpm dev
-
-# Start frontend (new terminal)
-cd web
-pnpm dev
-```
-
-### Production Mode
-
-```bash
-# Build backend
-pnpm build
-
-# Build frontend
-cd web
-pnpm build
-cd ..
-
-# Start service
-pnpm start:prod
-```
+> **Note**: If `sessionCount` is 0, trigger manual collection: `curl -X POST http://localhost:10013/api/collect`
 
 ## MCP Configuration
 
-Memex provides MCP service via HTTP protocol with simple configuration.
+Memex exposes MCP via HTTP at `http://localhost:10013/api/mcp`.
 
-### Option 1: mcp-router Configuration (Recommended)
+### For Claude Code (with mcp-remote)
 
-Edit mcp-router configuration file:
-
-```json
-{
-  "mcpServers": {
-    "memex": {
-      "type": "http",
-      "url": "http://127.0.0.1:10013/api/mcp"
-    }
-  }
-}
-```
-
-### Option 2: Claude Code Direct Configuration
-
-Add to Claude Code's MCP settings:
+Add to `~/.claude.json`:
 
 ```json
 {
   "mcpServers": {
     "memex": {
-      "type": "http",
-      "url": "http://127.0.0.1:10013/api/mcp"
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://localhost:10013/api/mcp"]
     }
   }
 }
 ```
 
-### Verify MCP Connection
+### Verify MCP
 
-After starting Claude Code, verify with:
-
+```bash
+curl -X POST http://localhost:10013/api/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
-Search for my recent discussions about DDD architecture
-```
 
-If MCP is configured correctly, Claude will call the `memex/search_history` tool.
+## API Reference
 
-## API Endpoints
+### Health & Stats
+- `GET /health` - Health check
+- `GET /api/stats` - Database statistics
 
-### Project Management
-- `GET /api/projects` - Get all projects list
-- `GET /api/projects/:id` - Get project details (including session list)
-
-### Session Management
-- `GET /api/sessions/:id` - Get session details (full conversation content)
-- `GET /api/sessions/search?idPrefix=xxx` - Search by Session ID prefix
+### Projects & Sessions
+- `GET /api/projects` - List all projects
+- `GET /api/sessions` - List sessions
+- `GET /api/sessions/{id}` - Get session details
+- `GET /api/sessions/{id}/messages` - Get session messages
 
 ### Search
-- `GET /api/search?q=xxx&projectId=yyy` - Full-text search
-  - Query parameters:
-    - `q`: Search keywords
-    - `projectId`: Project filter (optional)
-    - `startDate`: Start date (optional)
-    - `endDate`: End date (optional)
-    - `limit`: Result limit, default 20
+- `GET /api/search?q=...` - Full-text search
+- `GET /api/search/semantic?q=...` - Semantic search
+- `GET /api/search/hybrid?q=...` - Hybrid search
 
-- `GET /api/search/semantic?q=xxx&mode=hybrid` - Semantic search
-  - Query parameters:
-    - `q`: Search content
-    - `mode`: Search mode
-      - `semantic`: Pure semantic search
-      - `hybrid`: Hybrid search (keyword + semantic)
-    - `projectId`: Project filter (optional)
-    - `limit`: Result limit, default 10
-
-### RAG Q&A
-- `POST /api/ask` - Ask questions based on history
-  - Request body:
-    - `question`: The question to ask
-    - `cwd`: Current working directory for project filtering (optional)
-    - `contextWindow`: Context messages before/after, default 3 (optional)
-    - `maxSources`: Max source references, default 5 (optional)
-  - Response: `{ answer, sources, model, tokensUsed }`
+### Collection & Indexing
+- `POST /api/collect` - Trigger session collection
+- `POST /api/index` - Index specific session
+- `GET /api/embedding/stats` - Indexing statistics
 
 ### MCP
 - `POST /api/mcp` - MCP JSON-RPC endpoint
-- `GET /api/mcp/info` - Get MCP tools information
+- `GET /api/mcp/info` - MCP server info
 
-## Usage Examples
-
-### Web UI
-
-Visit `http://localhost:10013` to use the web interface.
-
-Main features:
-- Browse all projects and sessions
-- Quick lookup by Session ID prefix
-- Full-text search conversation content
-- Semantic search related discussions
-- Filter by project and time
-
-### Command Line Search
-
-```bash
-# Full-text search
-curl "http://localhost:10013/api/search?q=authentication"
-
-# Semantic search
-curl "http://localhost:10013/api/search/semantic?q=how+to+design+domain+models&mode=hybrid"
-
-# Search by project
-curl "http://localhost:10013/api/search?q=bug&projectId=xxx"
-```
-
-### MCP Usage
-
-Ask directly in Claude Code:
+## Data Directory
 
 ```
-Search for previous discussions about NestJS dependency injection
-
-Find sessions from the last week and see what we worked on
-
-Get the full session content about database design
-```
-
-## Data Directory Structure
-
-```
-~/memex-data/
-├── memex.db              # SQLite database
-├── vectors/              # LanceDB vector storage
-│   └── messages/
-└── backups/              # Backup files
-    └── memex-2025-01-15.db
+~/.vimo/
+├── db/
+│   ├── ai-cli-session.db    # SQLite database
+│   ├── lancedb/             # Vector storage
+│   └── backups/             # Database backups
 ```
 
 ## FAQ
 
-### Q: How to trigger initial data import?
+### How to trigger data import?
 
-A: The service automatically scans `~/.claude/projects/` and imports all sessions on startup. You can also trigger manually via API:
-
+The service auto-imports on startup. Manual trigger:
 ```bash
-curl -X POST http://localhost:10013/api/backup
+curl -X POST http://localhost:10013/api/collect
 ```
 
-### Q: Semantic search not working?
+### Semantic search not working?
 
-A: Ensure:
-1. Ollama service is running: `ollama serve`
-2. Model is downloaded: `ollama pull bge-m3`
-3. `OLLAMA_API` is configured correctly in `.env`
+1. Ensure Ollama is running: `ollama serve`
+2. Pull the model: `ollama pull bge-m3`
+3. Check status: `curl http://localhost:10013/api/embedding/status`
 
-### Q: How to clear and rebuild index?
+### No sessions showing up?
 
-A: Delete the data directory and restart the service:
+1. Check Claude Code path: `ls ~/.claude/projects/`
+2. For Docker: ensure `CLAUDE_PROJECTS_PATH=/data/claude/projects` matches volume mount
+3. Trigger collection: `curl -X POST http://localhost:10013/api/collect`
 
-```bash
-rm -rf ~/memex-data
-pnpm start
-```
+## Documentation
 
-### Q: MCP connection failed?
+Full documentation: https://vimoai.dev/docs/memex
 
-A: Check:
-1. Memex service is running at `http://localhost:10013`
-2. MCP configuration path is correct
-3. Node.js version is >= 18
-
-## Development
-
-### Project Structure
-
-```
-memex/
-├── src/
-│   ├── context/                 # DDD contexts
-│   │   └── brain/              # Core context
-│   │       ├── api/            # API layer
-│   │       ├── application/    # Application services
-│   │       ├── domain/         # Domain models
-│   │       └── infrastructure/ # Infrastructure
-│   └── main.ts                 # Application entry
-├── web/                        # Vue frontend
-└── DESIGN.md                   # Architecture design document
-```
-
-### Running Tests
-
-```bash
-pnpm test
-```
-
-## Roadmap
-
-- [x] Phase 0: Data collection and backup
-- [x] Phase 1: SQLite + FTS5 full-text search
-- [x] Phase 2: Semantic search (Ollama + LanceDB)
-- [x] Phase 3: MCP integration
-- [x] Web UI
-- [x] Phase 4: RAG Q&A
-- ~~Phase 5: Knowledge distillation~~ (Not planned - RAG already covers most use cases)
-
-### Possible Future Enhancements
-
-- Session export (Markdown/PDF)
-- Bookmark/tagging system
-- Claude Hooks integration (near real-time indexing)
+- [Installation](https://vimoai.dev/docs/memex/installation)
+- [Configuration](https://vimoai.dev/docs/memex/configuration)
+- [API Reference](https://vimoai.dev/docs/memex/api)
+- [MCP Tools](https://vimoai.dev/docs/memex/mcp)
+- [Architecture](https://vimoai.dev/docs/memex/architecture)
 
 ## License
 
 MIT
-
-## Acknowledgments
-
-Thanks to Claude Code for providing such an excellent development experience.
