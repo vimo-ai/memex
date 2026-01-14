@@ -100,56 +100,63 @@ impl MCPResponse {
     }
 }
 
-/// MCP 工具定义
+/// MCP tool definitions
 fn get_tools() -> Vec<Value> {
     vec![
         json!({
             "name": "search_history",
-            "description": "搜索 Claude Code 历史对话，支持全文搜索、向量语义搜索和混合搜索",
+            "description": "Search Claude Code conversation history. Supports full-text search, vector semantic search, and hybrid search",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "query": { "type": "string", "description": "搜索关键词" },
+                    "query": { "type": "string", "description": "Search keywords" },
                     "mode": {
                         "type": "string",
                         "enum": ["fts", "vector", "hybrid"],
-                        "description": "搜索模式：fts (全文搜索) / vector (语义搜索) / hybrid (混合搜索，默认)"
+                        "description": "Search mode: fts (full-text) / vector (semantic) / hybrid (default)"
                     },
-                    "cwd": { "type": "string", "description": "当前工作目录，用于匹配项目并过滤结果" },
-                    "limit": { "type": "number", "description": "返回数量，默认 10" }
+                    "orderBy": {
+                        "type": "string",
+                        "enum": ["score", "time_desc", "time_asc"],
+                        "description": "Sort order: score (relevance, default) / time_desc (newest first) / time_asc (oldest first). Note: time sorting auto-degrades to FTS-only mode"
+                    },
+                    "startDate": { "type": "string", "description": "Start date filter (YYYY-MM-DD format, inclusive)" },
+                    "endDate": { "type": "string", "description": "End date filter (YYYY-MM-DD format, inclusive)" },
+                    "cwd": { "type": "string", "description": "Current working directory, used to match project and filter results" },
+                    "limit": { "type": "number", "description": "Number of results to return, default 10" }
                 },
                 "required": ["query"]
             }
         }),
         json!({
             "name": "get_session",
-            "description": "获取会话详情，支持分页和会话内搜索。返回会话基本信息和消息列表。注意：limit > 5 时内容会被截断（最多 500 字符），如需完整内容请设置 limit ≤ 5 或分多次获取",
+            "description": "Get session details with pagination and in-session search. Returns session info and message list. Note: content is truncated (max 500 chars) when limit > 5. Set limit <= 5 or paginate for full content",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "sessionId": { "type": "string", "description": "会话 ID（完整 UUID 或前缀）" },
-                    "offset": { "type": "number", "description": "从第几条消息开始，默认 0" },
-                    "limit": { "type": "number", "description": "返回消息数量，默认 10" },
-                    "order": { "type": "string", "enum": ["asc", "desc"], "description": "排序方式：asc (从头开始，默认) / desc (从尾部开始，获取最新消息)" },
-                    "search": { "type": "string", "description": "会话内搜索关键词，自动定位到匹配位置并返回匹配消息" }
+                    "sessionId": { "type": "string", "description": "Session ID (full UUID or prefix)" },
+                    "offset": { "type": "number", "description": "Message offset, default 0" },
+                    "limit": { "type": "number", "description": "Number of messages to return, default 10" },
+                    "order": { "type": "string", "enum": ["asc", "desc"], "description": "Sort order: asc (from start, default) / desc (from end, get latest messages)" },
+                    "search": { "type": "string", "description": "In-session search keyword, auto-locates matching position" }
                 },
                 "required": ["sessionId"]
             }
         }),
         json!({
             "name": "get_recent_sessions",
-            "description": "获取最近的会话列表，按更新时间倒序排列。可选择性过滤指定项目的会话",
+            "description": "Get recent sessions sorted by update time (descending). Optionally filter by project",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "cwd": { "type": "string", "description": "当前工作目录，用于匹配项目并过滤结果" },
-                    "limit": { "type": "number", "description": "返回数量，默认 5" }
+                    "cwd": { "type": "string", "description": "Current working directory, used to match project and filter results" },
+                    "limit": { "type": "number", "description": "Number of results to return, default 5" }
                 }
             }
         }),
         json!({
             "name": "list_projects",
-            "description": "列出所有项目，包括项目名称、路径、会话数量等信息",
+            "description": "List all projects with name, path, and session count",
             "inputSchema": {
                 "type": "object",
                 "properties": {}
@@ -269,11 +276,46 @@ async fn call_tool(state: &AppState, name: &str, args: Value) -> Result<Value, S
     }
 }
 
+/// 将日期字符串 (YYYY-MM-DD) 转换为时间戳（毫秒）
+fn date_to_timestamp(date: &str, is_start: bool) -> Option<i64> {
+    use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Local, TimeZone};
+
+    let parsed = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+    let time = if is_start {
+        NaiveTime::from_hms_opt(0, 0, 0)?
+    } else {
+        NaiveTime::from_hms_milli_opt(23, 59, 59, 999)?
+    };
+    let datetime = NaiveDateTime::new(parsed, time);
+
+    let local_dt = Local.from_local_datetime(&datetime).single()?;
+    Some(local_dt.timestamp_millis())
+}
+
 /// 搜索历史对话
 async fn search_history(state: &AppState, args: Value) -> Result<Value, String> {
     let query = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
     let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10) as usize;
     let cwd = args.get("cwd").and_then(|c| c.as_str());
+    let order_by_str = args.get("orderBy")
+        .or_else(|| args.get("order_by"))
+        .and_then(|o| o.as_str())
+        .unwrap_or("score");
+
+    // 日期范围参数（格式：YYYY-MM-DD）
+    let start_date = args.get("startDate")
+        .or_else(|| args.get("start_date"))
+        .and_then(|d| d.as_str());
+    let end_date = args.get("endDate")
+        .or_else(|| args.get("end_date"))
+        .and_then(|d| d.as_str());
+
+    // 解析排序方式
+    let order_by = match order_by_str {
+        "time_desc" => claude_session_db::SearchOrderBy::TimeDesc,
+        "time_asc" => claude_session_db::SearchOrderBy::TimeAsc,
+        _ => claude_session_db::SearchOrderBy::Score,
+    };
 
     if query.is_empty() {
         return Ok(json!({ "results": [], "total": 0 }));
@@ -286,8 +328,12 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
         None
     };
 
-    // 执行 FTS 搜索（使用 SharedDbAdapter）
-    let results = state.db.search_fts_with_project(query, limit, project_id).await
+    // 转换日期为时间戳
+    let start_ts = start_date.and_then(|d| date_to_timestamp(d, true));
+    let end_ts = end_date.and_then(|d| date_to_timestamp(d, false));
+
+    // 执行 FTS 搜索（使用 SharedDbAdapter，日期过滤在 SQL 层完成）
+    let results = state.db.search_fts_full(query, limit, project_id, order_by, start_ts, end_ts).await
         .map_err(|e| e.to_string())?;
 
     let formatted: Vec<Value> = results.iter().map(|r| {
@@ -436,7 +482,7 @@ async fn get_recent_sessions(state: &AppState, args: Value) -> Result<Value, Str
 
 /// 列出所有项目
 async fn list_projects(state: &AppState, _args: Value) -> Result<Value, String> {
-    let projects = state.db.list_projects_with_stats().await
+    let projects = state.db.list_projects_with_stats(1000, 0).await
         .map_err(|e| e.to_string())?;
 
     let formatted: Vec<Value> = projects.iter().map(|p| {
@@ -458,7 +504,7 @@ async fn list_projects(state: &AppState, _args: Value) -> Result<Value, String> 
 
 /// 根据 cwd 查找项目
 async fn find_project_by_cwd(state: &AppState, cwd: &str) -> Option<i64> {
-    let projects = state.db.list_projects_with_stats().await.ok()?;
+    let projects = state.db.list_projects_with_stats(1000, 0).await.ok()?;
 
     // 精确匹配
     if let Some(p) = projects.iter().find(|p| p.path == cwd) {

@@ -380,6 +380,9 @@ pub struct SemanticSearchQuery {
     project_id: Option<i64>,
     #[serde(default)]
     mode: Option<String>,
+    /// 排序方式: score / time_desc / time_asc
+    #[serde(rename = "orderBy", default)]
+    order_by: Option<String>,
     #[serde(rename = "startDate")]
     start_date: Option<String>,
     #[serde(rename = "endDate")]
@@ -406,11 +409,18 @@ async fn semantic_search(
         _ => crate::search::SearchMode::Hybrid,
     };
 
+    let order_by = match query.order_by.as_deref() {
+        Some("time_desc") => crate::search::SearchOrderBy::TimeDesc,
+        Some("time_asc") => crate::search::SearchOrderBy::TimeAsc,
+        _ => crate::search::SearchOrderBy::Score,
+    };
+
     let options = HybridSearchOptions {
         query: query.q,
         limit: query.limit,
         project_id: query.project_id,
         mode,
+        order_by,
         start_date: query.start_date,
         end_date: query.end_date,
     };
@@ -467,6 +477,9 @@ pub struct HybridSearchQuery {
     project_id: Option<i64>,
     #[serde(default)]
     mode: Option<String>,
+    /// 排序方式: score / time_desc / time_asc
+    #[serde(rename = "orderBy", default)]
+    order_by: Option<String>,
     #[serde(rename = "startDate")]
     start_date: Option<String>,
     #[serde(rename = "endDate")]
@@ -498,11 +511,18 @@ async fn hybrid_search(
         _ => crate::search::SearchMode::Hybrid,
     };
 
+    let order_by = match query.order_by.as_deref() {
+        Some("time_desc") => crate::search::SearchOrderBy::TimeDesc,
+        Some("time_asc") => crate::search::SearchOrderBy::TimeAsc,
+        _ => crate::search::SearchOrderBy::Score,
+    };
+
     let options = HybridSearchOptions {
         query: query.q,
         limit: query.limit,
         project_id: query.project_id,
         mode,
+        order_by,
         start_date: query.start_date,
         end_date: query.end_date,
     };
@@ -726,7 +746,7 @@ async fn embedding_trigger(
                 triggered: false,
                 indexed_messages: 0,
                 indexed_chunks: 0,
-                message: "索引服务不可用，需要启用 RAG".to_string(),
+                message: "Index service unavailable, RAG needs to be enabled".to_string(),
             })
             .into_response());
         }
@@ -863,54 +883,54 @@ async fn embedding_trigger_all(
         None => {
             return Ok(Json(EmbeddingTriggerAllResponse {
                 triggered: false,
-                message: "索引服务不可用，需要启用 RAG".to_string(),
+                message: "Index service unavailable, RAG needs to be enabled".to_string(),
             })
             .into_response());
         }
     };
 
-    // 检查是否已经在运行
+    // Check if already running
     if indexer.is_running() {
         return Ok(Json(EmbeddingTriggerAllResponse {
             triggered: false,
-            message: "索引任务已在运行中".to_string(),
+            message: "Index task already running".to_string(),
         })
         .into_response());
     }
 
-    // 标记开始运行
+    // Mark as running
     indexer.set_running(true);
 
-    // 启动后台任务
+    // Start background task
     let db = state.db.clone();
     tokio::spawn(async move {
-        tracing::info!("🚀 开始后台全量索引任务");
+        tracing::info!("🚀 Starting background full indexing task");
         let mut total_indexed = 0usize;
         let mut total_failed = 0usize;
-        let batch_size = 500; // 每批处理 500 条
+        let batch_size = 500; // Process 500 per batch
 
         loop {
-            // 检查是否还有待索引的消息
+            // Check if there are pending messages
             let pending = match db.count_unindexed_messages().await {
                 Ok(n) => n as usize,
                 Err(e) => {
-                    tracing::error!("获取待索引数量失败: {}", e);
+                    tracing::error!("Failed to get pending count: {}", e);
                     break;
                 }
             };
 
             if pending == 0 {
-                tracing::info!("✅ 后台索引完成: 共索引 {} 条, 失败 {} 条", total_indexed, total_failed);
+                tracing::info!("✅ Background indexing done: {} indexed, {} failed", total_indexed, total_failed);
                 break;
             }
 
-            // 处理一批
+            // Process one batch
             match indexer.index_pending(batch_size).await {
                 Ok(result) => {
                     total_indexed += result.indexed_messages;
                     total_failed += result.failed;
                     tracing::info!(
-                        "📦 索引进度: 本批 {} 条, 累计 {} 条, 失败 {} 条, 剩余 {} 条",
+                        "📦 Index progress: batch {}, total {}, failed {}, remaining {}",
                         result.indexed_messages,
                         total_indexed,
                         total_failed,
@@ -918,22 +938,22 @@ async fn embedding_trigger_all(
                     );
                 }
                 Err(e) => {
-                    tracing::error!("索引批次失败: {}", e);
-                    // 继续尝试下一批
+                    tracing::error!("Index batch failed: {}", e);
+                    // Continue with next batch
                 }
             }
 
-            // 短暂休息，避免过载
+            // Brief pause to avoid overload
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
 
-        // 标记结束运行
+        // Mark as finished
         indexer.set_running(false);
     });
 
     Ok(Json(EmbeddingTriggerAllResponse {
         triggered: true,
-        message: "后台索引任务已启动，可通过 /api/embedding/stats 查看进度".to_string(),
+        message: "Background indexing started, check /api/embedding/stats for progress".to_string(),
     })
     .into_response())
 }
@@ -953,7 +973,7 @@ async fn embedding_reset_failed(
 
     Ok(Json(EmbeddingResetFailedResponse {
         reset_count,
-        message: format!("已重置 {} 条失败消息，可重新索引", reset_count),
+        message: format!("Reset {} failed messages, ready for re-indexing", reset_count),
     }))
 }
 
@@ -973,7 +993,7 @@ async fn embedding_compact(
         None => {
             return Ok(Json(EmbeddingCompactResponse {
                 success: false,
-                message: "向量存储不可用".to_string(),
+                message: "Vector store unavailable".to_string(),
             })
             .into_response());
         }
@@ -984,12 +1004,12 @@ async fn embedding_compact(
     match store.compact().await {
         Ok(()) => Ok(Json(EmbeddingCompactResponse {
             success: true,
-            message: "LanceDB 压缩完成（合并文件片段、清理 7 天前旧版本）".to_string(),
+            message: "LanceDB compaction completed (merged file fragments, cleaned up versions older than 7 days)".to_string(),
         })
         .into_response()),
         Err(e) => Ok(Json(EmbeddingCompactResponse {
             success: false,
-            message: format!("压缩失败: {}", e),
+            message: format!("Compaction failed: {}", e),
         })
         .into_response()),
     }
@@ -1043,7 +1063,7 @@ async fn index_session_by_path(
     if !collect_result.new_message_ids.is_empty() {
         if let Some(indexer) = &state.indexer {
             if let Err(e) = indexer.index_by_ids(&collect_result.new_message_ids).await {
-                tracing::warn!("向量索引失败: {}", e);
+                tracing::warn!("Vector indexing failed: {}", e);
             }
         }
     }
@@ -1273,7 +1293,7 @@ impl<E: Into<anyhow::Error>> From<E> for AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
-        tracing::error!("请求错误: {:?}", self.0);
+        tracing::error!("Request error: {:?}", self.0);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
