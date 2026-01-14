@@ -14,7 +14,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::embedding::OllamaClient;
-use crate::search::{HybridSearchOptions, HybridSearchService, SearchMode};
+use crate::search::{HybridSearchOptions, HybridSearchService, SearchMode, SearchOrderBy};
 use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::VectorStore;
 
@@ -129,6 +129,7 @@ impl RagService {
             limit: max_sources,
             project_id,
             mode: SearchMode::Hybrid,
+            order_by: SearchOrderBy::Score,
             start_date: None,
             end_date: None,
         };

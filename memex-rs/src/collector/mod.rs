@@ -144,6 +144,8 @@ impl Collector {
                             tool_name: msg.tool_name.clone(),
                             tool_args: msg.tool_args.clone(),
                             raw: msg.raw.clone(),
+                            approval_status: None,
+                            approval_resolved_at: None,
                         })
                     })
                     .collect();
@@ -270,6 +272,8 @@ impl Collector {
                     tool_name: None,
                     tool_args: None,
                     raw: msg.raw.clone(),
+                    approval_status: None,
+                    approval_resolved_at: None,
                 }
             })
             .collect();
