@@ -17,6 +17,25 @@ use crate::vector::VectorStore;
 /// RRF 融合常数 (标准值为 60)
 const RRF_K: f64 = 60.0;
 
+/// 将日期字符串 (YYYY-MM-DD) 转换为时间戳（毫秒）
+///
+/// - `is_start`: true 表示一天的开始 (00:00:00)，false 表示一天的结束 (23:59:59.999)
+fn date_to_timestamp(date: &str, is_start: bool) -> Option<i64> {
+    use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Local, TimeZone};
+
+    let parsed = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+    let time = if is_start {
+        NaiveTime::from_hms_opt(0, 0, 0)?
+    } else {
+        NaiveTime::from_hms_milli_opt(23, 59, 59, 999)?
+    };
+    let datetime = NaiveDateTime::new(parsed, time);
+
+    // 转换为本地时区的时间戳
+    let local_dt = Local.from_local_datetime(&datetime).single()?;
+    Some(local_dt.timestamp_millis())
+}
+
 /// 混合搜索结果
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +75,29 @@ pub struct SearchSources {
     pub vector: bool,
 }
 
+/// 搜索排序方式
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchOrderBy {
+    /// 按相关性分数排序（默认）
+    #[default]
+    Score,
+    /// 按时间倒序（最新优先）
+    TimeDesc,
+    /// 按时间正序（最早优先）
+    TimeAsc,
+}
+
+impl From<SearchOrderBy> for claude_session_db::SearchOrderBy {
+    fn from(order: SearchOrderBy) -> Self {
+        match order {
+            SearchOrderBy::Score => claude_session_db::SearchOrderBy::Score,
+            SearchOrderBy::TimeDesc => claude_session_db::SearchOrderBy::TimeDesc,
+            SearchOrderBy::TimeAsc => claude_session_db::SearchOrderBy::TimeAsc,
+        }
+    }
+}
+
 /// 混合搜索选项
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,6 +112,10 @@ pub struct HybridSearchOptions {
     /// 搜索模式: fts | vector | hybrid
     #[serde(default = "default_mode")]
     pub mode: SearchMode,
+    /// 排序方式: score | time_desc | time_asc
+    /// 注意：time_desc/time_asc 会自动降级为 FTS-only 模式
+    #[serde(default)]
+    pub order_by: SearchOrderBy,
     /// 开始日期 (YYYY-MM-DD)
     pub start_date: Option<String>,
     /// 结束日期 (YYYY-MM-DD)
@@ -120,6 +166,7 @@ impl HybridSearchService {
             limit,
             project_id,
             mode,
+            order_by,
             start_date,
             end_date,
         } = options;
@@ -128,47 +175,64 @@ impl HybridSearchService {
             return Ok(vec![]);
         }
 
+        // 时间排序时自动降级为 FTS-only 模式
+        let effective_mode = if order_by != SearchOrderBy::Score {
+            tracing::info!(
+                "[Hybrid Search] order_by={:?}, 降级为 FTS-only 模式",
+                order_by
+            );
+            SearchMode::Fts
+        } else {
+            mode
+        };
+
         tracing::info!(
-            "[混合检索] query=\"{}\", mode={:?}, limit={}, date_range={:?}~{:?}",
+            "[Hybrid Search] query=\"{}\", mode={:?}, order_by={:?}, limit={}, date_range={:?}~{:?}",
             query,
-            mode,
+            effective_mode,
+            order_by,
             limit,
             start_date,
             end_date
         );
 
+        // 将日期字符串转换为时间戳（毫秒）
+        let start_timestamp = start_date.as_ref().and_then(|d| date_to_timestamp(d, true));
+        let end_timestamp = end_date.as_ref().and_then(|d| date_to_timestamp(d, false));
+
         // 根据模式执行搜索
-        let mut fts_results = Vec::new();
+        let mut fts_results: Vec<crate::domain::SearchResult> = Vec::new();
         let mut vector_results = Vec::new();
 
-        // FTS 搜索
-        if mode == SearchMode::Fts || mode == SearchMode::Hybrid {
-            match self.db.search_fts_with_project(&query, limit * 2, project_id).await {
+        // FTS 搜索（日期过滤在 SQL 层完成）
+        if effective_mode == SearchMode::Fts || effective_mode == SearchMode::Hybrid {
+            let db_order_by: claude_session_db::SearchOrderBy = order_by.into();
+            match self.db.search_fts_full(&query, limit * 2, project_id, db_order_by, start_timestamp, end_timestamp).await {
                 Ok(results) => {
-                    tracing::debug!("[FTS] 返回 {} 条结果", results.len());
-                    // 转换为 domain::SearchResult
+                    tracing::debug!("[FTS] Returned {} results", results.len());
+                    // Convert to domain::SearchResult
                     fts_results = results.into_iter().map(Into::into).collect();
                 }
                 Err(e) => {
-                    tracing::warn!("[FTS] 搜索失败: {}", e);
+                    tracing::warn!("[FTS] Search failed: {}", e);
                 }
             }
         }
 
-        // 向量搜索
-        if mode == SearchMode::Vector || mode == SearchMode::Hybrid {
+        // Vector search (只在 Score 排序时执行，且日期过滤需要在后续处理)
+        if effective_mode == SearchMode::Vector || effective_mode == SearchMode::Hybrid {
             if let (Some(ollama), Some(vector)) = (&self.ollama, &self.vector) {
                 match self.vector_search(ollama, vector, &query, limit * 2).await {
                     Ok(results) => {
-                        tracing::debug!("[Vector] 返回 {} 条结果", results.len());
+                        tracing::debug!("[Vector] Returned {} results", results.len());
                         vector_results = results;
                     }
                     Err(e) => {
-                        tracing::warn!("[Vector] 搜索失败，降级为纯 FTS: {}", e);
+                        tracing::warn!("[Vector] Search failed, falling back to FTS: {}", e);
                     }
                 }
             } else {
-                tracing::debug!("[Vector] Ollama/VectorStore 不可用");
+                tracing::debug!("[Vector] Ollama/VectorStore unavailable");
             }
         }
 
@@ -177,39 +241,34 @@ impl HybridSearchService {
             return Ok(vec![]);
         }
 
-        // RRF 融合
-        let fused = self.rrf_fusion(&fts_results, &vector_results, project_id);
+        // RRF 融合（时间排序时跳过，直接使用 FTS 结果）
+        let fused = if order_by != SearchOrderBy::Score {
+            // 时间排序：直接将 FTS 结果转换为 HybridSearchResult
+            fts_results
+                .into_iter()
+                .enumerate()
+                .map(|(idx, r)| HybridSearchResult {
+                    message_id: r.message_id,
+                    session_id: r.session_id,
+                    project_id: r.project_id,
+                    project_name: r.project_name,
+                    message_type: r.r#type,
+                    content: r.content,
+                    snippet: Some(r.snippet),
+                    score: r.score,
+                    timestamp: r.timestamp,
+                    sources: SearchSources { fts: true, vector: false },
+                    fts_rank: Some(idx + 1),
+                    vector_distance: None,
+                    chunk_index: None,
+                })
+                .collect()
+        } else {
+            self.rrf_fusion(&fts_results, &vector_results, project_id)
+        };
 
-        // 日期过滤
-        let filtered: Vec<HybridSearchResult> = fused
-            .into_iter()
-            .filter(|r| {
-                // 检查开始日期
-                if let Some(ref start) = start_date {
-                    if let Some(ref ts) = r.timestamp {
-                        // timestamp 格式: "2025-12-26T12:35:42.123Z"
-                        // start_date 格式: "2025-12-26"
-                        let ts_date = &ts[..10]; // 取日期部分
-                        if ts_date < start.as_str() {
-                            return false;
-                        }
-                    }
-                }
-                // 检查结束日期
-                if let Some(ref end) = end_date {
-                    if let Some(ref ts) = r.timestamp {
-                        let ts_date = &ts[..10];
-                        if ts_date > end.as_str() {
-                            return false;
-                        }
-                    }
-                }
-                true
-            })
-            .collect();
-
-        // 返回 top N
-        Ok(filtered.into_iter().take(limit).collect())
+        // 返回 top N（日期过滤已在 SQL 层完成）
+        Ok(fused.into_iter().take(limit).collect())
     }
 
     /// 向量搜索
