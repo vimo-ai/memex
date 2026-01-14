@@ -38,25 +38,25 @@ impl FileWatcher {
             }
         })?;
 
-        // 监听 Claude 项目目录
+        // Watch Claude projects directory
         let claude_path = &self.config.claude_projects_path;
         if claude_path.exists() {
             debouncer.watcher().watch(claude_path, RecursiveMode::Recursive)?;
-            tracing::info!("👁️ 监听 Claude 目录: {:?}", claude_path);
+            tracing::info!("👁️ Watching Claude directory: {:?}", claude_path);
         } else {
-            tracing::warn!("⚠️ Claude 目录不存在: {:?}", claude_path);
+            tracing::warn!("⚠️ Claude directory not found: {:?}", claude_path);
         }
 
-        // 监听 Codex 目录
+        // Watch Codex directory
         let codex_path = &self.config.codex_path;
         if codex_path.exists() {
             debouncer.watcher().watch(codex_path, RecursiveMode::Recursive)?;
-            tracing::info!("👁️ 监听 Codex 目录: {:?}", codex_path);
+            tracing::info!("👁️ Watching Codex directory: {:?}", codex_path);
         } else {
-            tracing::warn!("⚠️ Codex 目录不存在: {:?}", codex_path);
+            tracing::warn!("⚠️ Codex directory not found: {:?}", codex_path);
         }
 
-        tracing::info!("🔄 文件监听服务已启动");
+        tracing::info!("🔄 File watcher service started");
 
         // 处理文件变化事件
         let watcher = self.clone();
@@ -82,31 +82,31 @@ impl FileWatcher {
 
         match kind {
             DebouncedEventKind::Any => {
-                tracing::debug!("📝 检测到文件变化: {:?}", path);
+                tracing::debug!("📝 File change detected: {:?}", path);
                 self.trigger_collect(path).await;
             }
             _ => {}
         }
     }
 
-    /// 触发采集（精确索引单个文件，而非扫描全部）
+    /// Trigger collection (precise indexing of single file, not full scan)
     async fn trigger_collect(&self, path: &PathBuf) {
-        // 转换路径为字符串
+        // Convert path to string
         let path_str = match path.to_str() {
             Some(s) => s,
             None => {
-                tracing::warn!("⚠️ 无法转换路径: {:?}", path);
+                tracing::warn!("⚠️ Cannot convert path: {:?}", path);
                 return;
             }
         };
 
-        // 精确采集单个文件（高效！不再扫描 9000+ 文件）
+        // Precise single file collection (efficient! no longer scanning 9000+ files)
         match self.collector.collect_by_path(path_str) {
             Ok(result) => {
-                // 异步触发向量索引
+                // Async trigger vector indexing
                 if result.messages_inserted > 0 {
                     tracing::debug!(
-                        "📝 文件变化: {:?} → {} 新消息",
+                        "📝 File change: {:?} → {} new messages",
                         path.file_name().unwrap_or_default(),
                         result.messages_inserted
                     );
@@ -116,7 +116,7 @@ impl FileWatcher {
                 }
             }
             Err(e) => {
-                tracing::error!("❌ 精确采集失败 {:?}: {}", path.file_name().unwrap_or_default(), e);
+                tracing::error!("❌ Precise collection failed {:?}: {}", path.file_name().unwrap_or_default(), e);
             }
         }
     }

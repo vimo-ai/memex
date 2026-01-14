@@ -119,7 +119,7 @@ impl ArchiveService {
         let files = self.find_archivable_files(yesterday)?;
 
         if files.is_empty() {
-            tracing::info!("没有需要归档的文件");
+            tracing::info!("No files to archive");
             return Ok(None);
         }
 
@@ -267,7 +267,7 @@ impl ArchiveService {
                 continue;
             }
 
-            tracing::info!("补偿归档: {} ({} 文件)", date, files.len());
+            tracing::info!("Compensation archive: {} ({} files)", date, files.len());
             std::fs::create_dir_all(archive_path.parent().unwrap())?;
 
             match self.do_archive(&files, &archive_path) {
@@ -277,8 +277,8 @@ impl ArchiveService {
                     result.files_archived += r.files_count;
                 }
                 Err(e) => {
-                    tracing::error!("归档失败 {}: {}", date, e);
-                    result.errors.push(format!("日归档 {}: {}", date, e));
+                    tracing::error!("Archive failed {}: {}", date, e);
+                    result.errors.push(format!("Daily archive {}: {}", date, e));
                 }
             }
         }
@@ -303,7 +303,7 @@ impl ArchiveService {
             }
 
             tracing::info!(
-                "补偿周合并: {:02}-{:02}_{:02}-{:02} ({} 日包)",
+                "Compensation weekly merge: {:02}-{:02}_{:02}-{:02} ({} daily archives)",
                 week_start.month(), week_start.day(),
                 week_end.month(), week_end.day(),
                 daily_archives.len()
@@ -311,7 +311,7 @@ impl ArchiveService {
 
             match self.do_merge(&daily_archives, &archive_path) {
                 Ok(_) => {
-                    // 删除日包
+                    // Delete daily archives
                     for path in &daily_archives {
                         let _ = std::fs::remove_file(path);
                     }
@@ -324,8 +324,8 @@ impl ArchiveService {
                         week_start.month(), week_start.day(),
                         week_end.month(), week_end.day()
                     );
-                    tracing::error!("周合并失败 {}: {}", range, e);
-                    result.errors.push(format!("周合并 {}: {}", range, e));
+                    tracing::error!("Weekly merge failed {}: {}", range, e);
+                    result.errors.push(format!("Weekly merge {}: {}", range, e));
                 }
             }
         }
@@ -352,15 +352,15 @@ impl ArchiveService {
                 continue;
             }
 
-            tracing::info!("补偿月合并: {}-{:02} ({} 周包)", target_month.year(), target_month.month(), weekly_archives.len());
+            tracing::info!("Compensation monthly merge: {}-{:02} ({} weekly archives)", target_month.year(), target_month.month(), weekly_archives.len());
 
             match self.do_merge(&weekly_archives, &archive_path) {
                 Ok(_) => {
-                    // 删除周包
+                    // Delete weekly archives
                     for path in &weekly_archives {
                         let _ = std::fs::remove_file(path);
                     }
-                    // 清理空目录
+                    // Cleanup empty directory
                     let week_dir = self.archive_dir
                         .join(format!("{}", target_month.year()))
                         .join(format!("{:02}", target_month.month()));
@@ -370,8 +370,8 @@ impl ArchiveService {
                     result.monthly_merged += 1;
                 }
                 Err(e) => {
-                    tracing::error!("月合并失败 {}-{:02}: {}", target_month.year(), target_month.month(), e);
-                    result.errors.push(format!("月合并 {}-{:02}: {}", target_month.year(), target_month.month(), e));
+                    tracing::error!("Monthly merge failed {}-{:02}: {}", target_month.year(), target_month.month(), e);
+                    result.errors.push(format!("Monthly merge {}-{:02}: {}", target_month.year(), target_month.month(), e));
                 }
             }
         }
@@ -383,15 +383,15 @@ impl ArchiveService {
         if !yearly_path.exists() {
             let monthly_archives = self.find_monthly_archives(last_year)?;
             if !monthly_archives.is_empty() {
-                tracing::info!("补偿年合并: {} ({} 月包)", last_year, monthly_archives.len());
+                tracing::info!("Compensation yearly merge: {} ({} monthly archives)", last_year, monthly_archives.len());
 
                 match self.do_merge(&monthly_archives, &yearly_path) {
                     Ok(_) => {
-                        // 删除月包
+                        // Delete monthly archives
                         for path in &monthly_archives {
                             let _ = std::fs::remove_file(path);
                         }
-                        // 清理空目录
+                        // Cleanup empty directory
                         let year_dir = self.archive_dir.join(format!("{}", last_year));
                         let _ = std::fs::remove_dir_all(&year_dir);
 
@@ -399,8 +399,8 @@ impl ArchiveService {
                         result.yearly_merged += 1;
                     }
                     Err(e) => {
-                        tracing::error!("年合并失败 {}: {}", last_year, e);
-                        result.errors.push(format!("年合并 {}: {}", last_year, e));
+                        tracing::error!("Yearly merge failed {}: {}", last_year, e);
+                        result.errors.push(format!("Yearly merge {}: {}", last_year, e));
                     }
                 }
             }

@@ -53,14 +53,14 @@ impl VectorStore {
 
         let mut store = Self { db, table: None };
 
-        // 尝试打开现有表
+        // Try to open existing table
         match store.db.open_table("embeddings").execute().await {
             Ok(table) => {
                 store.table = Some(table);
-                tracing::info!("LanceDB 表已打开");
+                tracing::info!("LanceDB table opened");
             }
             Err(_) => {
-                tracing::info!("LanceDB 表不存在，将在首次插入时创建");
+                tracing::info!("LanceDB table not found, will create on first insert");
             }
         }
 
@@ -104,7 +104,7 @@ impl VectorStore {
             .context("创建 LanceDB 表失败")?;
 
         self.table = Some(table);
-        tracing::info!("LanceDB 表已创建");
+        tracing::info!("LanceDB table created");
 
         Ok(())
     }
@@ -338,22 +338,22 @@ impl VectorStore {
 
         use lancedb::table::OptimizeAction;
 
-        // 1. 合并小文件片段
-        tracing::info!("🔧 开始压缩 LanceDB 数据文件...");
+        // 1. Merge small file fragments
+        tracing::info!("🔧 Starting LanceDB data file compaction...");
         table.optimize(OptimizeAction::Compact {
             options: Default::default(),
             remap_options: None,
-        }).await.context("compact_files 失败")?;
+        }).await.context("compact_files failed")?;
 
-        // 2. 清理所有旧版本（memex 不需要版本历史）
-        tracing::info!("🧹 清理旧版本...");
+        // 2. Cleanup all old versions (memex doesn't need version history)
+        tracing::info!("🧹 Cleaning up old versions...");
         table.optimize(OptimizeAction::Prune {
-            older_than: Some(chrono::TimeDelta::zero()),  // 不保留任何旧版本
+            older_than: Some(chrono::TimeDelta::zero()),  // Keep no old versions
             delete_unverified: Some(true),
             error_if_tagged_old_versions: None,
-        }).await.context("cleanup 失败")?;
+        }).await.context("cleanup failed")?;
 
-        tracing::info!("✅ LanceDB 压缩完成");
+        tracing::info!("✅ LanceDB compaction done");
         Ok(())
     }
 }

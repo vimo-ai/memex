@@ -255,9 +255,9 @@ impl SharedDbAdapter {
     }
 
     /// 列出项目（带统计信息）
-    pub async fn list_projects_with_stats(&self) -> Result<Vec<claude_session_db::ProjectWithStats>> {
+    pub async fn list_projects_with_stats(&self, limit: usize, offset: usize) -> Result<Vec<claude_session_db::ProjectWithStats>> {
         let db = self.db.read().await;
-        Ok(db.list_projects_with_stats()?)
+        Ok(db.list_projects_with_stats(limit, offset)?)
     }
 
     /// 列出会话
@@ -292,6 +292,20 @@ impl SharedDbAdapter {
     ) -> Result<Vec<SearchResult>> {
         let db = self.db.read().await;
         Ok(db.search_fts_with_project(query, limit, project_id)?)
+    }
+
+    /// FTS 搜索（完整版，支持日期范围过滤）
+    pub async fn search_fts_full(
+        &self,
+        query: &str,
+        limit: usize,
+        project_id: Option<i64>,
+        order_by: claude_session_db::SearchOrderBy,
+        start_timestamp: Option<i64>,
+        end_timestamp: Option<i64>,
+    ) -> Result<Vec<SearchResult>> {
+        let db = self.db.read().await;
+        Ok(db.search_fts_full(query, limit, project_id, order_by, start_timestamp, end_timestamp)?)
     }
 
     /// 获取统计信息

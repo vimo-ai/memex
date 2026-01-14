@@ -57,9 +57,9 @@ impl BackupService {
         let backup_name = format!("ai-cli-session.db.bak-{}", timestamp);
         let backup_path = self.backup_dir.join(&backup_name);
 
-        // 检查今天是否已备份
+        // Check if backup already exists today
         if self.has_backup_today()? {
-            tracing::info!("今日已有备份，跳过");
+            tracing::info!("Backup already exists today, skipping");
             // 返回今日最新备份
             if let Some(latest) = self.get_latest_backup()? {
                 return Ok(BackupResult {
@@ -72,12 +72,12 @@ impl BackupService {
 
         // 复制数据库文件
         std::fs::copy(&self.db_path, &backup_path)
-            .with_context(|| format!("备份失败: {:?} -> {:?}", self.db_path, backup_path))?;
+            .with_context(|| format!("Backup failed: {:?} -> {:?}", self.db_path, backup_path))?;
 
         let metadata = std::fs::metadata(&backup_path)?;
         let size = metadata.len();
 
-        tracing::info!("备份完成: {:?} ({} bytes)", backup_path, size);
+        tracing::info!("Backup done: {:?} ({} bytes)", backup_path, size);
 
         // 清理旧备份
         self.cleanup_old_backups()?;
@@ -164,11 +164,11 @@ impl BackupService {
         // 按名称排序（最新在前）
         backups.sort_by(|a, b| b.name.cmp(&a.name));
 
-        // 删除超出数量的旧备份
+        // Delete old backups beyond limit
         for backup in backups.into_iter().skip(self.max_backups) {
-            tracing::info!("删除旧备份: {:?}", backup.path);
+            tracing::info!("Deleting old backup: {:?}", backup.path);
             if let Err(e) = std::fs::remove_file(&backup.path) {
-                tracing::warn!("删除备份失败: {:?}: {}", backup.path, e);
+                tracing::warn!("Failed to delete backup: {:?}: {}", backup.path, e);
             }
         }
 
@@ -192,7 +192,7 @@ impl BackupService {
             Ok(_) => {
                 // 删除临时备份
                 let _ = std::fs::remove_file(&temp_backup);
-                tracing::info!("恢复完成: {:?}", backup_path);
+                tracing::info!("Restore done: {:?}", backup_path);
                 Ok(())
             }
             Err(e) => {

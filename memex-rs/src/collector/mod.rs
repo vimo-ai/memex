@@ -49,7 +49,7 @@ impl Collector {
             let sessions = match adapter.list_sessions() {
                 Ok(s) => s,
                 Err(e) => {
-                    let err_msg = format!("{:?} 列出会话失败: {}", source, e);
+                    let err_msg = format!("{:?} failed to list sessions: {}", source, e);
                     tracing::warn!("{}", err_msg);
                     result.errors.push(err_msg);
                     continue;
@@ -70,7 +70,7 @@ impl Collector {
                 ) {
                     Ok(id) => id,
                     Err(e) => {
-                        result.errors.push(format!("创建项目失败: {}", e));
+                        result.errors.push(format!("Failed to create project: {}", e));
                         continue;
                     }
                 };
@@ -85,7 +85,7 @@ impl Collector {
                     Ok(Some(r)) => r,
                     Ok(None) => continue,
                     Err(e) => {
-                        let err_msg = format!("解析会话 {} 失败: {}", meta.id, e);
+                        let err_msg = format!("Failed to parse session {}: {}", meta.id, e);
                         tracing::debug!("{}", err_msg);
                         result.errors.push(err_msg);
                         continue;
@@ -106,7 +106,7 @@ impl Collector {
                     meta: None,
                 };
                 if let Err(e) = self.blocking_upsert_session(&session_input) {
-                    result.errors.push(format!("创建会话失败: {}", e));
+                    result.errors.push(format!("Failed to create session: {}", e));
                     continue;
                 }
 
@@ -158,11 +158,11 @@ impl Collector {
                         if inserted > 0 {
                             result.sessions_scanned += 1;
                             result.messages_inserted += inserted;
-                            tracing::debug!("会话 {} 插入 {} 条消息", meta.id, inserted);
+                            tracing::debug!("Session {} inserted {} messages", meta.id, inserted);
                         }
                     }
                     Err(e) => {
-                        result.errors.push(format!("插入消息失败: {}", e));
+                        result.errors.push(format!("Failed to insert messages: {}", e));
                     }
                 }
             }
@@ -170,10 +170,10 @@ impl Collector {
             result.projects_scanned += 1;
         }
 
-        // 只在有新消息时打印
+        // Only print when there are new messages
         if result.messages_inserted > 0 {
             tracing::info!(
-                "📥 采集: {} 会话, {} 新消息",
+                "📥 Collection: {} sessions, {} new messages",
                 result.sessions_scanned,
                 result.messages_inserted
             );
@@ -201,7 +201,7 @@ impl Collector {
             Ok(Some(s)) => s,
             Ok(None) => return Ok(result),
             Err(e) => {
-                result.errors.push(format!("解析会话失败: {}", e));
+                result.errors.push(format!("Failed to parse session: {}", e));
                 return Ok(result);
             }
         };
@@ -222,7 +222,7 @@ impl Collector {
         ) {
             Ok(id) => id,
             Err(e) => {
-                result.errors.push(format!("创建项目失败: {}", e));
+                result.errors.push(format!("Failed to create project: {}", e));
                 return Ok(result);
             }
         };
@@ -241,7 +241,7 @@ impl Collector {
             meta: None,
         };
         if let Err(e) = self.blocking_upsert_session(&session_input) {
-            result.errors.push(format!("创建会话失败: {}", e));
+            result.errors.push(format!("Failed to create session: {}", e));
             return Ok(result);
         }
 
@@ -285,11 +285,11 @@ impl Collector {
                 result.sessions_scanned = 1;
                 result.messages_inserted = inserted;
                 if inserted > 0 {
-                    tracing::info!("📥 增量索引: 会话 {} 插入 {} 条消息", session.session_id, inserted);
+                    tracing::info!("📥 Incremental indexing: session {} inserted {} messages", session.session_id, inserted);
                 }
             }
             Err(e) => {
-                result.errors.push(format!("插入消息失败: {}", e));
+                result.errors.push(format!("Failed to insert messages: {}", e));
             }
         }
 

@@ -35,23 +35,23 @@ impl IndexQueue {
         }
 
         if let Err(e) = self.tx.send(message_ids).await {
-            tracing::error!("发送索引任务失败: {}", e);
+            tracing::error!("Failed to send index task: {}", e);
         }
     }
 
-    /// 后台处理队列
+    /// Background queue processor
     async fn process_queue(mut rx: mpsc::Receiver<Vec<i64>>, indexer: VectorIndexer) {
-        tracing::info!("🔄 索引队列已启动");
+        tracing::info!("🔄 Index queue started");
 
         while let Some(ids) = rx.recv().await {
-            tracing::debug!("📥 收到 {} 条消息待索引", ids.len());
+            tracing::debug!("📥 Received {} messages to index", ids.len());
 
             if let Err(e) = indexer.index_by_ids(&ids).await {
-                tracing::error!("❌ 索引失败: {}", e);
+                tracing::error!("❌ Indexing failed: {}", e);
             }
         }
 
-        tracing::warn!("⚠️ 索引队列已关闭");
+        tracing::warn!("⚠️ Index queue closed");
     }
 }
 
@@ -118,18 +118,18 @@ impl VectorIndexer {
             return Ok(0);
         }
 
-        tracing::info!("同步索引状态: 找到 {} 条已索引消息", indexed_ids.len());
+        tracing::info!("Syncing index status: found {} indexed messages", indexed_ids.len());
 
-        // 批量标记（每次 1000 条，避免 SQL 语句过长）
+        // Batch mark (1000 per batch, avoid SQL too long)
         let mut total_marked = 0;
         for chunk in indexed_ids.chunks(1000) {
             match self.db.mark_messages_indexed(chunk).await {
                 Ok(n) => total_marked += n,
-                Err(e) => tracing::error!("标记已索引失败: {}", e),
+                Err(e) => tracing::error!("Failed to mark as indexed: {}", e),
             }
         }
 
-        tracing::info!("同步完成: 标记 {} 条消息为已索引", total_marked);
+        tracing::info!("Sync complete: marked {} messages as indexed", total_marked);
         Ok(total_marked)
     }
 
@@ -158,7 +158,7 @@ impl VectorIndexer {
                     result.failed += session_result.failed;
                 }
                 Err(e) => {
-                    result.errors.push(format!("会话 {} 索引失败: {}", session.session_id, e));
+                    result.errors.push(format!("Session {} indexing failed: {}", session.session_id, e));
                 }
             }
         }
@@ -219,7 +219,7 @@ impl VectorIndexer {
                         });
                     }
                     Err(e) => {
-                        result.errors.push(format!("消息 {} 块 {} embedding 失败: {}",
+                        result.errors.push(format!("Message {} chunk {} embedding failed: {}",
                             message.id, chunk.index, e));
                         chunk_success = false;
                         break;
@@ -237,16 +237,16 @@ impl VectorIndexer {
                         indexed_ids.push(message.id);
                     }
                     Err(e) => {
-                        result.errors.push(format!("插入失败: {}", e));
+                        result.errors.push(format!("Insert failed: {}", e));
                     }
                 }
             }
         }
 
-        // 批量标记已索引
+        // Batch mark as indexed
         if !indexed_ids.is_empty() {
             if let Err(e) = self.db.mark_messages_indexed(&indexed_ids).await {
-                tracing::error!("标记已索引失败: {}", e);
+                tracing::error!("Failed to mark as indexed: {}", e);
             }
         }
 
@@ -310,10 +310,10 @@ impl VectorIndexer {
         let embeddings = match self.ollama.embed_batch(texts).await {
             Ok(embs) => embs,
             Err(e) => {
-                result.errors.push(format!("批量 embedding 失败: {}", e));
+                result.errors.push(format!("Batch embedding failed: {}", e));
                 result.failed = assistant_ids.len();
                 if let Err(e) = self.db.mark_messages_index_failed(&assistant_ids).await {
-                    tracing::error!("标记索引失败状态失败: {}", e);
+                    tracing::error!("Failed to mark index failed status: {}", e);
                 }
                 return Ok(result);
             }
@@ -334,29 +334,29 @@ impl VectorIndexer {
         result.indexed_chunks = all_records.len();
         result.indexed_messages = assistant_ids.len();
 
-        // 一次性批量插入
+        // Batch insert
         if !all_records.is_empty() {
             let mut vector_store = self.vector.write().await;
             if let Err(e) = vector_store.insert(&all_records).await {
-                tracing::error!("批量插入失败: {}", e);
+                tracing::error!("Batch insert failed: {}", e);
                 result.failed = result.indexed_messages;
                 result.indexed_messages = 0;
                 result.indexed_chunks = 0;
                 if let Err(e) = self.db.mark_messages_index_failed(&assistant_ids).await {
-                    tracing::error!("标记索引失败状态失败: {}", e);
+                    tracing::error!("Failed to mark index failed status: {}", e);
                 }
                 return Ok(result);
             }
         }
 
-        // 标记已索引
+        // Mark as indexed
         if let Err(e) = self.db.mark_messages_indexed(&assistant_ids).await {
-            tracing::error!("标记已索引失败: {}", e);
+            tracing::error!("Failed to mark as indexed: {}", e);
         }
 
         if result.indexed_messages > 0 {
             tracing::debug!(
-                "实时索引完成: {} 消息, {} 块（并发 embedding）",
+                "Real-time indexing done: {} messages, {} chunks (concurrent embedding)",
                 result.indexed_messages,
                 result.indexed_chunks
             );
@@ -389,7 +389,7 @@ impl VectorIndexer {
             return Ok(result);
         }
 
-        tracing::debug!("增量索引: 找到 {} 条未索引消息", messages.len());
+        tracing::debug!("Incremental indexing: found {} unindexed messages", messages.len());
 
         // 1. 收集所有 chunks（带 message_id 信息）
         struct ChunkInfo {
@@ -417,19 +417,19 @@ impl VectorIndexer {
             return Ok(result);
         }
 
-        tracing::debug!("并发 embedding: {} 个 chunks", all_chunks.len());
+        tracing::debug!("Concurrent embedding: {} chunks", all_chunks.len());
 
-        // 2. 并发调用 embedding
+        // 2. Concurrent embedding
         let texts: Vec<String> = all_chunks.iter().map(|c| c.content.clone()).collect();
         let embeddings = match self.ollama.embed_batch(texts).await {
             Ok(embs) => embs,
             Err(e) => {
-                // 全部失败
-                result.errors.push(format!("批量 embedding 失败: {}", e));
+                // All failed
+                result.errors.push(format!("Batch embedding failed: {}", e));
                 let failed_ids: Vec<i64> = messages.iter().map(|m| m.id).collect();
                 result.failed = failed_ids.len();
                 if let Err(e) = self.db.mark_messages_index_failed(&failed_ids).await {
-                    tracing::error!("标记索引失败状态失败: {}", e);
+                    tracing::error!("Failed to mark index failed status: {}", e);
                 }
                 return Ok(result);
             }
@@ -451,30 +451,30 @@ impl VectorIndexer {
         result.indexed_messages = messages.len();
         let indexed_ids: Vec<i64> = messages.iter().map(|m| m.id).collect();
 
-        // 4. 一次性批量插入
+        // 4. Batch insert
         if !all_records.is_empty() {
             let mut vector_store = self.vector.write().await;
             if let Err(e) = vector_store.insert(&all_records).await {
-                tracing::error!("批量插入失败: {}", e);
-                // 插入失败，全部标记为失败
+                tracing::error!("Batch insert failed: {}", e);
+                // Insert failed, mark all as failed
                 result.failed = result.indexed_messages;
                 result.indexed_messages = 0;
                 result.indexed_chunks = 0;
                 if let Err(e) = self.db.mark_messages_index_failed(&indexed_ids).await {
-                    tracing::error!("标记索引失败状态失败: {}", e);
+                    tracing::error!("Failed to mark index failed status: {}", e);
                 }
                 return Ok(result);
             }
         }
 
-        // 5. 标记已索引
+        // 5. Mark as indexed
         if let Err(e) = self.db.mark_messages_indexed(&indexed_ids).await {
-            tracing::error!("标记已索引失败: {}", e);
+            tracing::error!("Failed to mark as indexed: {}", e);
         }
 
         if result.indexed_messages > 0 {
             tracing::info!(
-                "增量索引完成: {} 消息, {} chunks（并发 embedding + 单次 insert）",
+                "Incremental indexing done: {} messages, {} chunks (concurrent embedding + single insert)",
                 result.indexed_messages,
                 result.indexed_chunks
             );
@@ -511,13 +511,13 @@ impl VectorIndexer {
 
         if pending_count > max_limit {
             tracing::info!(
-                "📊 待索引 {} 条，本次处理 {} 条（上限 {}），剩余留到下一小时",
+                "📊 Pending {} messages, processing {} (max {}), rest in next hour",
                 pending_count,
                 actual_limit,
                 max_limit
             );
         } else {
-            tracing::info!("📊 待索引 {} 条，将全部处理", pending_count);
+            tracing::info!("📊 Pending {} messages, will process all", pending_count);
         }
 
         self.index_batch(actual_limit).await

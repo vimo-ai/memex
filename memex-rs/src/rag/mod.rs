@@ -121,7 +121,7 @@ impl RagService {
             project_id,
         } = options;
 
-        tracing::info!("[RAG] 收到问题: \"{}\"", question);
+        tracing::info!("[RAG] Received question: \"{}\"", question);
 
         // 1. 使用混合检索获取相关消息
         let search_options = HybridSearchOptions {
@@ -137,14 +137,14 @@ impl RagService {
 
         if search_results.is_empty() {
             return Ok(RagResponse {
-                answer: "抱歉，我在历史对话中没有找到相关信息。".to_string(),
+                answer: "Sorry, I couldn't find relevant information in the conversation history.".to_string(),
                 sources: vec![],
                 model: self.chat_model.clone(),
                 tokens_used: None,
             });
         }
 
-        tracing::info!("[RAG] 检索到 {} 条相关消息", search_results.len());
+        tracing::info!("[RAG] Retrieved {} relevant messages", search_results.len());
 
         // 2. 为每条消息构建上下文（拉取前后消息）
         let mut sources_with_context = Vec::new();
@@ -177,7 +177,7 @@ impl RagService {
                 match ollama.chat(&prompt).await {
                     Ok(result) => (result.content, result.tokens_used),
                     Err(e) => {
-                        tracing::error!("[RAG] Ollama 调用失败: {}", e);
+                        tracing::error!("[RAG] Ollama call failed: {}", e);
                         let error_msg = format!(
                             "抱歉，生成答案时出现错误: {}",
                             e
@@ -202,7 +202,7 @@ impl RagService {
             }
             None => {
                 return Ok(RagResponse {
-                    answer: "Ollama 服务不可用，无法生成答案。".to_string(),
+                    answer: "Ollama service unavailable, cannot generate answer.".to_string(),
                     sources: vec![],
                     model: self.chat_model.clone(),
                     tokens_used: None,
@@ -270,7 +270,7 @@ impl RagService {
             .map(|(idx, source)| {
                 let context = source.context_messages.join("\n");
                 format!(
-                    "---\n[来源 {}: 项目 {}, 会话 {}...]\n{}\n---",
+                    "---\n[Source {}: Project {}, Session {}...]\n{}\n---",
                     idx + 1,
                     source.project_name,
                     &source.session_id[..8.min(source.session_id.len())],
@@ -281,15 +281,15 @@ impl RagService {
             .join("\n\n");
 
         format!(
-            r#"你是一个知识助手，基于用户的历史 Claude Code 对话记录回答问题。
+            r#"You are a knowledge assistant that answers questions based on the user's Claude Code conversation history.
 
-以下是相关的历史对话片段：
+Here are relevant conversation snippets:
 
 {}
 
-请基于以上历史记录回答用户的问题。如果历史记录中没有相关信息，请如实说明。
+Please answer the user's question based on the history above. If there is no relevant information in the history, please state so clearly.
 
-用户问题：{}"#,
+User question: {}"#,
             sources_text,
             question
         )
