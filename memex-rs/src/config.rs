@@ -7,8 +7,10 @@ use std::path::PathBuf;
 pub struct Config {
     /// HTTP 服务端口
     pub port: u16,
-    /// 数据目录
+    /// 数据目录 (数据库、LanceDB、备份等)
     pub data_dir: PathBuf,
+    /// Web 静态文件目录 (前端 dist)
+    pub web_dir: PathBuf,
     /// Claude Code 项目目录
     pub claude_projects_path: PathBuf,
     /// Codex CLI 数据目录
@@ -27,6 +29,9 @@ impl Config {
     /// 从环境变量加载配置
     pub fn from_env() -> Self {
         let home = dirs::home_dir().unwrap_or_default();
+        let vimo_root = std::env::var("VIMO_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| home.join(".vimo"));
 
         Self {
             port: std::env::var("PORT")
@@ -34,15 +39,15 @@ impl Config {
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(10013),
 
+            // 数据目录：~/.vimo/db (vimo 多项目共享)
             data_dir: std::env::var("MEMEX_DATA_DIR")
                 .map(PathBuf::from)
-                .unwrap_or_else(|_| {
-                    // 支持 VIMO_HOME 环境变量
-                    let vimo_root = std::env::var("VIMO_HOME")
-                        .map(PathBuf::from)
-                        .unwrap_or_else(|_| home.join(".vimo"));
-                    vimo_root.join("db")
-                }),
+                .unwrap_or_else(|_| vimo_root.join("db")),
+
+            // Web 静态文件目录：~/.vimo/memex/web (memex 独立)
+            web_dir: std::env::var("MEMEX_WEB_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| vimo_root.join("memex/web")),
 
             claude_projects_path: std::env::var("CLAUDE_PROJECTS_PATH")
                 .map(PathBuf::from)
