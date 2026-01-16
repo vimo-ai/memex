@@ -21,7 +21,7 @@ const RRF_K: f64 = 60.0;
 ///
 /// - `is_start`: true 表示一天的开始 (00:00:00)，false 表示一天的结束 (23:59:59.999)
 fn date_to_timestamp(date: &str, is_start: bool) -> Option<i64> {
-    use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Local, TimeZone};
+    use chrono::{Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 
     let parsed = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
     let time = if is_start {
@@ -207,7 +207,18 @@ impl HybridSearchService {
         // FTS 搜索（日期过滤在 SQL 层完成）
         if effective_mode == SearchMode::Fts || effective_mode == SearchMode::Hybrid {
             let db_order_by: claude_session_db::SearchOrderBy = order_by.into();
-            match self.db.search_fts_full(&query, limit * 2, project_id, db_order_by, start_timestamp, end_timestamp).await {
+            match self
+                .db
+                .search_fts_full(
+                    &query,
+                    limit * 2,
+                    project_id,
+                    db_order_by,
+                    start_timestamp,
+                    end_timestamp,
+                )
+                .await
+            {
                 Ok(results) => {
                     tracing::debug!("[FTS] Returned {} results", results.len());
                     // Convert to domain::SearchResult
@@ -257,7 +268,10 @@ impl HybridSearchService {
                     snippet: Some(r.snippet),
                     score: r.score,
                     timestamp: r.timestamp,
-                    sources: SearchSources { fts: true, vector: false },
+                    sources: SearchSources {
+                        fts: true,
+                        vector: false,
+                    },
                     fts_rank: Some(idx + 1),
                     vector_distance: None,
                     chunk_index: None,
@@ -300,11 +314,12 @@ impl HybridSearchService {
                 // 获取会话信息
                 if let Ok(Some(session)) = self.db.get_session(&msg.session_id).await {
                     // 获取项目名称
-                    let project_name = if let Ok(Some(project)) = self.db.get_project(session.project_id).await {
-                        project.name
-                    } else {
-                        "Unknown".to_string()
-                    };
+                    let project_name =
+                        if let Ok(Some(project)) = self.db.get_project(session.project_id).await {
+                            project.name
+                        } else {
+                            "Unknown".to_string()
+                        };
 
                     items.push(VectorSearchItem {
                         message_id: result.message_id,
@@ -418,7 +433,11 @@ impl HybridSearchService {
 
         // 按 RRF 得分排序
         let mut results: Vec<HybridSearchResult> = score_map.into_values().collect();
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         results
     }

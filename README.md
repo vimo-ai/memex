@@ -2,17 +2,24 @@
 
 # Memex
 
-A session history management system for Claude Code. Never lose your conversations again.
+Session history management for AI coding assistants. Never lose your conversations again.
+
+## Supported Tools
+
+- ✅ Claude Code
+- ✅ Codex CLI
+- ✅ OpenCode
+- 🚧 Gemini CLI (coming soon)
 
 ## Why Memex?
 
-Claude Code's local conversation data expires after 30 days, causing:
+AI CLI tools' local conversation data often expires or gets lost, causing:
 - Loss of important technical decision records
 - Difficulty searching historical conversations
 - Knowledge cannot be accumulated and reused
 
 Memex solves these problems:
-- Automatic backup of all Claude Code sessions
+- Automatic backup of all AI CLI sessions
 - Powerful full-text and semantic search
 - MCP protocol support for searching history directly in Claude
 - REST API for integration
@@ -103,6 +110,8 @@ cargo build --release
 | `PORT` | `10013` | HTTP server port |
 | `VIMO_HOME` | `~/.vimo` | Base data directory (SQLite, LanceDB, backups) |
 | `CLAUDE_PROJECTS_PATH` | `~/.claude/projects` | Claude Code session location |
+| `CODEX_PATH` | `~/.codex` | Codex CLI session location |
+| `OPENCODE_PATH` | `~/.local/share/opencode` | OpenCode session location |
 | `OLLAMA_API` | `http://localhost:11434` | Ollama API endpoint |
 | `EMBEDDING_MODEL` | `bge-m3` | Ollama embedding model |
 | `ENABLE_AI_CHAT` | `false` | Enable RAG Q&A feature |

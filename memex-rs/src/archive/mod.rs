@@ -196,7 +196,8 @@ impl ArchiveService {
         }
 
         // 清理空目录
-        let week_dir = self.archive_dir
+        let week_dir = self
+            .archive_dir
             .join(format!("{}", last_month.year()))
             .join(format!("{:02}", last_month.month()));
         let _ = std::fs::remove_dir(&week_dir);
@@ -304,8 +305,10 @@ impl ArchiveService {
 
             tracing::info!(
                 "Compensation weekly merge: {:02}-{:02}_{:02}-{:02} ({} daily archives)",
-                week_start.month(), week_start.day(),
-                week_end.month(), week_end.day(),
+                week_start.month(),
+                week_start.day(),
+                week_end.month(),
+                week_end.day(),
                 daily_archives.len()
             );
 
@@ -321,8 +324,10 @@ impl ArchiveService {
                 Err(e) => {
                     let range = format!(
                         "{:02}-{:02}_{:02}-{:02}",
-                        week_start.month(), week_start.day(),
-                        week_end.month(), week_end.day()
+                        week_start.month(),
+                        week_start.day(),
+                        week_end.month(),
+                        week_end.day()
                     );
                     tracing::error!("Weekly merge failed {}: {}", range, e);
                     result.errors.push(format!("Weekly merge {}: {}", range, e));
@@ -347,12 +352,18 @@ impl ArchiveService {
                 continue;
             }
 
-            let weekly_archives = self.find_weekly_archives(target_month.year(), target_month.month())?;
+            let weekly_archives =
+                self.find_weekly_archives(target_month.year(), target_month.month())?;
             if weekly_archives.is_empty() {
                 continue;
             }
 
-            tracing::info!("Compensation monthly merge: {}-{:02} ({} weekly archives)", target_month.year(), target_month.month(), weekly_archives.len());
+            tracing::info!(
+                "Compensation monthly merge: {}-{:02} ({} weekly archives)",
+                target_month.year(),
+                target_month.month(),
+                weekly_archives.len()
+            );
 
             match self.do_merge(&weekly_archives, &archive_path) {
                 Ok(_) => {
@@ -361,7 +372,8 @@ impl ArchiveService {
                         let _ = std::fs::remove_file(path);
                     }
                     // Cleanup empty directory
-                    let week_dir = self.archive_dir
+                    let week_dir = self
+                        .archive_dir
                         .join(format!("{}", target_month.year()))
                         .join(format!("{:02}", target_month.month()));
                     let _ = std::fs::remove_dir(&week_dir);
@@ -370,8 +382,18 @@ impl ArchiveService {
                     result.monthly_merged += 1;
                 }
                 Err(e) => {
-                    tracing::error!("Monthly merge failed {}-{:02}: {}", target_month.year(), target_month.month(), e);
-                    result.errors.push(format!("Monthly merge {}-{:02}: {}", target_month.year(), target_month.month(), e));
+                    tracing::error!(
+                        "Monthly merge failed {}-{:02}: {}",
+                        target_month.year(),
+                        target_month.month(),
+                        e
+                    );
+                    result.errors.push(format!(
+                        "Monthly merge {}-{:02}: {}",
+                        target_month.year(),
+                        target_month.month(),
+                        e
+                    ));
                 }
             }
         }
@@ -383,7 +405,11 @@ impl ArchiveService {
         if !yearly_path.exists() {
             let monthly_archives = self.find_monthly_archives(last_year)?;
             if !monthly_archives.is_empty() {
-                tracing::info!("Compensation yearly merge: {} ({} monthly archives)", last_year, monthly_archives.len());
+                tracing::info!(
+                    "Compensation yearly merge: {} ({} monthly archives)",
+                    last_year,
+                    monthly_archives.len()
+                );
 
                 match self.do_merge(&monthly_archives, &yearly_path) {
                     Ok(_) => {
@@ -400,7 +426,9 @@ impl ArchiveService {
                     }
                     Err(e) => {
                         tracing::error!("Yearly merge failed {}: {}", last_year, e);
-                        result.errors.push(format!("Yearly merge {}: {}", last_year, e));
+                        result
+                            .errors
+                            .push(format!("Yearly merge {}: {}", last_year, e));
                     }
                 }
             }
@@ -584,8 +612,10 @@ impl ArchiveService {
             .join(format!("{:02}", week_start.month()))
             .join(format!(
                 "{:02}-{:02}_{:02}-{:02}.tar.xz",
-                week_start.month(), week_start.day(),
-                week_end.month(), week_end.day()
+                week_start.month(),
+                week_start.day(),
+                week_end.month(),
+                week_end.day()
             ))
     }
 
@@ -619,7 +649,8 @@ impl ArchiveService {
     /// 查找周包（支持新格式 12-02_12-08.tar.xz 和旧格式 W49.tar.xz）
     fn find_weekly_archives(&self, year: i32, month: u32) -> Result<Vec<PathBuf>> {
         let mut archives = Vec::new();
-        let month_dir = self.archive_dir
+        let month_dir = self
+            .archive_dir
             .join(format!("{}", year))
             .join(format!("{:02}", month));
 
@@ -637,7 +668,9 @@ impl ArchiveService {
             if path.is_file() && path.extension().map_or(false, |e| e == "xz") {
                 let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
                 // 支持新格式（日期范围）和旧格式（W周号）
-                if date_range_pattern.is_match(name) || (name.starts_with("W") && name.ends_with(".tar")) {
+                if date_range_pattern.is_match(name)
+                    || (name.starts_with("W") && name.ends_with(".tar"))
+                {
                     archives.push(path);
                 }
             }

@@ -98,11 +98,7 @@ impl RagService {
         vector: Option<Arc<RwLock<VectorStore>>>,
         chat_model: String,
     ) -> Self {
-        let hybrid_search = HybridSearchService::new(
-            db.clone(),
-            ollama.clone(),
-            vector,
-        );
+        let hybrid_search = HybridSearchService::new(db.clone(), ollama.clone(), vector);
 
         Self {
             db,
@@ -138,7 +134,8 @@ impl RagService {
 
         if search_results.is_empty() {
             return Ok(RagResponse {
-                answer: "Sorry, I couldn't find relevant information in the conversation history.".to_string(),
+                answer: "Sorry, I couldn't find relevant information in the conversation history."
+                    .to_string(),
                 sources: vec![],
                 model: self.chat_model.clone(),
                 tokens_used: None,
@@ -151,19 +148,18 @@ impl RagService {
         let mut sources_with_context = Vec::new();
 
         for result in &search_results {
-            let context = self.build_message_context(
-                &result.session_id,
-                result.message_id,
-                context_window,
-            ).await?;
+            let context = self
+                .build_message_context(&result.session_id, result.message_id, context_window)
+                .await?;
 
             sources_with_context.push(SourceWithContext {
                 session_id: result.session_id.clone(),
                 project_name: result.project_name.clone(),
                 message_index: context.message_index,
-                snippet: result.snippet.clone().unwrap_or_else(|| {
-                    result.content.chars().take(200).collect()
-                }),
+                snippet: result
+                    .snippet
+                    .clone()
+                    .unwrap_or_else(|| result.content.chars().take(200).collect()),
                 score: result.score,
                 context_messages: context.messages,
             });
@@ -174,33 +170,28 @@ impl RagService {
 
         // 4. 调用 Ollama chat API
         let (answer, tokens_used) = match &self.ollama {
-            Some(ollama) => {
-                match ollama.chat(&prompt).await {
-                    Ok(result) => (result.content, result.tokens_used),
-                    Err(e) => {
-                        tracing::error!("[RAG] Ollama call failed: {}", e);
-                        let error_msg = format!(
-                            "抱歉，生成答案时出现错误: {}",
-                            e
-                        );
-                        return Ok(RagResponse {
-                            answer: error_msg,
-                            sources: sources_with_context
-                                .into_iter()
-                                .map(|s| RagSource {
-                                    session_id: s.session_id,
-                                    project_name: s.project_name,
-                                    message_index: s.message_index,
-                                    snippet: s.snippet,
-                                    score: s.score,
-                                })
-                                .collect(),
-                            model: self.chat_model.clone(),
-                            tokens_used: None,
-                        });
-                    }
+            Some(ollama) => match ollama.chat(&prompt).await {
+                Ok(result) => (result.content, result.tokens_used),
+                Err(e) => {
+                    tracing::error!("[RAG] Ollama call failed: {}", e);
+                    let error_msg = format!("抱歉，生成答案时出现错误: {}", e);
+                    return Ok(RagResponse {
+                        answer: error_msg,
+                        sources: sources_with_context
+                            .into_iter()
+                            .map(|s| RagSource {
+                                session_id: s.session_id,
+                                project_name: s.project_name,
+                                message_index: s.message_index,
+                                snippet: s.snippet,
+                                score: s.score,
+                            })
+                            .collect(),
+                        model: self.chat_model.clone(),
+                        tokens_used: None,
+                    });
                 }
-            }
+            },
             None => {
                 return Ok(RagResponse {
                     answer: "Ollama service unavailable, cannot generate answer.".to_string(),
@@ -291,8 +282,7 @@ Here are relevant conversation snippets:
 Please answer the user's question based on the history above. If there is no relevant information in the history, please state so clearly.
 
 User question: {}"#,
-            sources_text,
-            question
+            sources_text, question
         )
     }
 

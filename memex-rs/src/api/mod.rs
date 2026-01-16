@@ -67,8 +67,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // 采集
         .route("/api/collect", post(collect))
         // 索引
-        .route("/api/index", post(index_session_by_path))  // 精确索引（按路径）
-        .route("/api/index/all", post(index_messages))     // 全量索引
+        .route("/api/index", post(index_session_by_path)) // 精确索引（按路径）
+        .route("/api/index/all", post(index_messages)) // 全量索引
         .route("/api/index/batch", post(index_batch))
         // 备份
         .route("/api/backup", post(create_backup))
@@ -85,7 +85,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/admin/stats", get(get_stats))
         .route("/api/admin/fix-metadata", post(fix_metadata))
         .route("/api/admin/merge-projects", post(merge_projects))
-        .route("/api/admin/deduplicate-projects", post(deduplicate_projects))
+        .route(
+            "/api/admin/deduplicate-projects",
+            post(deduplicate_projects),
+        )
         .with_state(state)
 }
 
@@ -345,7 +348,10 @@ async fn search(
 
     // 使用 SharedDbAdapter 的 FTS 搜索
     let results = if let Some(project_id) = query.project_id {
-        state.db.search_fts_with_project(&query.q, query.limit, Some(project_id)).await?
+        state
+            .db
+            .search_fts_with_project(&query.q, query.limit, Some(project_id))
+            .await?
     } else {
         state.db.search_fts(&query.q, query.limit).await?
     };
@@ -920,7 +926,11 @@ async fn embedding_trigger_all(
             };
 
             if pending == 0 {
-                tracing::info!("✅ Background indexing done: {} indexed, {} failed", total_indexed, total_failed);
+                tracing::info!(
+                    "✅ Background indexing done: {} indexed, {} failed",
+                    total_indexed,
+                    total_failed
+                );
                 break;
             }
 
@@ -973,7 +983,10 @@ async fn embedding_reset_failed(
 
     Ok(Json(EmbeddingResetFailedResponse {
         reset_count,
-        message: format!("Reset {} failed messages, ready for re-indexing", reset_count),
+        message: format!(
+            "Reset {} failed messages, ready for re-indexing",
+            reset_count
+        ),
     }))
 }
 
@@ -1087,9 +1100,7 @@ struct IndexResponse {
     errors: Vec<String>,
 }
 
-async fn index_messages(
-    State(state): State<Arc<AppState>>,
-) -> Result<impl IntoResponse, AppError> {
+async fn index_messages(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
     let indexer = match &state.indexer {
         Some(i) => i,
         None => {
@@ -1203,8 +1214,10 @@ async fn merge_projects(State(state): State<Arc<AppState>>) -> Result<impl IntoR
     let projects = state.db.get_all_projects_with_source().await?;
 
     // 按 path 分组
-    let mut path_groups: std::collections::HashMap<String, Vec<claude_session_db::ProjectWithSource>> =
-        std::collections::HashMap::new();
+    let mut path_groups: std::collections::HashMap<
+        String,
+        Vec<claude_session_db::ProjectWithSource>,
+    > = std::collections::HashMap::new();
 
     for project in projects {
         path_groups
@@ -1234,7 +1247,10 @@ async fn merge_projects(State(state): State<Arc<AppState>>) -> Result<impl IntoR
 
         for dup in duplicates {
             // 移动会话到目标项目
-            let moved = state.db.update_sessions_project_id(dup.id, target.id).await?;
+            let moved = state
+                .db
+                .update_sessions_project_id(dup.id, target.id)
+                .await?;
             total_sessions_moved += moved;
 
             // 删除重复项目

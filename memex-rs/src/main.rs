@@ -21,9 +21,9 @@ use memex::embedding::OllamaClient;
 use memex::indexer::{IndexQueue, VectorIndexer};
 use memex::rag::RagService;
 use memex::search::HybridSearchService;
+use memex::shared_adapter::SharedDbAdapter;
 use memex::vector::VectorStore;
 use memex::watcher::FileWatcher;
-use memex::shared_adapter::SharedDbAdapter;
 
 /// 版本号（从 Cargo.toml 读取）
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -81,17 +81,16 @@ async fn main() -> anyhow::Result<()> {
     // 初始化日志（使用东八区时间 UTC+8）
     let timer = tracing_subscriber::fmt::time::OffsetTime::new(
         time::UtcOffset::from_hms(8, 0, 0).unwrap(),
-        time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]+08:00"),
+        time::macros::format_description!(
+            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]+08:00"
+        ),
     );
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "memex=info,tower_http=debug".into()),
         )
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_timer(timer)
-        )
+        .with(tracing_subscriber::fmt::layer().with_timer(timer))
         .init();
 
     tracing::info!("🚀 Memex Rust Backend starting...");
@@ -115,13 +114,19 @@ async fn main() -> anyhow::Result<()> {
                         Ok(health) => {
                             tracing::info!("[SharedDB] Current Writer status: {:?}", health);
                             if matches!(health, WriterHealth::Timeout | WriterHealth::Released) {
-                                tracing::info!("[SharedDB] Writer timed out/released, trying takeover...");
+                                tracing::info!(
+                                    "[SharedDB] Writer timed out/released, trying takeover..."
+                                );
                                 match adapter.try_takeover().await {
                                     Ok(true) => {
-                                        tracing::info!("[SharedDB] Takeover successful, now Writer");
+                                        tracing::info!(
+                                            "[SharedDB] Takeover successful, now Writer"
+                                        );
                                     }
                                     Ok(false) => {
-                                        tracing::info!("[SharedDB] Takeover failed, another component took it");
+                                        tracing::info!(
+                                            "[SharedDB] Takeover failed, another component took it"
+                                        );
                                     }
                                     Err(e) => {
                                         tracing::warn!("[SharedDB] Takeover error: {}", e);
@@ -195,13 +200,19 @@ async fn main() -> anyhow::Result<()> {
                                 }
                             }
                             Err(e) => {
-                                tracing::warn!("⚠️ Archive check failed: {}, will retry in scheduled task", e);
+                                tracing::warn!(
+                                    "⚠️ Archive check failed: {}, will retry in scheduled task",
+                                    e
+                                );
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("⚠️ Failed to create archive service: {}, will retry in scheduled task", e);
+                    tracing::warn!(
+                        "⚠️ Failed to create archive service: {}, will retry in scheduled task",
+                        e
+                    );
                 }
             }
         });
@@ -220,18 +231,30 @@ async fn main() -> anyhow::Result<()> {
 
             // Embedding model check (required for semantic search)
             if client.is_embedding_model_available().await {
-                tracing::info!("✅ Embedding model available: {} (semantic search enabled)", config.embedding_model);
+                tracing::info!(
+                    "✅ Embedding model available: {} (semantic search enabled)",
+                    config.embedding_model
+                );
             } else {
-                tracing::warn!("⚠️ Embedding model unavailable: {}, run: ollama pull {}",
-                    config.embedding_model, config.embedding_model);
+                tracing::warn!(
+                    "⚠️ Embedding model unavailable: {}, run: ollama pull {}",
+                    config.embedding_model,
+                    config.embedding_model
+                );
             }
 
             // Chat model check (optional for AI Q&A)
             if config.enable_ai_chat {
                 if client.is_chat_model_available().await {
-                    tracing::info!("✅ Chat model available: {} (AI Q&A enabled)", config.chat_model);
+                    tracing::info!(
+                        "✅ Chat model available: {} (AI Q&A enabled)",
+                        config.chat_model
+                    );
                 } else {
-                    tracing::warn!("⚠️ Chat model unavailable: {}, AI Q&A will not work", config.chat_model);
+                    tracing::warn!(
+                        "⚠️ Chat model unavailable: {}, AI Q&A will not work",
+                        config.chat_model
+                    );
                 }
             } else {
                 tracing::info!("ℹ️ AI Q&A disabled (ENABLE_AI_CHAT=false)");
@@ -239,7 +262,10 @@ async fn main() -> anyhow::Result<()> {
 
             Some(Arc::new(client))
         } else {
-            tracing::warn!("⚠️ Ollama unavailable ({}), semantic search will fallback to FTS", config.ollama_api);
+            tracing::warn!(
+                "⚠️ Ollama unavailable ({}), semantic search will fallback to FTS",
+                config.ollama_api
+            );
             tracing::warn!("   Make sure Ollama is running: ollama serve");
             None
         }
@@ -263,13 +289,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create indexer service (optional)
     let indexer = match (&ollama, &vector) {
-        (Some(o), Some(v)) => {
-            Some(VectorIndexer::new(
-                shared_db.clone(),
-                o.clone(),
-                v.clone(),
-            ))
-        }
+        (Some(o), Some(v)) => Some(VectorIndexer::new(shared_db.clone(), o.clone(), v.clone())),
         _ => None,
     };
 
@@ -278,7 +298,10 @@ async fn main() -> anyhow::Result<()> {
         let unindexed = shared_db.count_unindexed_messages().await.unwrap_or(0);
         if unindexed > 1000 {
             // Only sync when many unindexed (likely first run after migration)
-            tracing::info!("🔄 Found {} unsynced messages, syncing LanceDB status...", unindexed);
+            tracing::info!(
+                "🔄 Found {} unsynced messages, syncing LanceDB status...",
+                unindexed
+            );
             match indexer.sync_indexed_status().await {
                 Ok(n) => {
                     if n > 0 {
@@ -296,11 +319,7 @@ async fn main() -> anyhow::Result<()> {
     let index_queue = indexer.clone().map(IndexQueue::new);
 
     // Create hybrid search service
-    let hybrid_search = HybridSearchService::new(
-        shared_db.clone(),
-        ollama.clone(),
-        vector.clone(),
-    );
+    let hybrid_search = HybridSearchService::new(shared_db.clone(), ollama.clone(), vector.clone());
 
     // Create RAG service
     let rag_service = RagService::new(
@@ -618,7 +637,9 @@ async fn handle_archive_command(args: &[String]) -> anyhow::Result<()> {
     // Initialize logging
     let timer = tracing_subscriber::fmt::time::OffsetTime::new(
         time::UtcOffset::from_hms(8, 0, 0).unwrap(),
-        time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]+08:00"),
+        time::macros::format_description!(
+            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]+08:00"
+        ),
     );
     tracing_subscriber::registry()
         .with(
@@ -631,10 +652,8 @@ async fn handle_archive_command(args: &[String]) -> anyhow::Result<()> {
     let config = memex::config::Config::from_env();
     let archive_dir = config.data_dir.join("archive");
 
-    let mut archive_service = ArchiveService::new(
-        config.claude_projects_path.clone(),
-        archive_dir,
-    )?;
+    let mut archive_service =
+        ArchiveService::new(config.claude_projects_path.clone(), archive_dir)?;
 
     // Try to acquire lock
     let _lock = match archive_service.try_lock()? {
@@ -655,8 +674,10 @@ async fn handle_archive_command(args: &[String]) -> anyhow::Result<()> {
             println!("  Pending tasks: {}", state.has_pending_task());
             println!("  Failures: {}", state.failures.len());
             for failure in &state.failures {
-                println!("    - {:?}: {} (retried {} times)",
-                    failure.task_type, failure.error, failure.retry_count);
+                println!(
+                    "    - {:?}: {} (retried {} times)",
+                    failure.task_type, failure.error, failure.retry_count
+                );
             }
         }
         "--check" => {

@@ -15,6 +15,8 @@ pub struct Config {
     pub claude_projects_path: PathBuf,
     /// Codex CLI 数据目录
     pub codex_path: PathBuf,
+    /// OpenCode 数据目录
+    pub opencode_path: PathBuf,
     /// Ollama API 地址
     pub ollama_api: String,
     /// Embedding 模型 (用于语义搜索，核心功能)
@@ -57,14 +59,17 @@ impl Config {
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| home.join(".codex")),
 
+            opencode_path: std::env::var("OPENCODE_PATH")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| home.join(".local/share/opencode")),
+
             ollama_api: std::env::var("OLLAMA_API")
                 .unwrap_or_else(|_| "http://localhost:11434".to_string()),
 
             embedding_model: std::env::var("EMBEDDING_MODEL")
                 .unwrap_or_else(|_| "bge-m3".to_string()),
 
-            chat_model: std::env::var("CHAT_MODEL")
-                .unwrap_or_else(|_| "qwen3:8b".to_string()),
+            chat_model: std::env::var("CHAT_MODEL").unwrap_or_else(|_| "qwen3:8b".to_string()),
 
             // AI 问答功能默认关闭，需要显式启用
             enable_ai_chat: std::env::var("ENABLE_AI_CHAT")

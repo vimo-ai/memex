@@ -167,7 +167,8 @@ impl VectorStore {
         let contents: Vec<&str> = records.iter().map(|r| r.content.as_str()).collect();
 
         // 构建向量数组
-        let vectors = Self::create_vector_array(&records.iter().map(|r| &r.embedding).collect::<Vec<_>>());
+        let vectors =
+            Self::create_vector_array(&records.iter().map(|r| &r.embedding).collect::<Vec<_>>());
 
         let batch = RecordBatch::try_new(
             schema.clone(),
@@ -304,7 +305,9 @@ impl VectorStore {
 
         let results = table
             .query()
-            .select(lancedb::query::Select::Columns(vec!["message_id".to_string()]))
+            .select(lancedb::query::Select::Columns(vec![
+                "message_id".to_string()
+            ]))
             .execute()
             .await?;
 
@@ -340,18 +343,24 @@ impl VectorStore {
 
         // 1. Merge small file fragments
         tracing::info!("🔧 Starting LanceDB data file compaction...");
-        table.optimize(OptimizeAction::Compact {
-            options: Default::default(),
-            remap_options: None,
-        }).await.context("compact_files failed")?;
+        table
+            .optimize(OptimizeAction::Compact {
+                options: Default::default(),
+                remap_options: None,
+            })
+            .await
+            .context("compact_files failed")?;
 
         // 2. Cleanup all old versions (memex doesn't need version history)
         tracing::info!("🧹 Cleaning up old versions...");
-        table.optimize(OptimizeAction::Prune {
-            older_than: Some(chrono::TimeDelta::zero()),  // Keep no old versions
-            delete_unverified: Some(true),
-            error_if_tagged_old_versions: None,
-        }).await.context("cleanup failed")?;
+        table
+            .optimize(OptimizeAction::Prune {
+                older_than: Some(chrono::TimeDelta::zero()), // Keep no old versions
+                delete_unverified: Some(true),
+                error_if_tagged_old_versions: None,
+            })
+            .await
+            .context("cleanup failed")?;
 
         tracing::info!("✅ LanceDB compaction done");
         Ok(())

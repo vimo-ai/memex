@@ -75,7 +75,7 @@ pub struct IndexResult {
     pub indexed_messages: usize,
     pub indexed_chunks: usize,
     pub skipped: usize,
-    pub failed: usize,  // 新增：标记为失败的消息数量
+    pub failed: usize, // 新增：标记为失败的消息数量
     pub errors: Vec<String>,
 }
 
@@ -118,7 +118,10 @@ impl VectorIndexer {
             return Ok(0);
         }
 
-        tracing::info!("Syncing index status: found {} indexed messages", indexed_ids.len());
+        tracing::info!(
+            "Syncing index status: found {} indexed messages",
+            indexed_ids.len()
+        );
 
         // Batch mark (1000 per batch, avoid SQL too long)
         let mut total_marked = 0;
@@ -158,7 +161,10 @@ impl VectorIndexer {
                     result.failed += session_result.failed;
                 }
                 Err(e) => {
-                    result.errors.push(format!("Session {} indexing failed: {}", session.session_id, e));
+                    result.errors.push(format!(
+                        "Session {} indexing failed: {}",
+                        session.session_id, e
+                    ));
                 }
             }
         }
@@ -219,8 +225,10 @@ impl VectorIndexer {
                         });
                     }
                     Err(e) => {
-                        result.errors.push(format!("Message {} chunk {} embedding failed: {}",
-                            message.id, chunk.index, e));
+                        result.errors.push(format!(
+                            "Message {} chunk {} embedding failed: {}",
+                            message.id, chunk.index, e
+                        ));
                         chunk_success = false;
                         break;
                     }
@@ -389,7 +397,10 @@ impl VectorIndexer {
             return Ok(result);
         }
 
-        tracing::debug!("Incremental indexing: found {} unindexed messages", messages.len());
+        tracing::debug!(
+            "Incremental indexing: found {} unindexed messages",
+            messages.len()
+        );
 
         // 1. 收集所有 chunks（带 message_id 信息）
         struct ChunkInfo {
@@ -399,7 +410,8 @@ impl VectorIndexer {
         }
 
         let mut all_chunks: Vec<ChunkInfo> = Vec::new();
-        let mut message_chunk_counts: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+        let mut message_chunk_counts: std::collections::HashMap<i64, usize> =
+            std::collections::HashMap::new();
 
         for message in &messages {
             let chunks = self.chunker.chunk(&message.content_text);

@@ -124,10 +124,7 @@ impl OllamaClient {
             anyhow::bail!("Ollama 返回错误 {}: {}", status, text);
         }
 
-        let result: EmbeddingResponse = response
-            .json()
-            .await
-            .context("解析 embedding 响应失败")?;
+        let result: EmbeddingResponse = response.json().await.context("解析 embedding 响应失败")?;
 
         Ok(result.embedding)
     }
@@ -175,10 +172,7 @@ impl OllamaClient {
             anyhow::bail!("Ollama 返回错误 {}: {}", status, text);
         }
 
-        let result: ChatResponse = response
-            .json()
-            .await
-            .context("解析 chat 响应失败")?;
+        let result: ChatResponse = response.json().await.context("解析 chat 响应失败")?;
 
         Ok(ChatResult {
             content: result.message.map(|m| m.content).unwrap_or_default(),
@@ -332,7 +326,10 @@ impl Chunker {
 
     fn split_text_by_paragraph(&self, text: &str) -> Vec<Chunk> {
         let mut chunks = Vec::new();
-        let paragraphs: Vec<&str> = text.split("\n\n").filter(|p| !p.trim().is_empty()).collect();
+        let paragraphs: Vec<&str> = text
+            .split("\n\n")
+            .filter(|p| !p.trim().is_empty())
+            .collect();
 
         let mut current_chunk = String::new();
 

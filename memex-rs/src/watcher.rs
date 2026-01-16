@@ -1,5 +1,10 @@
-//! 文件监听服务 - 实时监听 Claude/Codex 会话文件变化
+//! 文件监听服务 - 实时监听 AI CLI 会话文件变化
+//!
+//! 使用 ai-cli-session-collector 的自注册机制：
+//! - `all_watch_configs()` 获取所有适配器的监听配置
+//! - 每个适配器定义自己的路径、扩展名、递归模式
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,6 +12,8 @@ use std::time::Duration;
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
 use tokio::sync::mpsc;
+
+use claude_session_db::all_watch_configs;
 
 use crate::collector::Collector;
 use crate::config::Config as AppConfig;
@@ -17,12 +24,25 @@ pub struct FileWatcher {
     config: AppConfig,
     collector: Collector,
     index_queue: Option<IndexQueue>,
+    /// 支持的文件扩展名（从适配器收集）
+    supported_extensions: HashSet<String>,
 }
 
 impl FileWatcher {
     /// 创建文件监听服务
     pub fn new(config: AppConfig, collector: Collector, index_queue: Option<IndexQueue>) -> Self {
-        Self { config, collector, index_queue }
+        // 从适配器收集所有支持的扩展名
+        let supported_extensions: HashSet<String> = all_watch_configs()
+            .iter()
+            .flat_map(|c| c.extensions.iter().map(|e| e.to_string()))
+            .collect();
+
+        Self {
+            config,
+            collector,
+            index_queue,
+            supported_extensions,
+        }
     }
 
     /// 启动监听（异步）
@@ -38,25 +58,44 @@ impl FileWatcher {
             }
         })?;
 
-        // Watch Claude projects directory
-        let claude_path = &self.config.claude_projects_path;
-        if claude_path.exists() {
-            debouncer.watcher().watch(claude_path, RecursiveMode::Recursive)?;
-            tracing::info!("👁️ Watching Claude directory: {:?}", claude_path);
-        } else {
-            tracing::warn!("⚠️ Claude directory not found: {:?}", claude_path);
+        // 使用适配器自注册的监听配置
+        let watch_configs = all_watch_configs();
+
+        for config in &watch_configs {
+            let recursive_mode = if config.recursive {
+                RecursiveMode::Recursive
+            } else {
+                RecursiveMode::NonRecursive
+            };
+
+            match debouncer.watcher().watch(&config.path, recursive_mode) {
+                Ok(_) => {
+                    tracing::info!(
+                        "👁️ Watching {} directory: {:?} (extensions: {:?})",
+                        config.name,
+                        config.path,
+                        config.extensions
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "⚠️ Failed to watch {} directory {:?}: {}",
+                        config.name,
+                        config.path,
+                        e
+                    );
+                }
+            }
         }
 
-        // Watch Codex directory
-        let codex_path = &self.config.codex_path;
-        if codex_path.exists() {
-            debouncer.watcher().watch(codex_path, RecursiveMode::Recursive)?;
-            tracing::info!("👁️ Watching Codex directory: {:?}", codex_path);
-        } else {
-            tracing::warn!("⚠️ Codex directory not found: {:?}", codex_path);
+        if watch_configs.is_empty() {
+            tracing::warn!("⚠️ No valid watch directories found");
         }
 
-        tracing::info!("🔄 File watcher service started");
+        tracing::info!(
+            "🔄 File watcher service started ({} directories)",
+            watch_configs.len()
+        );
 
         // 处理文件变化事件
         let watcher = self.clone();
@@ -74,9 +113,13 @@ impl FileWatcher {
 
     /// 处理文件变化事件
     async fn handle_event(&self, path: &PathBuf, kind: &DebouncedEventKind) {
-        // 只关心 .jsonl 文件
-        let ext = path.extension().and_then(|e| e.to_str());
-        if ext != Some("jsonl") {
+        // 检查扩展名是否被任意适配器支持
+        let ext = match path.extension().and_then(|e| e.to_str()) {
+            Some(e) => e,
+            None => return,
+        };
+
+        if !self.supported_extensions.contains(ext) {
             return;
         }
 
@@ -116,7 +159,11 @@ impl FileWatcher {
                 }
             }
             Err(e) => {
-                tracing::error!("❌ Precise collection failed {:?}: {}", path.file_name().unwrap_or_default(), e);
+                tracing::error!(
+                    "❌ Precise collection failed {:?}: {}",
+                    path.file_name().unwrap_or_default(),
+                    e
+                );
             }
         }
     }
@@ -128,6 +175,7 @@ impl Clone for FileWatcher {
             config: self.config.clone(),
             collector: self.collector.clone(),
             index_queue: self.index_queue.clone(),
+            supported_extensions: self.supported_extensions.clone(),
         }
     }
 }

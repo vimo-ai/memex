@@ -150,10 +150,7 @@ impl Compressor {
             .context("执行 tar 解压失败")?;
 
         if !output.status.success() {
-            anyhow::bail!(
-                "tar 解压失败: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+            anyhow::bail!("tar 解压失败: {}", String::from_utf8_lossy(&output.stderr));
         }
 
         Ok(())

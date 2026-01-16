@@ -2,17 +2,24 @@
 
 # Memex
 
-Claude Code 会话历史管理系统，让你的对话永不过期。
+AI 编程助手会话历史管理系统，让你的对话永不过期。
+
+## 支持的工具
+
+- ✅ Claude Code
+- ✅ Codex CLI
+- ✅ OpenCode
+- 🚧 Gemini CLI (即将支持)
 
 ## 为什么需要 Memex？
 
-Claude Code 的本地对话数据会在 30 天后过期，导致：
+AI CLI 工具的本地对话数据常常会过期或丢失，导致：
 - 重要的技术决策记录丢失
 - 历史对话难以检索
 - 知识无法沉淀和复用
 
 Memex 解决这些问题：
-- 自动备份所有 Claude Code 会话
+- 自动备份所有 AI CLI 会话
 - 强大的全文和语义搜索
 - MCP 协议支持，在 Claude 中直接搜索历史
 - REST API 便于集成
@@ -20,8 +27,8 @@ Memex 解决这些问题：
 ## 功能特性
 
 ### 数据采集与备份
-- 自动扫描 `~/.claude/projects/` 下所有会话
-- 解析 JSONL 格式对话内容
+- 自动扫描所有支持的 AI CLI 数据目录
+- 解析各工具的对话格式
 - 存储到 SQLite 数据库（FTS5 全文索引）
 - 每日增量备份
 
@@ -103,6 +110,8 @@ cargo build --release
 | `PORT` | `10013` | HTTP 服务端口 |
 | `VIMO_HOME` | `~/.vimo` | 基础数据目录（SQLite、LanceDB、备份） |
 | `CLAUDE_PROJECTS_PATH` | `~/.claude/projects` | Claude Code 会话路径 |
+| `CODEX_PATH` | `~/.codex` | Codex CLI 会话路径 |
+| `OPENCODE_PATH` | `~/.local/share/opencode` | OpenCode 会话路径 |
 | `OLLAMA_API` | `http://localhost:11434` | Ollama API 地址 |
 | `EMBEDDING_MODEL` | `bge-m3` | Ollama embedding 模型 |
 | `ENABLE_AI_CHAT` | `false` | 启用 RAG 问答功能 |

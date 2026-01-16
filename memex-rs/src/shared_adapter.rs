@@ -242,7 +242,11 @@ impl SharedDbAdapter {
     }
 
     /// 批量插入消息
-    pub async fn insert_messages(&self, session_id: &str, messages: &[MessageInput]) -> Result<usize> {
+    pub async fn insert_messages(
+        &self,
+        session_id: &str,
+        messages: &[MessageInput],
+    ) -> Result<usize> {
         // 写操作，使用 write 锁
         let db = self.db.write().await;
         Ok(db.insert_messages(session_id, messages)?)
@@ -255,7 +259,11 @@ impl SharedDbAdapter {
     }
 
     /// 列出项目（带统计信息）
-    pub async fn list_projects_with_stats(&self, limit: usize, offset: usize) -> Result<Vec<claude_session_db::ProjectWithStats>> {
+    pub async fn list_projects_with_stats(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<claude_session_db::ProjectWithStats>> {
         let db = self.db.read().await;
         Ok(db.list_projects_with_stats(limit, offset)?)
     }
@@ -305,7 +313,14 @@ impl SharedDbAdapter {
         end_timestamp: Option<i64>,
     ) -> Result<Vec<SearchResult>> {
         let db = self.db.read().await;
-        Ok(db.search_fts_full(query, limit, project_id, order_by, start_timestamp, end_timestamp)?)
+        Ok(db.search_fts_full(
+            query,
+            limit,
+            project_id,
+            order_by,
+            start_timestamp,
+            end_timestamp,
+        )?)
     }
 
     /// 获取统计信息
@@ -317,7 +332,10 @@ impl SharedDbAdapter {
     // ==================== 向量索引 ====================
 
     /// 获取未向量索引的消息（用于增量索引）
-    pub async fn get_unindexed_messages(&self, limit: usize) -> Result<Vec<claude_session_db::Message>> {
+    pub async fn get_unindexed_messages(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<claude_session_db::Message>> {
         let db = self.db.read().await;
         Ok(db.get_unindexed_messages(limit)?)
     }
@@ -347,7 +365,10 @@ impl SharedDbAdapter {
     }
 
     /// 获取索引失败的消息
-    pub async fn get_failed_indexed_messages(&self, limit: usize) -> Result<Vec<claude_session_db::Message>> {
+    pub async fn get_failed_indexed_messages(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<claude_session_db::Message>> {
         let db = self.db.read().await;
         Ok(db.get_failed_indexed_messages(limit)?)
     }
@@ -365,7 +386,10 @@ impl SharedDbAdapter {
     }
 
     /// 按 ID 列表获取消息
-    pub async fn get_messages_by_ids(&self, ids: &[i64]) -> Result<Vec<claude_session_db::Message>> {
+    pub async fn get_messages_by_ids(
+        &self,
+        ids: &[i64],
+    ) -> Result<Vec<claude_session_db::Message>> {
         let db = self.db.read().await;
         Ok(db.get_messages_by_ids(ids)?)
     }
@@ -373,7 +397,10 @@ impl SharedDbAdapter {
     // ==================== 新增 API ====================
 
     /// 获取单个 Session
-    pub async fn get_session(&self, session_id: &str) -> Result<Option<claude_session_db::Session>> {
+    pub async fn get_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<claude_session_db::Session>> {
         let db = self.db.read().await;
         Ok(db.get_session(session_id)?)
     }
@@ -397,7 +424,11 @@ impl SharedDbAdapter {
     }
 
     /// 获取 Sessions (支持可选的 project_id 过滤)
-    pub async fn get_sessions(&self, project_id: Option<i64>, limit: usize) -> Result<Vec<Session>> {
+    pub async fn get_sessions(
+        &self,
+        project_id: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<Session>> {
         let db = self.db.read().await;
         Ok(db.get_sessions(project_id, limit)?)
     }
@@ -426,7 +457,11 @@ impl SharedDbAdapter {
     }
 
     /// 按 session_id 前缀搜索会话列表
-    pub async fn search_sessions_by_prefix(&self, prefix: &str, limit: usize) -> Result<Vec<Session>> {
+    pub async fn search_sessions_by_prefix(
+        &self,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<Session>> {
         let db = self.db.read().await;
         Ok(db.search_sessions_by_prefix(prefix, limit)?)
     }
@@ -444,13 +479,19 @@ impl SharedDbAdapter {
     }
 
     /// 获取所有项目（带 source 字段）
-    pub async fn get_all_projects_with_source(&self) -> Result<Vec<claude_session_db::ProjectWithSource>> {
+    pub async fn get_all_projects_with_source(
+        &self,
+    ) -> Result<Vec<claude_session_db::ProjectWithSource>> {
         let db = self.db.read().await;
         Ok(db.get_all_projects_with_source()?)
     }
 
     /// 更新会话的项目 ID
-    pub async fn update_sessions_project_id(&self, from_project_id: i64, to_project_id: i64) -> Result<usize> {
+    pub async fn update_sessions_project_id(
+        &self,
+        from_project_id: i64,
+        to_project_id: i64,
+    ) -> Result<usize> {
         let db = self.db.write().await;
         Ok(db.update_sessions_project_id(from_project_id, to_project_id)?)
     }

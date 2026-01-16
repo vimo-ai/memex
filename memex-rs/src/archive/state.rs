@@ -123,10 +123,7 @@ impl ArchiveState {
     /// 记录失败
     pub fn record_failure(&mut self, task_type: TaskType, error: &str) -> Result<()> {
         // 查找是否有相同类型的失败记录
-        let existing = self
-            .failures
-            .iter_mut()
-            .find(|f| f.task_type == task_type);
+        let existing = self.failures.iter_mut().find(|f| f.task_type == task_type);
 
         if let Some(record) = existing {
             record.retry_count += 1;

@@ -23,7 +23,8 @@ use crate::api::AppState;
 fn ms_to_local_time(ts: Option<i64>) -> Option<String> {
     ts.map(|ms| {
         use chrono::{Local, TimeZone};
-        Local.timestamp_millis_opt(ms)
+        Local
+            .timestamp_millis_opt(ms)
             .single()
             .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
             .unwrap_or_else(|| format!("{}", ms))
@@ -228,10 +229,7 @@ async fn process_mcp_request(state: &AppState, request: MCPRequest) -> MCPRespon
             }),
         ),
 
-        "tools/list" => MCPResponse::success(
-            id,
-            json!({ "tools": get_tools() }),
-        ),
+        "tools/list" => MCPResponse::success(id, json!({ "tools": get_tools() })),
 
         "tools/call" => {
             let params = match request.params {
@@ -252,7 +250,9 @@ async fn process_mcp_request(state: &AppState, request: MCPRequest) -> MCPRespon
                         }]
                     }),
                 ),
-                Err(e) => MCPResponse::error(id, -32603, &format!("Tool execution failed: {}", e), None),
+                Err(e) => {
+                    MCPResponse::error(id, -32603, &format!("Tool execution failed: {}", e), None)
+                }
             }
         }
 
@@ -278,7 +278,7 @@ async fn call_tool(state: &AppState, name: &str, args: Value) -> Result<Value, S
 
 /// 将日期字符串 (YYYY-MM-DD) 转换为时间戳（毫秒）
 fn date_to_timestamp(date: &str, is_start: bool) -> Option<i64> {
-    use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Local, TimeZone};
+    use chrono::{Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 
     let parsed = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
     let time = if is_start {
@@ -297,16 +297,19 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
     let query = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
     let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10) as usize;
     let cwd = args.get("cwd").and_then(|c| c.as_str());
-    let order_by_str = args.get("orderBy")
+    let order_by_str = args
+        .get("orderBy")
         .or_else(|| args.get("order_by"))
         .and_then(|o| o.as_str())
         .unwrap_or("score");
 
     // 日期范围参数（格式：YYYY-MM-DD）
-    let start_date = args.get("startDate")
+    let start_date = args
+        .get("startDate")
         .or_else(|| args.get("start_date"))
         .and_then(|d| d.as_str());
-    let end_date = args.get("endDate")
+    let end_date = args
+        .get("endDate")
         .or_else(|| args.get("end_date"))
         .and_then(|d| d.as_str());
 
@@ -333,22 +336,28 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
     let end_ts = end_date.and_then(|d| date_to_timestamp(d, false));
 
     // 执行 FTS 搜索（使用 SharedDbAdapter，日期过滤在 SQL 层完成）
-    let results = state.db.search_fts_full(query, limit, project_id, order_by, start_ts, end_ts).await
+    let results = state
+        .db
+        .search_fts_full(query, limit, project_id, order_by, start_ts, end_ts)
+        .await
         .map_err(|e| e.to_string())?;
 
-    let formatted: Vec<Value> = results.iter().map(|r| {
-        json!({
-            "messageId": r.message_id,
-            "sessionId": r.session_id,
-            "projectId": r.project_id,
-            "projectName": r.project_name,
-            "type": r.r#type,
-            "content": truncate_str(&r.content_full, 500),
-            "snippet": r.snippet,
-            "score": r.score,
-            "timestamp": ms_to_local_time(r.timestamp)
+    let formatted: Vec<Value> = results
+        .iter()
+        .map(|r| {
+            json!({
+                "messageId": r.message_id,
+                "sessionId": r.session_id,
+                "projectId": r.project_id,
+                "projectName": r.project_name,
+                "type": r.r#type,
+                "content": truncate_str(&r.content_full, 500),
+                "snippet": r.snippet,
+                "score": r.score,
+                "timestamp": ms_to_local_time(r.timestamp)
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(json!({
         "results": formatted,
@@ -359,7 +368,8 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
 /// 获取会话详情
 async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
     // 兼容 camelCase 和 snake_case 两种命名风格
-    let session_id_input = args.get("sessionId")
+    let session_id_input = args
+        .get("sessionId")
         .or_else(|| args.get("session_id"))
         .and_then(|s| s.as_str())
         .ok_or("sessionId is required (also accepts session_id)")?;
@@ -369,12 +379,18 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
     let desc = order == "desc";
 
     // 支持前缀匹配：先解析完整 session ID
-    let session_id = state.db.resolve_session_id(session_id_input).await
+    let session_id = state
+        .db
+        .resolve_session_id(session_id_input)
+        .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Session not found: {}", session_id_input))?;
 
     // 获取消息总数
-    let total_count = state.db.get_session_message_count(&session_id).await
+    let total_count = state
+        .db
+        .get_session_message_count(&session_id)
+        .await
         .map_err(|e| e.to_string())? as usize;
 
     if total_count == 0 {
@@ -383,15 +399,20 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
 
     // 如果有搜索词，需要获取全部消息来定位
     let messages: Vec<Value> = if let Some(keyword) = search {
-        let all_messages = state.db.get_messages(&session_id).await
+        let all_messages = state
+            .db
+            .get_messages(&session_id)
+            .await
             .map_err(|e| e.to_string())?;
 
         let keyword_lower = keyword.to_lowercase();
-        let offset = all_messages.iter()
+        let offset = all_messages
+            .iter()
             .position(|m| m.content_full.to_lowercase().contains(&keyword_lower))
             .unwrap_or(0);
 
-        all_messages.iter()
+        all_messages
+            .iter()
             .skip(offset)
             .take(limit)
             .enumerate()
@@ -413,10 +434,14 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
             .collect()
     } else {
         // 直接使用数据库排序和分页
-        let db_messages = state.db.get_messages_with_options(&session_id, Some(limit), desc).await
+        let db_messages = state
+            .db
+            .get_messages_with_options(&session_id, Some(limit), desc)
+            .await
             .map_err(|e| e.to_string())?;
 
-        db_messages.iter()
+        db_messages
+            .iter()
             .enumerate()
             .map(|(idx, m)| {
                 let content = if limit > 5 {
@@ -462,17 +487,23 @@ async fn get_recent_sessions(state: &AppState, args: Value) -> Result<Value, Str
         None
     };
 
-    let sessions = state.db.get_sessions(project_id, limit).await
+    let sessions = state
+        .db
+        .get_sessions(project_id, limit)
+        .await
         .map_err(|e| e.to_string())?;
 
-    let formatted: Vec<Value> = sessions.iter().map(|s| {
-        json!({
-            "id": s.session_id,
-            "projectId": s.project_id,
-            "messageCount": s.message_count,
-            "lastMessage": ms_to_local_time(s.last_message_at)
+    let formatted: Vec<Value> = sessions
+        .iter()
+        .map(|s| {
+            json!({
+                "id": s.session_id,
+                "projectId": s.project_id,
+                "messageCount": s.message_count,
+                "lastMessage": ms_to_local_time(s.last_message_at)
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(json!({
         "sessions": formatted,
@@ -482,19 +513,25 @@ async fn get_recent_sessions(state: &AppState, args: Value) -> Result<Value, Str
 
 /// 列出所有项目
 async fn list_projects(state: &AppState, _args: Value) -> Result<Value, String> {
-    let projects = state.db.list_projects_with_stats(1000, 0).await
+    let projects = state
+        .db
+        .list_projects_with_stats(1000, 0)
+        .await
         .map_err(|e| e.to_string())?;
 
-    let formatted: Vec<Value> = projects.iter().map(|p| {
-        json!({
-            "id": p.id,
-            "name": p.name,
-            "path": p.path,
-            "sessionCount": p.session_count,
-            "messageCount": p.message_count,
-            "lastActive": ms_to_local_time(p.last_active)
+    let formatted: Vec<Value> = projects
+        .iter()
+        .map(|p| {
+            json!({
+                "id": p.id,
+                "name": p.name,
+                "path": p.path,
+                "sessionCount": p.session_count,
+                "messageCount": p.message_count,
+                "lastActive": ms_to_local_time(p.last_active)
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(json!({
         "projects": formatted,
