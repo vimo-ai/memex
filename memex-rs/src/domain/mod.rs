@@ -290,7 +290,7 @@ impl Message {
             meta: None,
             content: self.content,
             timestamp: self.timestamp.clone(),
-            created_at: self.timestamp.unwrap_or_else(|| now),
+            created_at: self.timestamp.unwrap_or(now),
         }
     }
 }

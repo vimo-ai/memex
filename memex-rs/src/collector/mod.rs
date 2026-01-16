@@ -384,8 +384,7 @@ fn extract_encoded_dir_name(path: &str) -> Option<String> {
 
 /// 从路径提取项目名
 fn extract_project_name(path: &str) -> &str {
-    path.split('/')
-        .filter(|s| !s.is_empty())
-        .last()
+    path.rsplit('/')
+        .find(|s| !s.is_empty())
         .unwrap_or(path)
 }
