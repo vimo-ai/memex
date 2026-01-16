@@ -279,7 +279,7 @@ impl VectorStore {
         };
 
         // 使用 count_rows() 获取准确数量，避免 query() 的默认 limit
-        Ok(table.count_rows(None).await? as usize)
+        Ok(table.count_rows(None).await?)
     }
 
     /// 删除消息的向量
