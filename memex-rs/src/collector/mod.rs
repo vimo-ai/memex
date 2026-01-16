@@ -28,8 +28,9 @@ pub struct CollectResult {
 
 impl Collector {
     /// 创建采集服务
-    pub fn new(config: Config, db: Arc<SharedDbAdapter>) -> Self {
-        let registry = AdapterRegistry::from_config(&config);
+    pub fn new(_config: Config, db: Arc<SharedDbAdapter>) -> Self {
+        // 使用适配器自注册机制
+        let registry = AdapterRegistry::new();
         Self { registry, db }
     }
 
@@ -58,7 +59,9 @@ impl Collector {
 
             for meta in sessions {
                 // 获取或创建项目
-                let project_name = meta.project_name.as_deref()
+                let project_name = meta
+                    .project_name
+                    .as_deref()
                     .unwrap_or_else(|| extract_project_name(&meta.project_path));
                 let source_str = source.to_string();
 
@@ -70,13 +73,16 @@ impl Collector {
                 ) {
                     Ok(id) => id,
                     Err(e) => {
-                        result.errors.push(format!("Failed to create project: {}", e));
+                        result
+                            .errors
+                            .push(format!("Failed to create project: {}", e));
                         continue;
                     }
                 };
 
                 // 获取数据库中该会话的最新消息时间戳（时间戳增量采集）
-                let latest_ts = self.blocking_get_session_latest_timestamp(&meta.id)
+                let latest_ts = self
+                    .blocking_get_session_latest_timestamp(&meta.id)
                     .unwrap_or(None);
                 let cutoff_ts = latest_ts.map(|ts| ts - BUFFER_MS).unwrap_or(0);
 
@@ -102,20 +108,23 @@ impl Collector {
                     message_count: Some(parse_result.messages.len() as i64),
                     file_mtime: None,
                     file_size: None,
-                    encoded_dir_name: meta.encoded_dir_name.clone(),
                     meta: None,
                 };
                 if let Err(e) = self.blocking_upsert_session(&session_input) {
-                    result.errors.push(format!("Failed to create session: {}", e));
+                    result
+                        .errors
+                        .push(format!("Failed to create session: {}", e));
                     continue;
                 }
 
                 // 转换并插入消息（时间戳增量过滤）
-                let messages: Vec<MessageInput> = parse_result.messages
+                let messages: Vec<MessageInput> = parse_result
+                    .messages
                     .iter()
                     .enumerate()
                     .filter_map(|(i, msg)| {
-                        let timestamp = msg.timestamp
+                        let timestamp = msg
+                            .timestamp
                             .as_ref()
                             .and_then(|s| s.parse::<i64>().ok())
                             .unwrap_or_else(|| {
@@ -164,7 +173,9 @@ impl Collector {
                         }
                     }
                     Err(e) => {
-                        result.errors.push(format!("Failed to insert messages: {}", e));
+                        result
+                            .errors
+                            .push(format!("Failed to insert messages: {}", e));
                     }
                 }
             }
@@ -192,7 +203,10 @@ impl Collector {
     /// 按路径采集单个会话（精确索引，替代 file watcher）
     /// 使用时间戳增量采集：只采集比数据库中最新消息更新的消息（提前量 30 分钟）
     pub fn collect_by_path(&self, path: &str) -> Result<CollectResult> {
-        use claude_session_db::{ClaudeAdapter, db::{MessageInput, SessionInput}, MessageType};
+        use claude_session_db::{
+            db::{MessageInput, SessionInput},
+            ClaudeAdapter, MessageType,
+        };
 
         const BUFFER_MS: i64 = 30 * 60 * 1000; // 30 分钟提前量
 
@@ -203,7 +217,9 @@ impl Collector {
             Ok(Some(s)) => s,
             Ok(None) => return Ok(result),
             Err(e) => {
-                result.errors.push(format!("Failed to parse session: {}", e));
+                result
+                    .errors
+                    .push(format!("Failed to parse session: {}", e));
                 return Ok(result);
             }
         };
@@ -211,7 +227,8 @@ impl Collector {
         let encoded_dir_name = extract_encoded_dir_name(path);
 
         // 获取数据库中该会话的最新消息时间戳
-        let latest_ts = self.blocking_get_session_latest_timestamp(&session.session_id)
+        let latest_ts = self
+            .blocking_get_session_latest_timestamp(&session.session_id)
             .unwrap_or(None);
         let cutoff_ts = latest_ts.map(|ts| ts - BUFFER_MS).unwrap_or(0);
 
@@ -224,7 +241,9 @@ impl Collector {
         ) {
             Ok(id) => id,
             Err(e) => {
-                result.errors.push(format!("Failed to create project: {}", e));
+                result
+                    .errors
+                    .push(format!("Failed to create project: {}", e));
                 return Ok(result);
             }
         };
@@ -239,42 +258,42 @@ impl Collector {
             message_count: Some(session.messages.len() as i64),
             file_mtime: None,
             file_size: None,
-            encoded_dir_name,
             meta: None,
         };
         if let Err(e) = self.blocking_upsert_session(&session_input) {
-            result.errors.push(format!("Failed to create session: {}", e));
+            result
+                .errors
+                .push(format!("Failed to create session: {}", e));
             return Ok(result);
         }
 
         // 转换消息格式，过滤掉旧消息（时间戳增量采集）
-        let messages: Vec<MessageInput> = session.messages
+        let messages: Vec<MessageInput> = session
+            .messages
             .iter()
             .filter(|msg| msg.timestamp > cutoff_ts) // 只保留比 cutoff 更新的消息
-            .map(|msg| {
-                MessageInput {
-                    uuid: msg.uuid.clone(),
-                    r#type: if msg.role == "user" || msg.role == "human" {
-                        MessageType::User
-                    } else if msg.role == "tool" {
-                        MessageType::Tool
-                    } else {
-                        MessageType::Assistant
-                    },
-                    content_text: msg.content.text.clone(),
-                    content_full: msg.content.full.clone(),
-                    timestamp: msg.timestamp,
-                    sequence: msg.sequence,
-                    source: Some("claude".to_string()),
-                    channel: Some("cli".to_string()),
-                    model: None,
-                    tool_call_id: None,
-                    tool_name: None,
-                    tool_args: None,
-                    raw: msg.raw.clone(),
-                    approval_status: None,
-                    approval_resolved_at: None,
-                }
+            .map(|msg| MessageInput {
+                uuid: msg.uuid.clone(),
+                r#type: if msg.role == "user" || msg.role == "human" {
+                    MessageType::User
+                } else if msg.role == "tool" {
+                    MessageType::Tool
+                } else {
+                    MessageType::Assistant
+                },
+                content_text: msg.content.text.clone(),
+                content_full: msg.content.full.clone(),
+                timestamp: msg.timestamp,
+                sequence: msg.sequence,
+                source: Some("claude".to_string()),
+                channel: Some("cli".to_string()),
+                model: None,
+                tool_call_id: None,
+                tool_name: None,
+                tool_args: None,
+                raw: msg.raw.clone(),
+                approval_status: None,
+                approval_resolved_at: None,
             })
             .collect();
 
@@ -289,11 +308,17 @@ impl Collector {
                 result.sessions_scanned = 1;
                 result.messages_inserted = inserted;
                 if inserted > 0 {
-                    tracing::info!("📥 Incremental indexing: session {} inserted {} messages", session.session_id, inserted);
+                    tracing::info!(
+                        "📥 Incremental indexing: session {} inserted {} messages",
+                        session.session_id,
+                        inserted
+                    );
                 }
             }
             Err(e) => {
-                result.errors.push(format!("Failed to insert messages: {}", e));
+                result
+                    .errors
+                    .push(format!("Failed to insert messages: {}", e));
             }
         }
 
@@ -312,7 +337,12 @@ impl Collector {
     ) -> Result<i64> {
         tokio::task::block_in_place(|| {
             let rt = tokio::runtime::Handle::current();
-            rt.block_on(self.db.get_or_create_project_with_encoded(name, path, source, encoded_dir_name))
+            rt.block_on(self.db.get_or_create_project_with_encoded(
+                name,
+                path,
+                source,
+                encoded_dir_name,
+            ))
         })
     }
 
