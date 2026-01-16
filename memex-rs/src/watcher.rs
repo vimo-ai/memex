@@ -123,12 +123,9 @@ impl FileWatcher {
             return;
         }
 
-        match kind {
-            DebouncedEventKind::Any => {
-                tracing::debug!("📝 File change detected: {:?}", path);
-                self.trigger_collect(path).await;
-            }
-            _ => {}
+        if kind == &DebouncedEventKind::Any {
+            tracing::debug!("📝 File change detected: {:?}", path);
+            self.trigger_collect(path).await;
         }
     }
 

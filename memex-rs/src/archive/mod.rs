@@ -336,10 +336,10 @@ impl ArchiveService {
         }
 
         // 3. 检查过去 12 月内未合并的月
-        for months_ago in 1..=12 {
-            let target_month = if today.month() as i32 - months_ago as i32 <= 0 {
-                let year = today.year() - 1 - (months_ago as i32 - today.month() as i32) / 12;
-                let month = ((today.month() as i32 - months_ago as i32 - 1) % 12 + 12) % 12 + 1;
+        for months_ago in 1i32..=12 {
+            let target_month = if today.month() as i32 - months_ago <= 0 {
+                let year = today.year() - 1 - (months_ago - today.month() as i32) / 12;
+                let month = ((today.month() as i32 - months_ago - 1) % 12 + 12) % 12 + 1;
                 NaiveDate::from_ymd_opt(year, month as u32, 1).unwrap()
             } else {
                 NaiveDate::from_ymd_opt(today.year(), today.month() - months_ago as u32, 1).unwrap()
@@ -465,7 +465,7 @@ impl ArchiveService {
                     continue;
                 }
 
-                if file_path.extension().map_or(true, |e| e != "jsonl") {
+                if file_path.extension().is_none_or(|e| e != "jsonl") {
                     continue;
                 }
 
@@ -640,7 +640,7 @@ impl ArchiveService {
             if path.exists() {
                 archives.push(path);
             }
-            date = date + chrono::Duration::days(1);
+            date += chrono::Duration::days(1);
         }
 
         Ok(archives)
@@ -665,7 +665,7 @@ impl ArchiveService {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |e| e == "xz") {
+            if path.is_file() && path.extension().is_some_and(|e| e == "xz") {
                 let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
                 // 支持新格式（日期范围）和旧格式（W周号）
                 if date_range_pattern.is_match(name)
@@ -691,7 +691,7 @@ impl ArchiveService {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |e| e == "xz") {
+            if path.is_file() && path.extension().is_some_and(|e| e == "xz") {
                 archives.push(path);
             }
         }
