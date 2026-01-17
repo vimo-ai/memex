@@ -75,12 +75,13 @@ Search historical conversations directly in Claude Code:
 ### Docker (Recommended)
 
 ```bash
-docker run -d -p 3000:3000 \
+docker run -d -p 10013:10013 \
   -v ~/.vimo/db:/data \
   -v ~/.claude/projects:/claude:ro \
   -v ~/.codex:/codex:ro \
   -v ~/.local/share/opencode:/opencode:ro \
-  ghcr.io/vimo-ai/memex:0.0.1-beta.1
+  -v ~/.gemini/tmp:/gemini:ro \
+  ghcr.io/vimo-ai/memex:latest
 ```
 
 Mount the data sources you use:
@@ -91,12 +92,13 @@ Mount the data sources you use:
 | `~/.claude/projects:/claude` | Claude Code | As needed |
 | `~/.codex:/codex` | Codex CLI | As needed |
 | `~/.local/share/opencode:/opencode` | OpenCode | As needed |
+| `~/.gemini/tmp:/gemini` | Gemini CLI | As needed |
 
 Verify it's running:
 
 ```bash
-curl http://localhost:3000/health          # → OK
-curl http://localhost:3000/api/stats       # → {"projectCount":...}
+curl http://localhost:10013/health          # → OK
+curl http://localhost:10013/api/stats       # → {"projectCount":...}
 ```
 
 ### With Semantic Search
@@ -109,11 +111,11 @@ ollama serve
 ollama pull bge-m3
 
 # Run Memex with Ollama access
-docker run -d -p 3000:3000 \
+docker run -d -p 10013:10013 \
   -v ~/.vimo/db:/data \
   -v ~/.claude/projects:/claude:ro \
   -e OLLAMA_API=http://host.docker.internal:11434 \
-  ghcr.io/vimo-ai/memex:0.0.1-beta.1
+  ghcr.io/vimo-ai/memex:latest
 ```
 
 **Linux note**: `host.docker.internal` works on Docker Desktop. On native Linux, use `--add-host=host.docker.internal:host-gateway` or your host's IP.

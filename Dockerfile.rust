@@ -53,8 +53,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates xz-utils curl \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
     && useradd -r -u 1000 -m memex \
-    && mkdir -p /data /claude /codex /opencode \
-    && chown -R memex:memex /data /claude /codex /opencode
+    && mkdir -p /data /claude /codex /opencode /gemini \
+    && chown -R memex:memex /data /claude /codex /opencode /gemini
 
 WORKDIR /app
 
@@ -64,18 +64,19 @@ COPY --chown=memex:memex --from=web /build/dist ./public
 USER memex
 
 ENV RUST_LOG=memex=info \
-    PORT=3000 \
+    PORT=10013 \
     VIMO_HOME=/data \
     MEMEX_DATA_DIR=/data \
     MEMEX_WEB_DIR=/app/public \
     CLAUDE_PROJECTS_PATH=/claude \
     CODEX_PATH=/codex \
     OPENCODE_PATH=/opencode \
+    GEMINI_TMP_PATH=/gemini \
     ENABLE_AI_CHAT=false
 
-EXPOSE 3000
+EXPOSE 10013
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:3000/health || exit 1
+    CMD curl -f http://localhost:10013/health || exit 1
 
 ENTRYPOINT ["/app/memex"]
