@@ -116,9 +116,7 @@ pub fn format_sessions(sessions: &[SessionMeta], format: OutputFormat) -> String
 
                 // 项目名
                 let project = session
-                    .project_name
-                    .as_ref()
-                    .map(|s| s.as_str())
+                    .project_name.as_deref()
                     .unwrap_or("Unknown");
 
                 output.push_str(&format!(

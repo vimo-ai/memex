@@ -147,6 +147,7 @@ fn main() -> Result<()> {
 }
 
 /// 搜索命令
+#[allow(clippy::too_many_arguments)]
 fn cmd_search(
     query: String,
     cli_filter: Option<Vec<String>>,
@@ -340,7 +341,7 @@ fn parse_time_range(
     since: Option<String>,
     until: Option<String>,
 ) -> (Option<u64>, Option<u64>) {
-    use chrono::{Local, NaiveDate, TimeZone};
+    use chrono::Local;
 
     let now = Local::now();
 

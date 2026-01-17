@@ -28,6 +28,7 @@ pub fn truncate_str_with_suffix(s: &str, max_chars: usize, suffix: &str) -> Stri
 /// UTF-8 安全的子字符串提取
 ///
 /// 按字符索引提取，返回 (start_byte, end_byte) 用于切片
+#[allow(dead_code)]
 pub fn char_range_to_byte_range(s: &str, start_char: usize, end_char: usize) -> (usize, usize) {
     let char_indices: Vec<(usize, char)> = s.char_indices().collect();
 
@@ -44,6 +45,7 @@ pub fn char_range_to_byte_range(s: &str, start_char: usize, end_char: usize) -> 
 }
 
 /// UTF-8 安全的子字符串提取（直接返回字符串）
+#[allow(dead_code)]
 pub fn substr_by_chars(s: &str, start_char: usize, end_char: usize) -> &str {
     let (start_byte, end_byte) = char_range_to_byte_range(s, start_char, end_char);
     &s[start_byte..end_byte]

@@ -109,11 +109,10 @@ impl Searcher {
 
         for session in sessions {
             // 源过滤
-            if let Some(ref filters) = options.source_filter {
-                if !filters.contains(&session.source) {
+            if let Some(ref filters) = options.source_filter
+                && !filters.contains(&session.source) {
                     continue;
                 }
-            }
 
             // 项目过滤
             if let Some(ref project) = options.project_filter {
@@ -130,16 +129,14 @@ impl Searcher {
 
             // 时间过滤（使用文件修改时间）
             if let Some(mtime) = session.file_mtime {
-                if let Some(start) = options.start_time {
-                    if mtime < start {
+                if let Some(start) = options.start_time
+                    && mtime < start {
                         continue;
                     }
-                }
-                if let Some(end) = options.end_time {
-                    if mtime > end {
+                if let Some(end) = options.end_time
+                    && mtime > end {
                         continue;
                     }
-                }
             }
 
             // 解析并搜索会话
@@ -230,22 +227,22 @@ impl Searcher {
         if before {
             // 向前收集
             let start = current_idx.saturating_sub(count);
-            for i in start..current_idx {
-                if messages[i].message_type != MessageType::Tool {
+            for msg in messages.iter().take(current_idx).skip(start) {
+                if msg.message_type != MessageType::Tool {
                     context.push(ContextMessage {
-                        message_type: messages[i].message_type,
-                        content: truncate_str(&messages[i].content.text.replace('\n', " "), 200),
+                        message_type: msg.message_type,
+                        content: truncate_str(&msg.content.text.replace('\n', " "), 200),
                     });
                 }
             }
         } else {
             // 向后收集
             let end = (current_idx + 1 + count).min(messages.len());
-            for i in (current_idx + 1)..end {
-                if messages[i].message_type != MessageType::Tool {
+            for msg in messages.iter().take(end).skip(current_idx + 1) {
+                if msg.message_type != MessageType::Tool {
                     context.push(ContextMessage {
-                        message_type: messages[i].message_type,
-                        content: truncate_str(&messages[i].content.text.replace('\n', " "), 200),
+                        message_type: msg.message_type,
+                        content: truncate_str(&msg.content.text.replace('\n', " "), 200),
                     });
                 }
             }

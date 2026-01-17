@@ -39,3 +39,4 @@ memex.db.bak-*
 # 研究数据（二进制样本）
 research/
 .worktrees/
+Icon

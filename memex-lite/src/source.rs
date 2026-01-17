@@ -82,11 +82,10 @@ impl DataSourceManager {
         let mut all_sessions = Vec::new();
 
         for adapter in &self.adapters {
-            if adapter.data_path().exists() {
-                if let Ok(sessions) = adapter.list_sessions() {
+            if adapter.data_path().exists()
+                && let Ok(sessions) = adapter.list_sessions() {
                     all_sessions.extend(sessions);
                 }
-            }
         }
 
         // 按文件修改时间排序（最新的在前）

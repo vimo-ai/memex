@@ -1,7 +1,7 @@
 # Memex CI
 #
 # Triggered on push to main and pull requests
-# Runs cargo check, clippy, and tests
+# Runs cargo check, clippy, and tests for both memex-rs and memex-lite
 
 name: CI
 
@@ -12,13 +12,14 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    name: Check & Test
+  check-memex-rs:
+    name: Check memex-rs
     runs-on: ubuntu-latest
 
     steps:
@@ -66,3 +67,43 @@ jobs:
       - name: Test
         working-directory: memex-rs
         run: cargo test --all-features
+
+  check-memex-lite:
+    name: Check memex-lite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout ai-cli-session-collector
+        uses: actions/checkout@v4
+        with:
+          repository: vimo-ai/ai-cli-session-collector
+          path: deps/ai-cli-session-collector
+
+      - name: Create symlink for dependency
+        run: |
+          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-collector $GITHUB_WORKSPACE/../ai-cli-session-collector
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: memex-lite
+
+      - name: Check
+        working-directory: memex-lite
+        run: cargo check
+
+      - name: Clippy
+        working-directory: memex-lite
+        run: cargo clippy -- -D warnings
+
+      - name: Test
+        working-directory: memex-lite
+        run: cargo test
