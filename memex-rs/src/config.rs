@@ -11,14 +11,8 @@ pub struct Config {
     pub data_dir: PathBuf,
     /// Web 静态文件目录 (前端 dist)
     pub web_dir: PathBuf,
-    /// Claude Code 项目目录
+    /// Claude Code 项目目录 (用于 Archive 服务)
     pub claude_projects_path: PathBuf,
-    /// Codex CLI 数据目录
-    pub codex_path: PathBuf,
-    /// OpenCode 数据目录
-    pub opencode_path: PathBuf,
-    /// Gemini CLI 数据目录
-    pub gemini_path: PathBuf,
     /// Ollama API 地址
     pub ollama_api: String,
     /// Embedding 模型 (用于语义搜索，核心功能)
@@ -56,18 +50,6 @@ impl Config {
             claude_projects_path: std::env::var("CLAUDE_PROJECTS_PATH")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| home.join(".claude/projects")),
-
-            codex_path: std::env::var("CODEX_PATH")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home.join(".codex")),
-
-            opencode_path: std::env::var("OPENCODE_PATH")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home.join(".local/share/opencode")),
-
-            gemini_path: std::env::var("GEMINI_TMP_PATH")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| home.join(".gemini/tmp")),
 
             ollama_api: std::env::var("OLLAMA_API")
                 .unwrap_or_else(|_| "http://localhost:11434".to_string()),

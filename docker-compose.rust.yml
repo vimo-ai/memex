@@ -7,16 +7,15 @@ services:
     container_name: memex
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "10013:10013"
     volumes:
-      - memex-data:/data
-      - ~/.claude/projects:/claude-sessions:ro
+      - ~/.vimo/db:/data
+      - ~/.claude/projects:/claude:ro
       - ~/.codex:/codex:ro
+      - ~/.local/share/opencode:/opencode:ro
+      - ~/.gemini/tmp:/gemini:ro
     environment:
-      - RUST_LOG=memex_rs=info
-      - MEMEX_DATA_DIR=/data
-      - CLAUDE_PROJECTS_PATH=/claude-sessions
-      - CODEX_PATH=/codex
+      - RUST_LOG=memex=info
       # Ollama 连接 (语义搜索核心功能)
       - OLLAMA_API=http://host.docker.internal:11434
       - EMBEDDING_MODEL=bge-m3
@@ -25,6 +24,3 @@ services:
       - CHAT_MODEL=qwen3:8b
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-volumes:
-  memex-data:
