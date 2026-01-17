@@ -125,24 +125,31 @@ cargo build --release
 For quick searches without running a server:
 
 ```bash
-# Build
-cd memex/memex-lite
-cargo build --release
+# Homebrew (macOS)
+brew install vimo-ai/tap/memex
 
+# Or download binary
+curl -L https://github.com/vimo-ai/memex/releases/latest/download/memex-darwin-arm64.tar.gz | tar xz
+sudo mv memex /usr/local/bin/
+```
+
+Usage:
+
+```bash
 # Search across all AI CLIs
-./target/release/memex search "authentication"
+memex search "authentication"
 
 # Filter by CLI type
-./target/release/memex search "bug fix" --source claude
+memex search "bug fix" --source claude
 
 # List recent sessions
-./target/release/memex list -n 10
+memex list -n 10
 
 # View a specific session
-./target/release/memex view <session-id>
+memex view <session-id>
 
 # Show available data sources
-./target/release/memex sources
+memex sources
 ```
 
 Memex Lite directly reads JSONL files without any database, perfect for:
