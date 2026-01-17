@@ -159,7 +159,7 @@ Memex Lite 直接读取 JSONL 文件，无需数据库，适合：
 | `CLAUDE_PROJECTS_PATH` | `~/.claude/projects` | Claude Code 会话路径 |
 | `CODEX_PATH` | `~/.codex` | Codex CLI 会话路径 |
 | `OPENCODE_PATH` | `~/.local/share/opencode` | OpenCode 会话路径 |
-| `GEMINI_PATH` | `~/.gemini/history` | Gemini CLI 会话路径 |
+| `GEMINI_TMP_PATH` | `~/.gemini/tmp` | Gemini CLI 会话路径 |
 | `OLLAMA_API` | `http://localhost:11434` | Ollama API 地址 |
 | `EMBEDDING_MODEL` | `bge-m3` | Ollama embedding 模型 |
 | `ENABLE_AI_CHAT` | `false` | 启用 RAG 问答功能 |

@@ -17,6 +17,8 @@ pub struct Config {
     pub codex_path: PathBuf,
     /// OpenCode 数据目录
     pub opencode_path: PathBuf,
+    /// Gemini CLI 数据目录
+    pub gemini_path: PathBuf,
     /// Ollama API 地址
     pub ollama_api: String,
     /// Embedding 模型 (用于语义搜索，核心功能)
@@ -62,6 +64,10 @@ impl Config {
             opencode_path: std::env::var("OPENCODE_PATH")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| home.join(".local/share/opencode")),
+
+            gemini_path: std::env::var("GEMINI_TMP_PATH")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| home.join(".gemini/tmp")),
 
             ollama_api: std::env::var("OLLAMA_API")
                 .unwrap_or_else(|_| "http://localhost:11434".to_string()),

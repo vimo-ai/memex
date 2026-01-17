@@ -176,7 +176,7 @@ Memex Lite directly reads JSONL files without any database, perfect for:
 | `CLAUDE_PROJECTS_PATH` | `~/.claude/projects` | Claude Code session location |
 | `CODEX_PATH` | `~/.codex` | Codex CLI session location |
 | `OPENCODE_PATH` | `~/.local/share/opencode` | OpenCode session location |
-| `GEMINI_PATH` | `~/.gemini/history` | Gemini CLI session location |
+| `GEMINI_TMP_PATH` | `~/.gemini/tmp` | Gemini CLI session location |
 | `OLLAMA_API` | `http://localhost:11434` | Ollama API endpoint |
 | `EMBEDDING_MODEL` | `bge-m3` | Ollama embedding model |
 | `ENABLE_AI_CHAT` | `false` | Enable RAG Q&A feature |
