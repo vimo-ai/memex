@@ -108,24 +108,31 @@ cargo build --release
 快速搜索，无需启动服务：
 
 ```bash
-# 构建
-cd memex/memex-lite
-cargo build --release
+# Homebrew (macOS)
+brew install vimo-ai/tap/memex
 
+# 或下载二进制
+curl -L https://github.com/vimo-ai/memex/releases/latest/download/memex-darwin-arm64.tar.gz | tar xz
+sudo mv memex /usr/local/bin/
+```
+
+使用：
+
+```bash
 # 搜索所有 AI CLI 历史
-./target/release/memex search "authentication"
+memex search "authentication"
 
 # 按 CLI 类型过滤
-./target/release/memex search "bug fix" --source claude
+memex search "bug fix" --source claude
 
 # 列出最近会话
-./target/release/memex list -n 10
+memex list -n 10
 
 # 查看指定会话
-./target/release/memex view <session-id>
+memex view <session-id>
 
 # 显示可用数据源
-./target/release/memex sources
+memex sources
 ```
 
 Memex Lite 直接读取 JSONL 文件，无需数据库，适合：
