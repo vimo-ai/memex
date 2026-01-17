@@ -1,0 +1,43 @@
+# ============================================
+# Memex CI Dockerfile
+# 用于 CI 流水线，接收预编译的 binary
+# ============================================
+
+ARG TARGETARCH
+
+FROM debian:trixie-slim
+
+ARG TARGETARCH
+
+# 安装运行时依赖 + 创建用户和目录
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates xz-utils curl \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+    && useradd -r -u 1000 -m memex \
+    && mkdir -p /data /claude /codex /opencode \
+    && chown -R memex:memex /data /claude /codex /opencode
+
+WORKDIR /app
+
+# 复制预编译的 binary (根据架构选择)
+COPY --chown=memex:memex build/${TARGETARCH}/memex ./memex
+COPY --chown=memex:memex build/web ./public
+
+USER memex
+
+ENV RUST_LOG=memex=info \
+    PORT=3000 \
+    VIMO_HOME=/data \
+    MEMEX_DATA_DIR=/data \
+    MEMEX_WEB_DIR=/app/public \
+    CLAUDE_PROJECTS_PATH=/claude \
+    CODEX_PATH=/codex \
+    OPENCODE_PATH=/opencode \
+    ENABLE_AI_CHAT=false
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:3000/health || exit 1
+
+ENTRYPOINT ["/app/memex"]
