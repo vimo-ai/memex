@@ -9,7 +9,7 @@ AI 编程助手会话历史管理系统，让你的对话永不过期。
 - ✅ Claude Code
 - ✅ Codex CLI
 - ✅ OpenCode
-- 🚧 Gemini CLI (即将支持)
+- ✅ Gemini CLI
 
 ## 为什么需要 Memex？
 
@@ -103,6 +103,37 @@ cargo build --release
 ./target/release/memex serve
 ```
 
+### Memex Lite（零依赖 CLI）
+
+快速搜索，无需启动服务：
+
+```bash
+# 构建
+cd memex/memex-lite
+cargo build --release
+
+# 搜索所有 AI CLI 历史
+./target/release/memex search "authentication"
+
+# 按 CLI 类型过滤
+./target/release/memex search "bug fix" --source claude
+
+# 列出最近会话
+./target/release/memex list -n 10
+
+# 查看指定会话
+./target/release/memex view <session-id>
+
+# 显示可用数据源
+./target/release/memex sources
+```
+
+Memex Lite 直接读取 JSONL 文件，无需数据库，适合：
+- 临时快速搜索
+- 新机器无需完整配置
+- CI/CD 环境
+- 资源受限系统
+
 ## 配置
 
 | 变量 | 默认值 | 说明 |
@@ -112,6 +143,7 @@ cargo build --release
 | `CLAUDE_PROJECTS_PATH` | `~/.claude/projects` | Claude Code 会话路径 |
 | `CODEX_PATH` | `~/.codex` | Codex CLI 会话路径 |
 | `OPENCODE_PATH` | `~/.local/share/opencode` | OpenCode 会话路径 |
+| `GEMINI_PATH` | `~/.gemini/history` | Gemini CLI 会话路径 |
 | `OLLAMA_API` | `http://localhost:11434` | Ollama API 地址 |
 | `EMBEDDING_MODEL` | `bge-m3` | Ollama embedding 模型 |
 | `ENABLE_AI_CHAT` | `false` | 启用 RAG 问答功能 |

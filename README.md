@@ -26,7 +26,7 @@ Session history management for AI coding assistants. Never lose your conversatio
 - ✅ Claude Code
 - ✅ Codex CLI
 - ✅ OpenCode
-- 🚧 Gemini CLI (coming soon)
+- ✅ Gemini CLI
 
 ## Why Memex?
 
@@ -120,6 +120,37 @@ cargo build --release
 ./target/release/memex serve
 ```
 
+### Memex Lite (Zero-Dependency CLI)
+
+For quick searches without running a server:
+
+```bash
+# Build
+cd memex/memex-lite
+cargo build --release
+
+# Search across all AI CLIs
+./target/release/memex search "authentication"
+
+# Filter by CLI type
+./target/release/memex search "bug fix" --source claude
+
+# List recent sessions
+./target/release/memex list -n 10
+
+# View a specific session
+./target/release/memex view <session-id>
+
+# Show available data sources
+./target/release/memex sources
+```
+
+Memex Lite directly reads JSONL files without any database, perfect for:
+- Quick one-off searches
+- New machines without full setup
+- CI/CD environments
+- Resource-constrained systems
+
 ## Configuration
 
 | Variable | Default | Description |
@@ -129,6 +160,7 @@ cargo build --release
 | `CLAUDE_PROJECTS_PATH` | `~/.claude/projects` | Claude Code session location |
 | `CODEX_PATH` | `~/.codex` | Codex CLI session location |
 | `OPENCODE_PATH` | `~/.local/share/opencode` | OpenCode session location |
+| `GEMINI_PATH` | `~/.gemini/history` | Gemini CLI session location |
 | `OLLAMA_API` | `http://localhost:11434` | Ollama API endpoint |
 | `EMBEDDING_MODEL` | `bge-m3` | Ollama embedding model |
 | `ENABLE_AI_CHAT` | `false` | Enable RAG Q&A feature |
