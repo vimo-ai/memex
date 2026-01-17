@@ -1,193 +1,12 @@
-//! Embedding 服务 - Ollama 集成
+//! 文本处理模块
+//!
+//! 提供文本分片（Chunker）等工具
+//!
+//! 注意：LLM 能力（Embedding、Chat）已迁移到 `llm` 模块
 
-#![allow(dead_code)] // 预留 API: embed_batch, chunk_type
-
-use anyhow::{Context, Result};
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
-
-/// Ollama 客户端
-pub struct OllamaClient {
-    client: Client,
-    base_url: String,
-    embedding_model: String,
-    chat_model: String,
-}
-
-/// Embedding 请求
-#[derive(Serialize)]
-struct EmbeddingRequest {
-    model: String,
-    prompt: String,
-}
-
-/// Embedding 响应
-#[derive(Deserialize)]
-struct EmbeddingResponse {
-    embedding: Vec<f32>,
-}
-
-/// Chat 请求
-#[derive(Serialize)]
-struct ChatRequest {
-    model: String,
-    messages: Vec<ChatMessage>,
-    stream: bool,
-}
-
-#[derive(Serialize)]
-struct ChatMessage {
-    role: String,
-    content: String,
-}
-
-/// Chat 响应
-#[derive(Deserialize)]
-struct ChatResponse {
-    message: Option<ChatMessageResponse>,
-    eval_count: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct ChatMessageResponse {
-    content: String,
-}
-
-impl OllamaClient {
-    /// 创建 Ollama 客户端
-    pub fn new(base_url: &str, embedding_model: &str, chat_model: &str) -> Self {
-        Self {
-            client: Client::new(),
-            base_url: base_url.trim_end_matches('/').to_string(),
-            embedding_model: embedding_model.to_string(),
-            chat_model: chat_model.to_string(),
-        }
-    }
-
-    /// 检查 Ollama 是否可用
-    pub async fn is_available(&self) -> bool {
-        let url = format!("{}/api/tags", self.base_url);
-        self.client.get(&url).send().await.is_ok()
-    }
-
-    /// 检查 embedding 模型是否可用
-    pub async fn is_embedding_model_available(&self) -> bool {
-        self.check_model(&self.embedding_model).await
-    }
-
-    /// 检查 chat 模型是否可用
-    pub async fn is_chat_model_available(&self) -> bool {
-        self.check_model(&self.chat_model).await
-    }
-
-    /// 检查模型是否存在
-    async fn check_model(&self, model: &str) -> bool {
-        let url = format!("{}/api/tags", self.base_url);
-        match self.client.get(&url).send().await {
-            Ok(resp) => {
-                if let Ok(data) = resp.json::<serde_json::Value>().await {
-                    if let Some(models) = data.get("models").and_then(|m| m.as_array()) {
-                        return models.iter().any(|m| {
-                            m.get("name")
-                                .and_then(|n| n.as_str())
-                                .map(|n| n.starts_with(model))
-                                .unwrap_or(false)
-                        });
-                    }
-                }
-                false
-            }
-            Err(_) => false,
-        }
-    }
-
-    /// 生成 embedding
-    pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        let url = format!("{}/api/embeddings", self.base_url);
-
-        let request = EmbeddingRequest {
-            model: self.embedding_model.clone(),
-            prompt: text.to_string(),
-        };
-
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .context("Ollama embedding 请求失败")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Ollama 返回错误 {}: {}", status, text);
-        }
-
-        let result: EmbeddingResponse = response.json().await.context("解析 embedding 响应失败")?;
-
-        Ok(result.embedding)
-    }
-
-    /// 批量生成 embedding（并发，限制 10 个同时）
-    pub async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
-        use futures::stream::{self, StreamExt};
-
-        const CONCURRENCY: usize = 10;
-
-        let results: Vec<Result<Vec<f32>>> = stream::iter(texts.into_iter())
-            .map(|text| async move { self.embed(&text).await })
-            .buffer_unordered(CONCURRENCY)
-            .collect()
-            .await;
-
-        // 收集结果，任何一个失败就返回错误
-        results.into_iter().collect()
-    }
-
-    /// Chat 生成
-    pub async fn chat(&self, prompt: &str) -> Result<ChatResult> {
-        let url = format!("{}/api/chat", self.base_url);
-
-        let request = ChatRequest {
-            model: self.chat_model.clone(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: prompt.to_string(),
-            }],
-            stream: false,
-        };
-
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .context("Ollama chat 请求失败")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Ollama 返回错误 {}: {}", status, text);
-        }
-
-        let result: ChatResponse = response.json().await.context("解析 chat 响应失败")?;
-
-        Ok(ChatResult {
-            content: result.message.map(|m| m.content).unwrap_or_default(),
-            tokens_used: result.eval_count,
-        })
-    }
-}
-
-/// Chat 结果
-pub struct ChatResult {
-    pub content: String,
-    pub tokens_used: Option<u64>,
-}
-
-/// 文本分片
+/// 文本分片器
+///
+/// 将长文本智能分片，用于向量索引
 #[derive(Clone)]
 pub struct Chunker {
     max_length: usize,
@@ -454,7 +273,7 @@ impl Chunker {
     }
 }
 
-/// 分片
+/// 文本分片
 #[derive(Debug, Clone)]
 pub struct Chunk {
     pub index: usize,
@@ -462,6 +281,7 @@ pub struct Chunk {
     pub chunk_type: ChunkType,
 }
 
+/// 分片类型
 #[derive(Debug, Clone, Copy)]
 pub enum ChunkType {
     Text,

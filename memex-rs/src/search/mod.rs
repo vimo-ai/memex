@@ -10,7 +10,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::ms_to_local_iso;
-use crate::embedding::OllamaClient;
+use crate::llm::EmbeddingProvider;
 use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::VectorStore;
 
@@ -145,7 +145,7 @@ pub enum SearchMode {
 /// 混合检索服务
 pub struct HybridSearchService {
     db: Arc<SharedDbAdapter>,
-    ollama: Option<Arc<OllamaClient>>,
+    embedding: Option<Arc<dyn EmbeddingProvider>>,
     vector: Option<Arc<RwLock<VectorStore>>>,
 }
 
@@ -153,10 +153,10 @@ impl HybridSearchService {
     /// 创建混合检索服务
     pub fn new(
         db: Arc<SharedDbAdapter>,
-        ollama: Option<Arc<OllamaClient>>,
+        embedding: Option<Arc<dyn EmbeddingProvider>>,
         vector: Option<Arc<RwLock<VectorStore>>>,
     ) -> Self {
-        Self { db, ollama, vector }
+        Self { db, embedding, vector }
     }
 
     /// 执行混合搜索
@@ -232,8 +232,8 @@ impl HybridSearchService {
 
         // Vector search (只在 Score 排序时执行，且日期过滤需要在后续处理)
         if effective_mode == SearchMode::Vector || effective_mode == SearchMode::Hybrid {
-            if let (Some(ollama), Some(vector)) = (&self.ollama, &self.vector) {
-                match self.vector_search(ollama, vector, &query, limit * 2).await {
+            if let (Some(embedding), Some(vector)) = (&self.embedding, &self.vector) {
+                match self.vector_search(embedding, vector, &query, limit * 2).await {
                     Ok(results) => {
                         tracing::debug!("[Vector] Returned {} results", results.len());
                         vector_results = results;
@@ -243,7 +243,7 @@ impl HybridSearchService {
                     }
                 }
             } else {
-                tracing::debug!("[Vector] Ollama/VectorStore unavailable");
+                tracing::debug!("[Vector] Embedding/VectorStore unavailable");
             }
         }
 
@@ -288,13 +288,13 @@ impl HybridSearchService {
     /// 向量搜索
     async fn vector_search(
         &self,
-        ollama: &OllamaClient,
+        embedding: &Arc<dyn EmbeddingProvider>,
         vector: &RwLock<VectorStore>,
         query: &str,
         limit: usize,
     ) -> Result<Vec<VectorSearchItem>> {
         // 生成查询向量
-        let query_embedding = ollama.embed(query).await?;
+        let query_embedding = embedding.embed(query).await?;
 
         // 执行向量搜索
         let vector_store = vector.read().await;
@@ -444,8 +444,8 @@ impl HybridSearchService {
 
     /// 检查语义搜索是否可用
     pub async fn is_semantic_available(&self) -> bool {
-        let ollama_ok = if let Some(ollama) = &self.ollama {
-            ollama.is_available().await
+        let embedding_ok = if let Some(embedding) = &self.embedding {
+            embedding.is_available().await
         } else {
             false
         };
@@ -456,7 +456,7 @@ impl HybridSearchService {
             false
         };
 
-        ollama_ok && vector_ok
+        embedding_ok && vector_ok
     }
 }
 

@@ -3,9 +3,7 @@
 //! 基于历史对话提供问答能力：
 //! 1. 使用混合检索获取相关消息
 //! 2. 构建上下文 prompt
-//! 3. 调用 Ollama chat API 生成答案
-
-#![allow(dead_code)] // 预留 API: is_available, chat_model
+//! 3. 调用 LLM chat API 生成答案
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -13,10 +11,11 @@ use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::embedding::OllamaClient;
+use crate::llm::{ChatProvider, ChatProviderExt};
 use crate::search::{HybridSearchOptions, HybridSearchService, SearchMode, SearchOrderBy};
 use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::VectorStore;
+use crate::llm::EmbeddingProvider;
 
 /// RAG 响应结果
 #[derive(Debug, Clone, Serialize)]
@@ -85,26 +84,24 @@ struct SourceWithContext {
 /// RAG 服务
 pub struct RagService {
     db: Arc<SharedDbAdapter>,
-    ollama: Option<Arc<OllamaClient>>,
+    chat: Option<Arc<dyn ChatProvider>>,
     hybrid_search: HybridSearchService,
-    chat_model: String,
 }
 
 impl RagService {
     /// 创建 RAG 服务
     pub fn new(
         db: Arc<SharedDbAdapter>,
-        ollama: Option<Arc<OllamaClient>>,
+        chat: Option<Arc<dyn ChatProvider>>,
+        embedding: Option<Arc<dyn EmbeddingProvider>>,
         vector: Option<Arc<RwLock<VectorStore>>>,
-        chat_model: String,
     ) -> Self {
-        let hybrid_search = HybridSearchService::new(db.clone(), ollama.clone(), vector);
+        let hybrid_search = HybridSearchService::new(db.clone(), embedding, vector);
 
         Self {
             db,
-            ollama,
+            chat,
             hybrid_search,
-            chat_model,
         }
     }
 
@@ -132,12 +129,24 @@ impl RagService {
 
         let search_results = self.hybrid_search.search(search_options).await?;
 
+        let chat = match &self.chat {
+            Some(c) => c,
+            None => {
+                return Ok(RagResponse {
+                    answer: "Chat service unavailable, cannot generate answer.".to_string(),
+                    sources: vec![],
+                    model: "none".to_string(),
+                    tokens_used: None,
+                });
+            }
+        };
+
         if search_results.is_empty() {
             return Ok(RagResponse {
                 answer: "Sorry, I couldn't find relevant information in the conversation history."
                     .to_string(),
                 sources: vec![],
-                model: self.chat_model.clone(),
+                model: chat.model().to_string(),
                 tokens_used: None,
             });
         }
@@ -168,35 +177,25 @@ impl RagService {
         // 3. 构建 prompt
         let prompt = self.build_prompt(&question, &sources_with_context);
 
-        // 4. 调用 Ollama chat API
-        let (answer, tokens_used) = match &self.ollama {
-            Some(ollama) => match ollama.chat(&prompt).await {
-                Ok(result) => (result.content, result.tokens_used),
-                Err(e) => {
-                    tracing::error!("[RAG] Ollama call failed: {}", e);
-                    let error_msg = format!("抱歉，生成答案时出现错误: {}", e);
-                    return Ok(RagResponse {
-                        answer: error_msg,
-                        sources: sources_with_context
-                            .into_iter()
-                            .map(|s| RagSource {
-                                session_id: s.session_id,
-                                project_name: s.project_name,
-                                message_index: s.message_index,
-                                snippet: s.snippet,
-                                score: s.score,
-                            })
-                            .collect(),
-                        model: self.chat_model.clone(),
-                        tokens_used: None,
-                    });
-                }
-            },
-            None => {
+        // 4. 调用 chat API
+        let (answer, tokens_used) = match chat.chat_simple(&prompt).await {
+            Ok(result) => (result.content, result.tokens_used),
+            Err(e) => {
+                tracing::error!("[RAG] Chat call failed: {}", e);
+                let error_msg = format!("Sorry, error generating answer: {}", e);
                 return Ok(RagResponse {
-                    answer: "Ollama service unavailable, cannot generate answer.".to_string(),
-                    sources: vec![],
-                    model: self.chat_model.clone(),
+                    answer: error_msg,
+                    sources: sources_with_context
+                        .into_iter()
+                        .map(|s| RagSource {
+                            session_id: s.session_id,
+                            project_name: s.project_name,
+                            message_index: s.message_index,
+                            snippet: s.snippet,
+                            score: s.score,
+                        })
+                        .collect(),
+                    model: chat.model().to_string(),
                     tokens_used: None,
                 });
             }
@@ -215,7 +214,7 @@ impl RagService {
                     score: s.score,
                 })
                 .collect(),
-            model: self.chat_model.clone(),
+            model: chat.model().to_string(),
             tokens_used,
         })
     }
@@ -288,12 +287,15 @@ User question: {}"#,
 
     /// 检查 RAG 是否可用
     pub fn is_available(&self) -> bool {
-        self.ollama.is_some()
+        self.chat.is_some()
     }
 
     /// 获取 chat 模型名称
     pub fn chat_model(&self) -> &str {
-        &self.chat_model
+        self.chat
+            .as_ref()
+            .map(|c| c.model())
+            .unwrap_or("none")
     }
 }
 

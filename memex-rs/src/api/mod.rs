@@ -15,8 +15,8 @@ use crate::backup::BackupService;
 use crate::collector::Collector;
 use crate::config::Config;
 use crate::domain::{MessageListDto, ProjectListDto, SessionListDto, SessionSearchDto};
-use crate::embedding::OllamaClient;
 use crate::indexer::VectorIndexer;
+use crate::llm::{ChatProvider, EmbeddingProvider};
 use crate::rag::{RagOptions, RagService};
 use crate::search::{HybridSearchOptions, HybridSearchResult, HybridSearchService};
 use crate::shared_adapter::SharedDbAdapter;
@@ -29,7 +29,10 @@ pub struct AppState {
     pub db: Arc<SharedDbAdapter>,
     pub collector: Collector,
     pub backup: BackupService,
-    pub ollama: Option<Arc<OllamaClient>>,
+    /// Embedding provider（用于语义搜索）
+    pub embedding: Option<Arc<dyn EmbeddingProvider>>,
+    /// Chat provider（用于 RAG 问答）
+    pub chat: Option<Arc<dyn ChatProvider>>,
     pub vector: Option<Arc<RwLock<VectorStore>>>,
     pub indexer: Option<VectorIndexer>,
     pub hybrid_search: HybridSearchService,
@@ -117,8 +120,8 @@ async fn get_stats(State(state): State<Arc<AppState>>) -> Result<impl IntoRespon
         project_count: stats.project_count,
         session_count: stats.session_count,
         message_count: stats.message_count,
-        semantic_search_enabled: state.ollama.is_some(),
-        ai_chat_enabled: state.config.enable_ai_chat && state.ollama.is_some(),
+        semantic_search_enabled: state.embedding.is_some(),
+        ai_chat_enabled: state.config.enable_ai_chat && state.chat.is_some(),
     }))
 }
 
@@ -442,7 +445,7 @@ async fn semantic_search(
 #[serde(rename_all = "camelCase")]
 struct SemanticStatusResponse {
     available: bool,
-    ollama_connected: bool,
+    embedding_connected: bool,
     vector_count: usize,
     embedding_model: String,
 }
@@ -450,8 +453,8 @@ struct SemanticStatusResponse {
 async fn semantic_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, AppError> {
-    let ollama_connected = if let Some(ollama) = &state.ollama {
-        ollama.is_available().await
+    let embedding_connected = if let Some(embedding) = &state.embedding {
+        embedding.is_available().await
     } else {
         false
     };
@@ -462,11 +465,11 @@ async fn semantic_status(
         0
     };
 
-    let available = ollama_connected && vector_count > 0;
+    let available = embedding_connected && vector_count > 0;
 
     Ok(Json(SemanticStatusResponse {
         available,
-        ollama_connected,
+        embedding_connected,
         vector_count,
         embedding_model: state.config.embedding_model.clone(),
     }))
@@ -613,13 +616,13 @@ struct AskStatusResponse {
     enabled: bool,
     /// Chat 模型名称
     chat_model: String,
-    /// Ollama 是否已连接
-    ollama_connected: bool,
+    /// Chat provider 是否已连接
+    chat_connected: bool,
 }
 
 async fn ask_status(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
-    let ollama_connected = if let Some(ollama) = &state.ollama {
-        ollama.is_available().await
+    let chat_connected = if let Some(chat) = &state.chat {
+        chat.is_available().await
     } else {
         false
     };
@@ -627,7 +630,7 @@ async fn ask_status(State(state): State<Arc<AppState>>) -> Result<impl IntoRespo
     Ok(Json(AskStatusResponse {
         enabled: state.config.enable_ai_chat,
         chat_model: state.config.chat_model.clone(),
-        ollama_connected,
+        chat_connected,
     }))
 }
 
@@ -705,15 +708,15 @@ async fn list_backups(State(state): State<Arc<AppState>>) -> Result<impl IntoRes
 struct EmbeddingStatusResponse {
     available: bool,
     model: String,
-    ollama_connected: bool,
+    embedding_connected: bool,
     indexed_count: usize,
 }
 
 async fn embedding_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, AppError> {
-    let ollama_connected = if let Some(ollama) = &state.ollama {
-        ollama.is_available().await
+    let embedding_connected = if let Some(embedding) = &state.embedding {
+        embedding.is_available().await
     } else {
         false
     };
@@ -725,9 +728,9 @@ async fn embedding_status(
     };
 
     Ok(Json(EmbeddingStatusResponse {
-        available: state.ollama.is_some(),
+        available: state.embedding.is_some(),
         model: state.config.embedding_model.clone(),
-        ollama_connected,
+        embedding_connected,
         indexed_count,
     }))
 }
@@ -799,8 +802,8 @@ struct EmbeddingStatsResponse {
     failed: usize,
     /// 已索引数量（向量库中的 chunks）
     indexed: usize,
-    /// Ollama 是否可用
-    ollama_available: bool,
+    /// Embedding provider 是否可用
+    embedding_available: bool,
     /// Embedding 模型
     embedding_model: String,
     /// 后台索引任务是否正在运行
@@ -817,7 +820,7 @@ async fn embedding_stats(
                 pending: 0,
                 failed: 0,
                 indexed: 0,
-                ollama_available: false,
+                embedding_available: false,
                 embedding_model: state.config.embedding_model.clone(),
                 is_running: false,
             })
@@ -826,8 +829,8 @@ async fn embedding_stats(
     };
 
     let stats = indexer.get_index_stats().await?;
-    let ollama_available = if let Some(ollama) = &state.ollama {
-        ollama.is_available().await
+    let embedding_available = if let Some(embedding) = &state.embedding {
+        embedding.is_available().await
     } else {
         false
     };
@@ -836,7 +839,7 @@ async fn embedding_stats(
         pending: stats.pending,
         failed: stats.failed,
         indexed: stats.indexed,
-        ollama_available,
+        embedding_available,
         embedding_model: state.config.embedding_model.clone(),
         is_running: indexer.is_running(),
     })
