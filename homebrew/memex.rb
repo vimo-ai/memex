@@ -16,16 +16,16 @@ class Memex < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/vimo-ai/memex/releases/download/lite-v#{version}/memex-darwin-arm64.tar.gz"
-      sha256 "82bc41fe441ebdab4e7e38c19aea652c961c8d3227fc71ef22543b6c51bdb05a"
+      sha256 "d709301b7882ab56a5c73f42d3fd5f5fe1a8798ad52951090e066f2e9b594047"
     else
       url "https://github.com/vimo-ai/memex/releases/download/lite-v#{version}/memex-darwin-x64.tar.gz"
-      sha256 "cc85c4181643dfe28f716250446f51459fcf1c34911075aebbdb11d2cfbc569d"
+      sha256 "2ba81dee86ef11611d99e239987216522d695205db76eee3072216987852bc23"
     end
   end
 
   on_linux do
     url "https://github.com/vimo-ai/memex/releases/download/lite-v#{version}/memex-linux-x64.tar.gz"
-    sha256 "1060fcc6fba46de267de650c93abd1a4d3367ca9721d937885cdbeaf3ef3f76b"
+    sha256 "86ec662c8676749faa4d0d031c8934341be3cce868212a93af5ac6738c79f1d4"
   end
 
   def install
