@@ -1,6 +1,23 @@
-[English](README.md) | [中文](/.github/README_zh-CN.md)
+<p align="center">
+  <img src=".github/assets/logo.svg" width="300" alt="Memex Logo">
+</p>
 
-# Memex
+<h1 align="center">Memex</h1>
+
+<p align="center">
+  <strong>One Memory. All CLIs. Never Compacted. Exact Search.</strong>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> | <a href="/.github/README_zh-CN.md">中文</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Rust-1.75+-red" alt="Rust">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+</p>
+
+---
 
 Session history management for AI coding assistants. Never lose your conversations again.
 
