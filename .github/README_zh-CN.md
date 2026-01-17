@@ -59,7 +59,7 @@ Memex 解决这些问题：
 
 ```bash
 docker run -d -p 10013:10013 \
-  -v ~/.vimo/db:/data \
+  -v ~/.vimo:/data \
   -v ~/.claude/projects:/claude:ro \
   -v ~/.codex:/codex:ro \
   -v ~/.local/share/opencode:/opencode:ro \
@@ -71,7 +71,7 @@ docker run -d -p 10013:10013 \
 
 | 挂载 | 数据源 | 必需？ |
 |------|--------|--------|
-| `~/.vimo/db:/data` | 数据库 | ✅ 必需 |
+| `~/.vimo:/data` | Memex 数据（数据库在 `/data/db/`） | ✅ 必需 |
 | `~/.claude/projects:/claude` | Claude Code | 按需 |
 | `~/.codex:/codex` | Codex CLI | 按需 |
 | `~/.local/share/opencode:/opencode` | OpenCode | 按需 |
@@ -95,7 +95,7 @@ ollama pull bge-m3
 
 # 启动 Memex 连接 Ollama
 docker run -d -p 10013:10013 \
-  -v ~/.vimo/db:/data \
+  -v ~/.vimo:/data \
   -v ~/.claude/projects:/claude:ro \
   -e OLLAMA_API=http://host.docker.internal:11434 \
   ghcr.io/vimo-ai/memex:latest
@@ -109,7 +109,7 @@ docker run -d -p 10013:10013 \
 git clone https://github.com/vimo-ai/memex.git
 cd memex/memex-rs
 cargo build --release
-./target/release/memex serve
+./target/release/memex
 ```
 
 ### Memex Lite（零依赖 CLI）

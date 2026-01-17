@@ -9,7 +9,7 @@ services:
     ports:
       - "10013:10013"
     volumes:
-      - ~/.vimo/db:/data
+      - ~/.vimo:/data
       - ~/.claude/projects:/claude:ro
       - ~/.codex:/codex:ro
       - ~/.local/share/opencode:/opencode:ro

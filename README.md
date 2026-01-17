@@ -76,7 +76,7 @@ Search historical conversations directly in Claude Code:
 
 ```bash
 docker run -d -p 10013:10013 \
-  -v ~/.vimo/db:/data \
+  -v ~/.vimo:/data \
   -v ~/.claude/projects:/claude:ro \
   -v ~/.codex:/codex:ro \
   -v ~/.local/share/opencode:/opencode:ro \
@@ -88,7 +88,7 @@ Mount the data sources you use:
 
 | Mount | Data Source | Required? |
 |-------|-------------|-----------|
-| `~/.vimo/db:/data` | Database | ✅ Required |
+| `~/.vimo:/data` | Memex data (DB at `/data/db/`) | ✅ Required |
 | `~/.claude/projects:/claude` | Claude Code | As needed |
 | `~/.codex:/codex` | Codex CLI | As needed |
 | `~/.local/share/opencode:/opencode` | OpenCode | As needed |
@@ -112,7 +112,7 @@ ollama pull bge-m3
 
 # Run Memex with Ollama access
 docker run -d -p 10013:10013 \
-  -v ~/.vimo/db:/data \
+  -v ~/.vimo:/data \
   -v ~/.claude/projects:/claude:ro \
   -e OLLAMA_API=http://host.docker.internal:11434 \
   ghcr.io/vimo-ai/memex:latest
@@ -126,7 +126,7 @@ docker run -d -p 10013:10013 \
 git clone https://github.com/vimo-ai/memex.git
 cd memex/memex-rs
 cargo build --release
-./target/release/memex serve
+./target/release/memex
 ```
 
 ### Memex Lite (Zero-Dependency CLI)
