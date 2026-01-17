@@ -58,19 +58,28 @@ Memex 解决这些问题：
 ### Docker（推荐）
 
 ```bash
-docker run -d -p 10013:10013 \
-  -v ~/.claude:/data/claude \
-  -v ~/.vimo:/data/vimo \
-  -e VIMO_HOME=/data/vimo \
-  -e CLAUDE_PROJECTS_PATH=/data/claude/projects \
-  ghcr.io/vimo-ai/memex:latest
+docker run -d -p 3000:3000 \
+  -v ~/.vimo/db:/data \
+  -v ~/.claude/projects:/claude:ro \
+  -v ~/.codex:/codex:ro \
+  -v ~/.local/share/opencode:/opencode:ro \
+  ghcr.io/vimo-ai/memex:0.0.1-beta.1
 ```
+
+挂载你使用的数据源：
+
+| 挂载 | 数据源 | 必需？ |
+|------|--------|--------|
+| `~/.vimo/db:/data` | 数据库 | ✅ 必需 |
+| `~/.claude/projects:/claude` | Claude Code | 按需 |
+| `~/.codex:/codex` | Codex CLI | 按需 |
+| `~/.local/share/opencode:/opencode` | OpenCode | 按需 |
 
 验证运行状态：
 
 ```bash
-curl http://localhost:10013/health          # → OK
-curl http://localhost:10013/api/stats       # → {"projectCount":...}
+curl http://localhost:3000/health          # → OK
+curl http://localhost:3000/api/stats       # → {"projectCount":...}
 ```
 
 ### 启用语义搜索
@@ -83,13 +92,11 @@ ollama serve
 ollama pull bge-m3
 
 # 启动 Memex 连接 Ollama
-docker run -d -p 10013:10013 \
-  -v ~/.claude:/data/claude \
-  -v ~/.vimo:/data/vimo \
-  -e VIMO_HOME=/data/vimo \
-  -e CLAUDE_PROJECTS_PATH=/data/claude/projects \
+docker run -d -p 3000:3000 \
+  -v ~/.vimo/db:/data \
+  -v ~/.claude/projects:/claude:ro \
   -e OLLAMA_API=http://host.docker.internal:11434 \
-  ghcr.io/vimo-ai/memex:latest
+  ghcr.io/vimo-ai/memex:0.0.1-beta.1
 ```
 
 **Linux 提示**: `host.docker.internal` 在 Docker Desktop 上可用。原生 Linux 需使用 `--add-host=host.docker.internal:host-gateway` 或宿主机 IP。
