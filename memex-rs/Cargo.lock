@@ -34,7 +34,7 @@ dependencies = [
 [[package]]
 name = "ai-cli-session-collector"
 version = "0.1.0"
-source = "git+https://github.com/vimo-ai/ai-cli-session-collector#8cd3feea781064b3c20f942e132e8d4b159eb6f1"
+source = "git+https://github.com/vimo-ai/ai-cli-session-collector#f8db1b3a3a4285f426d76758c9b18b6326008bb5"
 dependencies = [
  "anyhow",
  "chrono",
