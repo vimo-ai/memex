@@ -149,7 +149,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile.ci
+          file: ./docker/Dockerfile.ci
           platforms: linux/amd64
           build-args: |
             TARGETARCH=amd64
@@ -162,7 +162,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile.ci
+          file: ./docker/Dockerfile.ci
           platforms: linux/arm64
           build-args: |
             TARGETARCH=arm64

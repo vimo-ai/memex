@@ -40,3 +40,7 @@ memex.db.bak-*
 research/
 .worktrees/
 Icon
+
+# 归档和历史文档
+archive/
+docs/
