@@ -155,11 +155,12 @@ fn get_tools() -> Vec<Value> {
     vec![
         json!({
             "name": "search_history",
-            "description": "Search Claude Code conversation history. Returns: session (ID for get_session), role, snippet, at (position), sessionMatches, time",
+            "description": "Search Claude Code conversation history with progressive disclosure. Level controls detail: 'sessions' (L3 summaries, default) -> 'talks' (L2 per-prompt summaries) -> 'raw' (L0 original messages). Use get_session for full context.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": { "type": "string", "description": "Search keywords" },
+                    "level": { "type": "string", "enum": ["sessions", "talks", "raw"], "description": "Detail level: sessions (L3 summary, recommended), talks (L2 per-prompt), raw (L0 original). Default: sessions" },
                     "cwd": { "type": "string", "description": "Filter to current project only" },
                     "time": { "type": "string", "description": "Time shortcut: 1d/3d/1w/1m (mutually exclusive with from/to)" },
                     "from": { "type": "string", "description": "Start date YYYY-MM-DD (mutually exclusive with time)" },
@@ -332,11 +333,17 @@ fn date_to_timestamp(date: &str, is_start: bool) -> Option<i64> {
     Some(local_dt.timestamp_millis())
 }
 
-/// 搜索历史对话
+/// 搜索历史对话（渐进式披露）
+///
+/// level 参数控制披露层级：
+/// - sessions (L3): 会话摘要，最省 token，默认
+/// - talks (L2): 对话摘要（每个 prompt 一个）
+/// - raw (L0): 原始消息
 async fn search_history(state: &AppState, args: Value) -> Result<Value, String> {
     let query = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
     let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(5) as usize;
     let cwd = args.get("cwd").and_then(|c| c.as_str());
+    let level = args.get("level").and_then(|l| l.as_str()).unwrap_or("sessions");
 
     // 时间参数：time 快捷方式 与 from/to 互斥
     let time_shortcut = args.get("time").and_then(|t| t.as_str());
@@ -349,7 +356,7 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
     }
 
     if query.is_empty() {
-        return Ok(json!({ "results": [], "total": 0 }));
+        return Ok(json!({ "results": [], "total": 0, "level": level }));
     }
 
     // 根据 cwd 查找项目 ID
@@ -360,7 +367,7 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
     };
 
     // 解析时间范围（无效日期报错而非静默忽略）
-    let (start_ts, end_ts) = if let Some(shortcut) = time_shortcut {
+    let (_start_ts, _end_ts) = if let Some(shortcut) = time_shortcut {
         let start = parse_time_shortcut(shortcut)
             .ok_or_else(|| format!("Invalid time shortcut: {}. Use 1d/3d/1w/1m", shortcut))?;
         (Some(start), None)
@@ -380,6 +387,115 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
         (start, end)
     };
 
+    // 根据 level 选择搜索方式
+    match level {
+        "sessions" => search_session_summaries(state, query, limit, project_id).await,
+        "talks" => search_talk_summaries(state, query, limit, project_id).await,
+        "raw" => search_raw_messages(state, query, limit, project_id, _start_ts, _end_ts).await,
+        _ => Err(format!("Invalid level: {}. Use sessions/talks/raw", level)),
+    }
+}
+
+/// L3: 搜索会话摘要
+async fn search_session_summaries(
+    state: &AppState,
+    query: &str,
+    limit: usize,
+    _project_id: Option<i64>,
+) -> Result<Value, String> {
+    // 如果 compact_db 不可用，fallback 到 talks
+    let compact_db = match &state.compact_db {
+        Some(db) => db,
+        None => return search_talk_summaries(state, query, limit, _project_id).await,
+    };
+
+    let results = compact_db
+        .search_session_summaries(query, limit)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 如果没有结果，fallback 到 talks
+    if results.is_empty() {
+        return search_talk_summaries(state, query, limit, _project_id).await;
+    }
+
+    let formatted: Vec<Value> = results
+        .iter()
+        .map(|s| {
+            json!({
+                "session": &s.session_id,
+                "summary": &s.summary,
+                "keyPoints": &s.key_points,
+                "files": &s.files_involved,
+                "technologies": &s.technologies,
+                "time": &s.updated_at
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "results": formatted,
+        "total": formatted.len(),
+        "level": "sessions",
+        "hint": "Use level='talks' for per-prompt details, or get_session for full context"
+    }))
+}
+
+/// L2: 搜索对话摘要
+async fn search_talk_summaries(
+    state: &AppState,
+    query: &str,
+    limit: usize,
+    project_id: Option<i64>,
+) -> Result<Value, String> {
+    // 如果 compact_db 不可用，fallback 到 raw
+    let compact_db = match &state.compact_db {
+        Some(db) => db,
+        None => return search_raw_messages(state, query, limit, project_id, None, None).await,
+    };
+
+    let results = compact_db
+        .search_talk_summaries(query, limit)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 如果没有结果，fallback 到 raw
+    if results.is_empty() {
+        return search_raw_messages(state, query, limit, project_id, None, None).await;
+    }
+
+    let formatted: Vec<Value> = results
+        .iter()
+        .map(|t| {
+            json!({
+                "session": &t.session_id,
+                "prompt": t.prompt_number,
+                "request": &t.user_request,
+                "summary": &t.summary,
+                "completed": &t.completed,
+                "files": &t.files_involved,
+                "time": &t.created_at
+            })
+        })
+        .collect();
+
+    Ok(json!({
+        "results": formatted,
+        "total": formatted.len(),
+        "level": "talks",
+        "hint": "Use level='raw' for original messages, or get_session for full context"
+    }))
+}
+
+/// L0: 搜索原始消息
+async fn search_raw_messages(
+    state: &AppState,
+    query: &str,
+    limit: usize,
+    project_id: Option<i64>,
+    start_ts: Option<i64>,
+    end_ts: Option<i64>,
+) -> Result<Value, String> {
     // 执行 FTS 搜索，多取一些用于计算 sessionMatches
     let search_limit = (limit * 3).max(30); // 多取一些用于聚合
     let results = state
@@ -429,7 +545,9 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
 
     Ok(json!({
         "results": formatted,
-        "total": formatted.len()
+        "total": formatted.len(),
+        "level": "raw",
+        "hint": "Use get_session with 'around' parameter for context"
     }))
 }
 
@@ -914,18 +1032,20 @@ mod tests {
             let collector = Collector::new(config.clone(), db.clone());
             let backup = BackupService::new(db_path, backup_dir);
             let hybrid_search = HybridSearchService::new(db.clone(), None, None);
-            let rag_service = RagService::new(db.clone(), None, None, "qwen2.5-coder".to_string());
+            let rag_service = RagService::new(db.clone(), None, None, None);
 
             let state = AppState {
                 config,
                 db,
                 collector,
                 backup,
-                ollama: None,
+                embedding: None,
+                chat: None,
                 vector: None,
                 indexer: None,
                 hybrid_search,
                 rag_service,
+                compact_db: None,
             };
 
             (Arc::new(state), dir)

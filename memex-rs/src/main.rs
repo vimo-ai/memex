@@ -16,6 +16,7 @@ use memex::api::{create_router, AppState};
 use memex::archive::ArchiveService;
 use memex::backup::BackupService;
 use memex::collector::Collector;
+use memex::compact::{run_compact_worker, CompactConfig, CompactDB, CompactQueue, CompactWorker};
 use memex::config::Config;
 use memex::indexer::{IndexQueue, VectorIndexer};
 use memex::llm::{ChatProvider, EmbeddingProvider, OllamaProvider};
@@ -63,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("  MEMEX_WEB_DIR        Web static files (default: ~/.vimo/memex/web)");
                 println!("  OLLAMA_API           Ollama API URL (default: http://localhost:11434)");
                 println!("  EMBEDDING_MODEL      Embedding model (default: bge-m3)");
-                println!("  CHAT_MODEL           Chat model (default: qwen3:8b)");
+                println!("  CHAT_MODEL           Chat model (default: qwen3:0.6b)");
                 println!("  ENABLE_AI_CHAT       Enable AI chat (default: false)");
                 return Ok(());
             }
@@ -219,7 +220,13 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Initialize LLM providers (embedding + chat)
-    let (embedding, chat): (Option<Arc<dyn EmbeddingProvider>>, Option<Arc<dyn ChatProvider>>) = {
+    // chat_for_compact: 只要模型可用就启用（Compact 是后台服务）
+    // chat: 需要 ENABLE_AI_CHAT=true（RAG Q&A 是用户主动调用）
+    let (embedding, chat, chat_for_compact): (
+        Option<Arc<dyn EmbeddingProvider>>,
+        Option<Arc<dyn ChatProvider>>,
+        Option<Arc<dyn ChatProvider>>,
+    ) = {
         let provider = OllamaProvider::new(
             &config.ollama_api,
             &config.embedding_model,
@@ -247,34 +254,42 @@ async fn main() -> anyhow::Result<()> {
                     None
                 };
 
-            // Chat provider (optional for AI Q&A)
-            let chat: Option<Arc<dyn ChatProvider>> = if config.enable_ai_chat {
+            // Chat provider for Compact (always enabled if model available)
+            let chat_for_compact: Option<Arc<dyn ChatProvider>> =
                 if provider.is_chat_model_available().await {
                     tracing::info!(
-                        "✅ Chat model available: {} (AI Q&A enabled)",
+                        "✅ Chat model available: {} (Compact enabled)",
                         config.chat_model
                     );
-                    Some(Arc::new(provider))
+                    Some(Arc::new(provider.clone()))
                 } else {
                     tracing::warn!(
-                        "⚠️ Chat model unavailable: {}, AI Q&A will not work",
+                        "⚠️ Chat model unavailable: {}, Compact will not work",
                         config.chat_model
                     );
                     None
-                }
-            } else {
-                tracing::info!("ℹ️ AI Q&A disabled (ENABLE_AI_CHAT=false)");
-                None
-            };
+                };
 
-            (embedding, chat)
+            // Chat provider for RAG Q&A (requires explicit enable)
+            let chat: Option<Arc<dyn ChatProvider>> =
+                if config.enable_ai_chat && chat_for_compact.is_some() {
+                    tracing::info!("✅ AI Q&A enabled");
+                    chat_for_compact.clone()
+                } else if !config.enable_ai_chat {
+                    tracing::info!("ℹ️ AI Q&A disabled (ENABLE_AI_CHAT=false)");
+                    None
+                } else {
+                    None
+                };
+
+            (embedding, chat, chat_for_compact)
         } else {
             tracing::warn!(
                 "⚠️ Ollama unavailable ({}), semantic search will fallback to FTS",
                 config.ollama_api
             );
             tracing::warn!("   Make sure Ollama is running: ollama serve");
-            (None, None)
+            (None, None, None)
         }
     };
 
@@ -325,6 +340,57 @@ async fn main() -> anyhow::Result<()> {
     // Create index queue (optional, for real-time indexing)
     let index_queue = indexer.clone().map(IndexQueue::new);
 
+    // Initialize Compact service (optional, requires chat provider)
+    // 使用 chat_for_compact（只要模型可用就启用，不依赖 ENABLE_AI_CHAT）
+    // 注意: compact_db 会同时传给 CompactWorker 和 AppState（用于 MCP 渐进式披露）
+    let compact_config = CompactConfig::default(); // L2 + L3 enabled
+    let (compact_queue, compact_db): (Option<CompactQueue>, Option<Arc<CompactDB>>) =
+        if let Some(ref chat_provider) = chat_for_compact {
+            // 初始化 CompactDB（复用共享数据库文件）
+            // 传递 fts_tokenizer 配置（默认 trigram 支持中文）
+            match CompactDB::connect(config.db_path(), Some(&compact_config.fts_tokenizer)) {
+                Ok(compact_db) => {
+                    let compact_db = Arc::new(compact_db);
+
+                    // 创建队列和 worker
+                    let (queue, receiver) = CompactQueue::new();
+                    let worker = CompactWorker::new(
+                        shared_db.clone(),
+                        chat_provider.clone(),
+                        compact_db.clone(), // Clone for worker
+                        compact_config.clone(),
+                        queue.tracker().clone(),
+                    );
+
+                    // 启动 worker（后台任务）
+                    tokio::spawn(run_compact_worker(worker, receiver));
+
+                    tracing::info!(
+                        "🗜️ Compact service enabled (L1={}, L2={}, L3={})",
+                        compact_config.l1_observations,
+                        compact_config.l2_talk_summary,
+                        compact_config.l3_session_summary
+                    );
+
+                    (Some(queue), Some(compact_db))
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️ Failed to initialize CompactDB: {}", e);
+                    (None, None)
+                }
+            }
+        } else {
+            // 即使没有 chat provider，也尝试连接 CompactDB（用于 MCP 搜索已有的摘要）
+            let compact_db = CompactDB::connect(config.db_path(), Some(&compact_config.fts_tokenizer))
+                .ok()
+                .map(Arc::new);
+            if compact_db.is_some() {
+                tracing::info!("ℹ️ CompactDB connected for MCP search (no worker, read-only)");
+            }
+            tracing::info!("ℹ️ Compact worker disabled (no chat provider)");
+            (None, compact_db)
+        };
+
     // Create hybrid search service
     let hybrid_search =
         HybridSearchService::new(shared_db.clone(), embedding.clone(), vector.clone());
@@ -345,6 +411,7 @@ async fn main() -> anyhow::Result<()> {
         indexer,
         hybrid_search,
         rag_service,
+        compact_db,
     });
 
     // Run initial collection in background (non-blocking HTTP startup)
@@ -396,12 +463,12 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Start file watcher service (with optional real-time index queue)
-    let file_watcher = Arc::new(FileWatcher::new(
-        config.clone(),
-        state.collector.clone(),
-        index_queue,
-    ));
+    // Start file watcher service (with optional real-time index queue and compact queue)
+    let mut file_watcher = FileWatcher::new(config.clone(), state.collector.clone(), index_queue);
+    if let Some(queue) = compact_queue {
+        file_watcher = file_watcher.with_compact_queue(queue);
+    }
+    let file_watcher = Arc::new(file_watcher);
     file_watcher.start().await?;
 
     // Web 静态文件目录 (独立于 data_dir)

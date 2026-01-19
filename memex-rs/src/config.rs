@@ -57,7 +57,7 @@ impl Config {
             embedding_model: std::env::var("EMBEDDING_MODEL")
                 .unwrap_or_else(|_| "bge-m3".to_string()),
 
-            chat_model: std::env::var("CHAT_MODEL").unwrap_or_else(|_| "qwen3:8b".to_string()),
+            chat_model: std::env::var("CHAT_MODEL").unwrap_or_else(|_| "qwen3:0.6b".to_string()),
 
             // AI 问答功能默认关闭，需要显式启用
             enable_ai_chat: std::env::var("ENABLE_AI_CHAT")

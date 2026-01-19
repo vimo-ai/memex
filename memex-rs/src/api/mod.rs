@@ -13,6 +13,7 @@ use tokio::sync::RwLock;
 
 use crate::backup::BackupService;
 use crate::collector::Collector;
+use crate::compact::CompactDB;
 use crate::config::Config;
 use crate::domain::{MessageListDto, ProjectListDto, SessionListDto, SessionSearchDto};
 use crate::indexer::VectorIndexer;
@@ -37,6 +38,8 @@ pub struct AppState {
     pub indexer: Option<VectorIndexer>,
     pub hybrid_search: HybridSearchService,
     pub rag_service: RagService,
+    /// Compact 数据库（用于渐进式披露）
+    pub compact_db: Option<Arc<CompactDB>>,
 }
 
 /// 创建路由

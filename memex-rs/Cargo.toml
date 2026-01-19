@@ -1,5 +1,3 @@
-[workspace]
-
 [package]
 name = "memex-rs"
 version = "0.0.1-beta.2"

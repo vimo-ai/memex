@@ -21,6 +21,12 @@ pub struct CompactConfig {
 
     /// L1 优化选项
     pub l1: L1Options,
+
+    /// FTS tokenizer 类型
+    /// - "trigram": 支持中英文（默认，子串匹配）
+    /// - "unicode61": 仅英文（精确词匹配，索引更小）
+    #[serde(default = "default_fts_tokenizer")]
+    pub fts_tokenizer: String,
 }
 
 /// L1 优化选项
@@ -47,6 +53,10 @@ fn default_merge_threshold() -> usize {
     3
 }
 
+fn default_fts_tokenizer() -> String {
+    "trigram".to_string()
+}
+
 impl Default for CompactConfig {
     fn default() -> Self {
         // 注意：L3 依赖 L2，所以 L3=true 时 L2 也必须为 true
@@ -55,6 +65,7 @@ impl Default for CompactConfig {
             l2_talk_summary: true,  // L3=true 时必须开启 L2
             l3_session_summary: true,
             l1: L1Options::default(),
+            fts_tokenizer: default_fts_tokenizer(),
         }
     }
 }
@@ -92,6 +103,7 @@ impl CompactConfig {
             l2_talk_summary: false,
             l3_session_summary: false,
             l1: L1Options::default(),
+            fts_tokenizer: default_fts_tokenizer(),
         }
     }
 
@@ -102,6 +114,7 @@ impl CompactConfig {
             l2_talk_summary: true,
             l3_session_summary: true,
             l1: L1Options::default(),
+            fts_tokenizer: default_fts_tokenizer(),
         }
     }
 }
@@ -129,6 +142,7 @@ mod tests {
             l2_talk_summary: false,  // 手动设置不一致
             l3_session_summary: true,
             l1: L1Options::default(),
+            fts_tokenizer: "trigram".to_string(),
         };
         config.validate();
 

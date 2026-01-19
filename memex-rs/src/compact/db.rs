@@ -142,11 +142,18 @@ pub struct CompactDB {
 
 impl CompactDB {
     /// 连接数据库并执行 migration
-    pub fn connect<P: AsRef<Path>>(db_path: P) -> Result<Self> {
+    ///
+    /// # Arguments
+    /// * `db_path` - 数据库文件路径
+    /// * `fts_tokenizer` - FTS tokenizer 类型:
+    ///   - "trigram": 支持中英文（子串匹配，默认推荐）
+    ///   - "unicode61": 仅英文（精确词匹配，索引更小）
+    pub fn connect<P: AsRef<Path>>(db_path: P, fts_tokenizer: Option<&str>) -> Result<Self> {
         let conn = Connection::open(db_path)?;
+        let tokenizer = fts_tokenizer.unwrap_or("trigram");
 
         // 同步执行 migration
-        Self::migrate_sync(&conn)?;
+        Self::migrate_sync(&conn, tokenizer)?;
 
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -156,7 +163,7 @@ impl CompactDB {
     }
 
     /// 同步执行 migration（在创建连接时调用）
-    fn migrate_sync(conn: &Connection) -> Result<()> {
+    fn migrate_sync(conn: &Connection, tokenizer: &str) -> Result<()> {
 
         // L1: Observations
         conn.execute_batch(
@@ -253,37 +260,227 @@ impl CompactDB {
             "#,
         )?;
 
-        // FTS5 全文搜索索引（独立存储，通过 id 关联）
+        // FTS5 全文搜索索引
+        // 使用 external content 模式减少数据冗余
+        // tokenizer 可配置：trigram（中英文）或 unicode61（纯英文）
+        Self::create_fts_tables_if_needed(conn, tokenizer)?;
+
+        tracing::debug!("Compact migration 完成 (tokenizer={})", tokenizer);
+        Ok(())
+    }
+
+    /// 创建 FTS 表（如果不存在）
+    ///
+    /// 使用 external content 模式，通过 content= 和 content_rowid= 关联主表
+    fn create_fts_tables_if_needed(conn: &Connection, tokenizer: &str) -> Result<()> {
+        // 检查 FTS 表是否已存在
+        let obs_fts_exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='observations_fts'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        if obs_fts_exists {
+            // FTS 表已存在，跳过创建
+            return Ok(());
+        }
+
+        tracing::info!("创建 FTS 索引表 (tokenizer={})", tokenizer);
+
+        // L1 Observations FTS (external content)
+        conn.execute(
+            &format!(
+                r#"
+                CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts USING fts5(
+                    title,
+                    subtitle,
+                    narrative,
+                    facts,
+                    content='observations',
+                    content_rowid='rowid',
+                    tokenize='{}'
+                )
+                "#,
+                tokenizer
+            ),
+            [],
+        )?;
+
+        // L2 Talk Summaries FTS (external content)
+        conn.execute(
+            &format!(
+                r#"
+                CREATE VIRTUAL TABLE IF NOT EXISTS talk_summaries_fts USING fts5(
+                    user_request,
+                    summary,
+                    completed,
+                    content='talk_summaries',
+                    content_rowid='rowid',
+                    tokenize='{}'
+                )
+                "#,
+                tokenizer
+            ),
+            [],
+        )?;
+
+        // L3 Session Summaries FTS (external content)
+        conn.execute(
+            &format!(
+                r#"
+                CREATE VIRTUAL TABLE IF NOT EXISTS session_summaries_fts USING fts5(
+                    summary,
+                    key_points,
+                    content='session_summaries',
+                    content_rowid='rowid',
+                    tokenize='{}'
+                )
+                "#,
+                tokenizer
+            ),
+            [],
+        )?;
+
+        // 创建 triggers 自动同步 FTS 索引
+        Self::create_fts_triggers(conn)?;
+
+        Ok(())
+    }
+
+    /// 创建 FTS 同步 triggers
+    ///
+    /// 对于 external content FTS，需要手动维护索引同步
+    fn create_fts_triggers(conn: &Connection) -> Result<()> {
+        // observations triggers
         conn.execute_batch(
             r#"
-            -- L1 Observations FTS
-            CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts USING fts5(
-                id,
-                title,
-                subtitle,
-                narrative,
-                facts
-            );
+            CREATE TRIGGER IF NOT EXISTS observations_ai AFTER INSERT ON observations BEGIN
+                INSERT INTO observations_fts(rowid, title, subtitle, narrative, facts)
+                VALUES (NEW.rowid, NEW.title, NEW.subtitle, NEW.narrative, NEW.facts);
+            END;
 
-            -- L2 Talk Summaries FTS
-            CREATE VIRTUAL TABLE IF NOT EXISTS talk_summaries_fts USING fts5(
-                id,
-                user_request,
-                summary,
-                completed
-            );
+            CREATE TRIGGER IF NOT EXISTS observations_ad AFTER DELETE ON observations BEGIN
+                INSERT INTO observations_fts(observations_fts, rowid, title, subtitle, narrative, facts)
+                VALUES ('delete', OLD.rowid, OLD.title, OLD.subtitle, OLD.narrative, OLD.facts);
+            END;
 
-            -- L3 Session Summaries FTS
-            CREATE VIRTUAL TABLE IF NOT EXISTS session_summaries_fts USING fts5(
-                id,
-                summary,
-                key_points
-            );
+            CREATE TRIGGER IF NOT EXISTS observations_au AFTER UPDATE ON observations BEGIN
+                INSERT INTO observations_fts(observations_fts, rowid, title, subtitle, narrative, facts)
+                VALUES ('delete', OLD.rowid, OLD.title, OLD.subtitle, OLD.narrative, OLD.facts);
+                INSERT INTO observations_fts(rowid, title, subtitle, narrative, facts)
+                VALUES (NEW.rowid, NEW.title, NEW.subtitle, NEW.narrative, NEW.facts);
+            END;
             "#,
         )?;
 
-        tracing::debug!("Compact migration 完成");
+        // talk_summaries triggers
+        conn.execute_batch(
+            r#"
+            CREATE TRIGGER IF NOT EXISTS talk_summaries_ai AFTER INSERT ON talk_summaries BEGIN
+                INSERT INTO talk_summaries_fts(rowid, user_request, summary, completed)
+                VALUES (NEW.rowid, NEW.user_request, NEW.summary, NEW.completed);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS talk_summaries_ad AFTER DELETE ON talk_summaries BEGIN
+                INSERT INTO talk_summaries_fts(talk_summaries_fts, rowid, user_request, summary, completed)
+                VALUES ('delete', OLD.rowid, OLD.user_request, OLD.summary, OLD.completed);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS talk_summaries_au AFTER UPDATE ON talk_summaries BEGIN
+                INSERT INTO talk_summaries_fts(talk_summaries_fts, rowid, user_request, summary, completed)
+                VALUES ('delete', OLD.rowid, OLD.user_request, OLD.summary, OLD.completed);
+                INSERT INTO talk_summaries_fts(rowid, user_request, summary, completed)
+                VALUES (NEW.rowid, NEW.user_request, NEW.summary, NEW.completed);
+            END;
+            "#,
+        )?;
+
+        // session_summaries triggers
+        conn.execute_batch(
+            r#"
+            CREATE TRIGGER IF NOT EXISTS session_summaries_ai AFTER INSERT ON session_summaries BEGIN
+                INSERT INTO session_summaries_fts(rowid, summary, key_points)
+                VALUES (NEW.rowid, NEW.summary, NEW.key_points);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS session_summaries_ad AFTER DELETE ON session_summaries BEGIN
+                INSERT INTO session_summaries_fts(session_summaries_fts, rowid, summary, key_points)
+                VALUES ('delete', OLD.rowid, OLD.summary, OLD.key_points);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS session_summaries_au AFTER UPDATE ON session_summaries BEGIN
+                INSERT INTO session_summaries_fts(session_summaries_fts, rowid, summary, key_points)
+                VALUES ('delete', OLD.rowid, OLD.summary, OLD.key_points);
+                INSERT INTO session_summaries_fts(rowid, summary, key_points)
+                VALUES (NEW.rowid, NEW.summary, NEW.key_points);
+            END;
+            "#,
+        )?;
+
+        tracing::debug!("FTS triggers 创建完成");
         Ok(())
+    }
+
+    /// 重建 FTS 索引
+    ///
+    /// 用于：
+    /// 1. 切换 tokenizer 后重建索引
+    /// 2. 修复损坏的索引
+    pub async fn rebuild_fts(&self, tokenizer: &str) -> Result<()> {
+        let conn = self.conn.lock().await;
+
+        tracing::info!("重建 FTS 索引 (tokenizer={})", tokenizer);
+
+        // 删除旧的 FTS 表
+        conn.execute_batch(
+            r#"
+            DROP TABLE IF EXISTS observations_fts;
+            DROP TABLE IF EXISTS talk_summaries_fts;
+            DROP TABLE IF EXISTS session_summaries_fts;
+            "#,
+        )?;
+
+        // 创建新的 FTS 表
+        Self::create_fts_tables_if_needed(&conn, tokenizer)?;
+
+        // 从主表重建索引数据
+        // 对于 external content 模式，使用 INSERT INTO ... SELECT
+        conn.execute_batch(
+            r#"
+            INSERT INTO observations_fts(observations_fts) VALUES('rebuild');
+            INSERT INTO talk_summaries_fts(talk_summaries_fts) VALUES('rebuild');
+            INSERT INTO session_summaries_fts(session_summaries_fts) VALUES('rebuild');
+            "#,
+        )?;
+
+        tracing::info!("FTS 索引重建完成");
+        Ok(())
+    }
+
+    /// 获取当前 FTS tokenizer 类型
+    pub async fn get_fts_tokenizer(&self) -> Result<Option<String>> {
+        let conn = self.conn.lock().await;
+        let result: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='observations_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(sql) = result {
+            // 从 CREATE 语句中提取 tokenize='xxx'
+            if let Some(start) = sql.find("tokenize='") {
+                let rest = &sql[start + 10..];
+                if let Some(end) = rest.find('\'') {
+                    return Ok(Some(rest[..end].to_string()));
+                }
+            }
+            // 如果找不到 tokenize，说明使用默认的 unicode61
+            return Ok(Some("unicode61".to_string()));
+        }
+
+        Ok(None)
     }
 
     // ==================== L1: Observations ====================
@@ -321,25 +518,8 @@ impl CompactDB {
         )?;
 
         // 检查是否真正插入了（changes() 返回受影响的行数）
+        // FTS 索引由 triggers 自动维护
         let inserted = conn.changes() > 0;
-
-        // 只有真正插入时才更新 FTS 索引
-        if inserted {
-            conn.execute(
-                r#"
-                INSERT INTO observations_fts(id, title, subtitle, narrative, facts)
-                VALUES (?1, ?2, ?3, ?4, ?5)
-                "#,
-                params![
-                    obs.id,
-                    obs.title,
-                    obs.subtitle,
-                    obs.narrative,
-                    obs.facts.as_ref().map(|v| serde_json::to_string(v).ok()).flatten(),
-                ],
-            )?;
-        }
-
         Ok(inserted)
     }
 
@@ -429,31 +609,7 @@ impl CompactDB {
             ],
         )?;
 
-        // 查询主表实际存储的 id（ON CONFLICT 时保留原 id）
-        let actual_id: String = conn.query_row(
-            "SELECT id FROM talk_summaries WHERE session_id = ?1 AND prompt_number = ?2",
-            params![summary.session_id, summary.prompt_number],
-            |row| row.get(0),
-        )?;
-
-        // 更新 FTS 索引（使用实际 id，先删后插）
-        conn.execute(
-            "DELETE FROM talk_summaries_fts WHERE id = ?1",
-            params![actual_id],
-        )?;
-        conn.execute(
-            r#"
-            INSERT INTO talk_summaries_fts(id, user_request, summary, completed)
-            VALUES (?1, ?2, ?3, ?4)
-            "#,
-            params![
-                actual_id,
-                summary.user_request,
-                summary.summary,
-                summary.completed,
-            ],
-        )?;
-
+        // FTS 索引由 triggers 自动维护
         Ok(())
     }
 
@@ -551,30 +707,7 @@ impl CompactDB {
             ],
         )?;
 
-        // 查询主表实际存储的 id（ON CONFLICT 时保留原 id）
-        let actual_id: String = conn.query_row(
-            "SELECT id FROM session_summaries WHERE session_id = ?1",
-            params![summary.session_id],
-            |row| row.get(0),
-        )?;
-
-        // 更新 FTS 索引（使用实际 id，先删后插）
-        conn.execute(
-            "DELETE FROM session_summaries_fts WHERE id = ?1",
-            params![actual_id],
-        )?;
-        conn.execute(
-            r#"
-            INSERT INTO session_summaries_fts(id, summary, key_points)
-            VALUES (?1, ?2, ?3)
-            "#,
-            params![
-                actual_id,
-                summary.summary,
-                summary.key_points.as_ref().map(|v| serde_json::to_string(v).ok()).flatten(),
-            ],
-        )?;
-
+        // FTS 索引由 triggers 自动维护
         Ok(())
     }
 
@@ -679,7 +812,7 @@ impl CompactDB {
                    o.files_read, o.files_modified,
                    o.provider, o.model, o.created_at
             FROM observations o
-            JOIN observations_fts fts ON o.id = fts.id
+            JOIN observations_fts fts ON o.rowid = fts.rowid
             WHERE observations_fts MATCH ?1
             ORDER BY fts.rank
             LIMIT ?2
@@ -728,7 +861,7 @@ impl CompactDB {
                    t.user_request, t.summary, t.completed, t.files_involved,
                    t.provider, t.model, t.tokens_input, t.tokens_output, t.created_at
             FROM talk_summaries t
-            JOIN talk_summaries_fts fts ON t.id = fts.id
+            JOIN talk_summaries_fts fts ON t.rowid = fts.rowid
             WHERE talk_summaries_fts MATCH ?1
             ORDER BY fts.rank
             LIMIT ?2
@@ -771,7 +904,7 @@ impl CompactDB {
                    s.provider, s.model, s.tokens_input, s.tokens_output,
                    s.created_at, s.updated_at
             FROM session_summaries s
-            JOIN session_summaries_fts fts ON s.id = fts.id
+            JOIN session_summaries_fts fts ON s.rowid = fts.rowid
             WHERE session_summaries_fts MATCH ?1
             ORDER BY fts.rank
             LIMIT ?2
@@ -818,7 +951,7 @@ mod tests {
     async fn test_migration() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
-        let _db = CompactDB::connect(&db_path).unwrap();
+        let _db = CompactDB::connect(&db_path, None).unwrap();
         // Migration should succeed without error
     }
 
@@ -826,7 +959,7 @@ mod tests {
     async fn test_observation_crud() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
-        let db = CompactDB::connect(&db_path).unwrap();
+        let db = CompactDB::connect(&db_path, None).unwrap();
 
         let obs = Observation {
             id: "obs-1".to_string(),
@@ -870,7 +1003,7 @@ mod tests {
     async fn test_talk_summary_crud() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
-        let db = CompactDB::connect(&db_path).unwrap();
+        let db = CompactDB::connect(&db_path, None).unwrap();
 
         let summary = TalkSummary {
             id: "talk-1".to_string(),
@@ -898,7 +1031,7 @@ mod tests {
     async fn test_session_summary_crud() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
-        let db = CompactDB::connect(&db_path).unwrap();
+        let db = CompactDB::connect(&db_path, None).unwrap();
 
         let summary = SessionSummary {
             id: "ss-1".to_string(),
@@ -929,7 +1062,7 @@ mod tests {
     async fn test_fts_consistency_bug_talk_summary() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
-        let db = CompactDB::connect(&db_path).unwrap();
+        let db = CompactDB::connect(&db_path, None).unwrap();
 
         // 第一次插入
         let summary1 = TalkSummary {
@@ -978,7 +1111,7 @@ mod tests {
     async fn test_fts_data_bloat_talk_summary() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
-        let db = CompactDB::connect(&db_path).unwrap();
+        let db = CompactDB::connect(&db_path, None).unwrap();
 
         // 第一次插入
         let summary1 = TalkSummary {
@@ -1042,7 +1175,7 @@ mod tests {
     async fn test_fts_consistency_bug_session_summary() {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
-        let db = CompactDB::connect(&db_path).unwrap();
+        let db = CompactDB::connect(&db_path, None).unwrap();
 
         // 第一次插入
         let summary1 = SessionSummary {

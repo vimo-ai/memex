@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
     // 5. 创建 Compact DB（使用临时目录）
     let compact_db_path = std::env::temp_dir().join("compact_test.db");
     println!("📦 Compact DB: {:?}", compact_db_path);
-    let compact_db = Arc::new(CompactDB::connect(&compact_db_path)?);
+    let compact_db = Arc::new(CompactDB::connect(&compact_db_path, Some("trigram"))?);
 
     // 6. 获取测试 session 的消息
     println!("\n📥 加载 session: {}", TEST_SESSION_ID);
