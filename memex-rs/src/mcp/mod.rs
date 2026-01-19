@@ -1046,6 +1046,7 @@ mod tests {
                 hybrid_search,
                 rag_service,
                 compact_db: None,
+                compact_queue: None,
             };
 
             (Arc::new(state), dir)
