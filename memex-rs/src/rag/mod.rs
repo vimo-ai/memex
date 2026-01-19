@@ -12,7 +12,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::llm::{ChatProvider, ChatProviderExt};
-use crate::search::{HybridSearchOptions, HybridSearchService, SearchMode, SearchOrderBy};
+use crate::search::{HybridSearchOptions, HybridSearchService, SearchLevel, SearchMode, SearchOrderBy};
 use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::VectorStore;
 use crate::llm::EmbeddingProvider;
@@ -122,6 +122,7 @@ impl RagService {
             limit: max_sources,
             project_id,
             mode: SearchMode::Hybrid,
+            level: SearchLevel::Raw, // RAG 默认搜索原文
             order_by: SearchOrderBy::Score,
             start_date: None,
             end_date: None,
@@ -157,8 +158,13 @@ impl RagService {
         let mut sources_with_context = Vec::new();
 
         for result in &search_results {
+            // 跳过没有 message_id 的结果（如 Compact 层结果）
+            let Some(message_id) = result.message_id else {
+                continue;
+            };
+
             let context = self
-                .build_message_context(&result.session_id, result.message_id, context_window)
+                .build_message_context(&result.session_id, message_id, context_window)
                 .await?;
 
             sources_with_context.push(SourceWithContext {

@@ -6,6 +6,7 @@
 // 核心模块
 pub mod adapter;
 pub mod collector;
+pub mod compact;
 pub mod config;
 pub mod domain;
 pub mod embedding;

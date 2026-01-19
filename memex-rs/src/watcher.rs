@@ -16,6 +16,7 @@ use tokio::sync::mpsc;
 use claude_session_db::all_watch_configs;
 
 use crate::collector::Collector;
+use crate::compact::CompactQueue;
 use crate::config::Config as AppConfig;
 use crate::indexer::IndexQueue;
 
@@ -24,6 +25,8 @@ pub struct FileWatcher {
     config: AppConfig,
     collector: Collector,
     index_queue: Option<IndexQueue>,
+    /// Compact 任务队列（可选）
+    compact_queue: Option<CompactQueue>,
     /// 支持的文件扩展名（从适配器收集）
     supported_extensions: HashSet<String>,
 }
@@ -41,8 +44,15 @@ impl FileWatcher {
             config,
             collector,
             index_queue,
+            compact_queue: None,
             supported_extensions,
         }
+    }
+
+    /// 设置 Compact 队列
+    pub fn with_compact_queue(mut self, queue: CompactQueue) -> Self {
+        self.compact_queue = Some(queue);
+        self
     }
 
     /// 启动监听（异步）
@@ -140,6 +150,12 @@ impl FileWatcher {
             }
         };
 
+        // 提取 session_id（文件名，不含扩展名）
+        let session_id = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string());
+
         // Precise single file collection (efficient! no longer scanning 9000+ files)
         match self.collector.collect_by_path(path_str) {
             Ok(result) => {
@@ -152,6 +168,11 @@ impl FileWatcher {
                     );
                     if let Some(queue) = &self.index_queue {
                         queue.enqueue(result.new_message_ids).await;
+                    }
+
+                    // Trigger compact processing
+                    if let (Some(queue), Some(session_id)) = (&self.compact_queue, session_id) {
+                        queue.enqueue_session(session_id).await;
                     }
                 }
             }
@@ -172,6 +193,7 @@ impl Clone for FileWatcher {
             config: self.config.clone(),
             collector: self.collector.clone(),
             index_queue: self.index_queue.clone(),
+            compact_queue: self.compact_queue.clone(),
             supported_extensions: self.supported_extensions.clone(),
         }
     }

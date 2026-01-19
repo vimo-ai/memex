@@ -389,6 +389,9 @@ pub struct SemanticSearchQuery {
     project_id: Option<i64>,
     #[serde(default)]
     mode: Option<String>,
+    /// 搜索级别: raw / observations / talks / sessions / all
+    #[serde(default)]
+    level: Option<String>,
     /// 排序方式: score / time_desc / time_asc
     #[serde(rename = "orderBy", default)]
     order_by: Option<String>,
@@ -418,6 +421,15 @@ async fn semantic_search(
         _ => crate::search::SearchMode::Hybrid,
     };
 
+    // 解析搜索级别（默认 raw）
+    let level = match query.level.as_deref() {
+        Some("observations") => crate::search::SearchLevel::Observations,
+        Some("talks") => crate::search::SearchLevel::Talks,
+        Some("sessions") => crate::search::SearchLevel::Sessions,
+        Some("all") => crate::search::SearchLevel::All,
+        _ => crate::search::SearchLevel::Raw,
+    };
+
     let order_by = match query.order_by.as_deref() {
         Some("time_desc") => crate::search::SearchOrderBy::TimeDesc,
         Some("time_asc") => crate::search::SearchOrderBy::TimeAsc,
@@ -429,6 +441,7 @@ async fn semantic_search(
         limit: query.limit,
         project_id: query.project_id,
         mode,
+        level,
         order_by,
         start_date: query.start_date,
         end_date: query.end_date,
@@ -486,6 +499,9 @@ pub struct HybridSearchQuery {
     project_id: Option<i64>,
     #[serde(default)]
     mode: Option<String>,
+    /// 搜索级别: raw / observations / talks / sessions / all
+    #[serde(default)]
+    level: Option<String>,
     /// 排序方式: score / time_desc / time_asc
     #[serde(rename = "orderBy", default)]
     order_by: Option<String>,
@@ -520,6 +536,15 @@ async fn hybrid_search(
         _ => crate::search::SearchMode::Hybrid,
     };
 
+    // 解析搜索级别
+    let level = match query.level.as_deref() {
+        Some("observations") => crate::search::SearchLevel::Observations,
+        Some("talks") => crate::search::SearchLevel::Talks,
+        Some("sessions") => crate::search::SearchLevel::Sessions,
+        Some("all") => crate::search::SearchLevel::All,
+        _ => crate::search::SearchLevel::Raw,
+    };
+
     let order_by = match query.order_by.as_deref() {
         Some("time_desc") => crate::search::SearchOrderBy::TimeDesc,
         Some("time_asc") => crate::search::SearchOrderBy::TimeAsc,
@@ -531,6 +556,7 @@ async fn hybrid_search(
         limit: query.limit,
         project_id: query.project_id,
         mode,
+        level,
         order_by,
         start_date: query.start_date,
         end_date: query.end_date,

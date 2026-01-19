@@ -551,6 +551,9 @@ impl ArchiveService {
 
     /// 执行合并
     fn do_merge(&self, archives: &[PathBuf], target_path: &Path) -> Result<ArchiveResult> {
+        // 确保目标目录存在（compress_files 需要写入 .tar 临时文件）
+        std::fs::create_dir_all(target_path.parent().unwrap())?;
+
         let tmp_path = target_path.with_extension("tar.xz.tmp");
         let merge_dir = self.archive_dir.join(".merge");
         std::fs::create_dir_all(&merge_dir)?;
@@ -581,7 +584,6 @@ impl ArchiveService {
         std::fs::remove_dir_all(&merge_dir)?;
 
         // 原子 rename
-        std::fs::create_dir_all(target_path.parent().unwrap())?;
         std::fs::rename(&tmp_path, target_path)?;
 
         let compressed_size = std::fs::metadata(target_path)?.len();
