@@ -38,7 +38,7 @@ impl CompactLevel {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "l1" => Some(CompactLevel::L1),
             "l2" => Some(CompactLevel::L2),
@@ -455,7 +455,7 @@ mod tests {
     #[test]
     fn test_compact_level() {
         assert_eq!(CompactLevel::L1.as_str(), "l1");
-        assert_eq!(CompactLevel::from_str("L2"), Some(CompactLevel::L2));
-        assert_eq!(CompactLevel::from_str("invalid"), None);
+        assert_eq!(CompactLevel::parse("L2"), Some(CompactLevel::L2));
+        assert_eq!(CompactLevel::parse("invalid"), None);
     }
 }

@@ -331,7 +331,7 @@ impl CompactService {
             session_id: session_id.to_string(),
             prompt_number: tc.prompt_number,
             source_offset: Some(tc.sequence),
-            observation_type: ObservationType::from_str(&output.observation_type)
+            observation_type: ObservationType::parse(&output.observation_type)
                 .unwrap_or(ObservationType::Change),
             title: output.title,
             subtitle: output.subtitle,

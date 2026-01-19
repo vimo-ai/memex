@@ -264,6 +264,7 @@ impl HybridSearchService {
     }
 
     /// Raw (L0) 原文搜索
+    #[allow(clippy::too_many_arguments)]
     async fn search_raw(
         &self,
         query: &str,
@@ -563,6 +564,7 @@ impl HybridSearchService {
     }
 
     /// All 级别搜索：并行搜索 Raw + Compact，合并结果
+    #[allow(clippy::too_many_arguments)]
     async fn search_all_levels(
         &self,
         query: &str,
@@ -614,6 +616,7 @@ impl HybridSearchService {
     ///
     /// 支持 FTS + Vector + Hybrid 三种模式
     /// 支持 project_id 和日期范围过滤
+    #[allow(clippy::too_many_arguments)]
     async fn search_compact(
         &self,
         query: &str,
@@ -753,15 +756,15 @@ impl HybridSearchService {
         match level {
             SearchLevel::Observations => {
                 let obs = compact_db.search_observations(query, limit).await?;
-                results.extend(obs.into_iter().map(|o| CompactFtsItem::from_observation(o)));
+                results.extend(obs.into_iter().map(CompactFtsItem::from_observation));
             }
             SearchLevel::Talks => {
                 let talks = compact_db.search_talk_summaries(query, limit).await?;
-                results.extend(talks.into_iter().map(|t| CompactFtsItem::from_talk_summary(t)));
+                results.extend(talks.into_iter().map(CompactFtsItem::from_talk_summary));
             }
             SearchLevel::Sessions => {
                 let sessions = compact_db.search_session_summaries(query, limit).await?;
-                results.extend(sessions.into_iter().map(|s| CompactFtsItem::from_session_summary(s)));
+                results.extend(sessions.into_iter().map(CompactFtsItem::from_session_summary));
             }
             SearchLevel::All => {
                 // 搜索所有 compact 级别
@@ -769,9 +772,9 @@ impl HybridSearchService {
                 let obs = compact_db.search_observations(query, per_level_limit).await?;
                 let talks = compact_db.search_talk_summaries(query, per_level_limit).await?;
                 let sessions = compact_db.search_session_summaries(query, per_level_limit).await?;
-                results.extend(obs.into_iter().map(|o| CompactFtsItem::from_observation(o)));
-                results.extend(talks.into_iter().map(|t| CompactFtsItem::from_talk_summary(t)));
-                results.extend(sessions.into_iter().map(|s| CompactFtsItem::from_session_summary(s)));
+                results.extend(obs.into_iter().map(CompactFtsItem::from_observation));
+                results.extend(talks.into_iter().map(CompactFtsItem::from_talk_summary));
+                results.extend(sessions.into_iter().map(CompactFtsItem::from_session_summary));
             }
             SearchLevel::Raw => {
                 // 不应该到这里，Raw 级别不走 compact 搜索

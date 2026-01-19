@@ -39,7 +39,7 @@ impl ObservationType {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "bugfix" => Some(Self::Bugfix),
             "feature" => Some(Self::Feature),
@@ -507,10 +507,10 @@ impl CompactDB {
                 obs.observation_type.as_str(),
                 obs.title,
                 obs.subtitle,
-                obs.facts.as_ref().map(|v| serde_json::to_string(v).ok()).flatten(),
+                obs.facts.as_ref().and_then(|v| serde_json::to_string(v).ok()),
                 obs.narrative,
-                obs.files_read.as_ref().map(|v| serde_json::to_string(v).ok()).flatten(),
-                obs.files_modified.as_ref().map(|v| serde_json::to_string(v).ok()).flatten(),
+                obs.files_read.as_ref().and_then(|v| serde_json::to_string(v).ok()),
+                obs.files_modified.as_ref().and_then(|v| serde_json::to_string(v).ok()),
                 obs.provider,
                 obs.model,
                 obs.created_at,
@@ -544,7 +544,7 @@ impl CompactDB {
                 session_id: row.get(1)?,
                 prompt_number: row.get(2)?,
                 source_offset: row.get(3)?,
-                observation_type: ObservationType::from_str(&row.get::<_, String>(4)?)
+                observation_type: ObservationType::parse(&row.get::<_, String>(4)?)
                     .unwrap_or(ObservationType::Change),
                 title: row.get(5)?,
                 subtitle: row.get(6)?,
@@ -600,7 +600,7 @@ impl CompactDB {
                 summary.user_request,
                 summary.summary,
                 summary.completed,
-                summary.files_involved.as_ref().map(|v| serde_json::to_string(v).ok()).flatten(),
+                summary.files_involved.as_ref().and_then(|v| serde_json::to_string(v).ok()),
                 summary.provider,
                 summary.model,
                 summary.tokens_input,
@@ -695,9 +695,9 @@ impl CompactDB {
                 summary.id,
                 summary.session_id,
                 summary.summary,
-                summary.key_points.as_ref().map(|v| serde_json::to_string(v).ok()).flatten(),
-                summary.files_involved.as_ref().map(|v| serde_json::to_string(v).ok()).flatten(),
-                summary.technologies.as_ref().map(|v| serde_json::to_string(v).ok()).flatten(),
+                summary.key_points.as_ref().and_then(|v| serde_json::to_string(v).ok()),
+                summary.files_involved.as_ref().and_then(|v| serde_json::to_string(v).ok()),
+                summary.technologies.as_ref().and_then(|v| serde_json::to_string(v).ok()),
                 summary.provider,
                 summary.model,
                 summary.tokens_input,
@@ -825,7 +825,7 @@ impl CompactDB {
                 session_id: row.get(1)?,
                 prompt_number: row.get(2)?,
                 source_offset: row.get(3)?,
-                observation_type: ObservationType::from_str(&row.get::<_, String>(4)?)
+                observation_type: ObservationType::parse(&row.get::<_, String>(4)?)
                     .unwrap_or(ObservationType::Change),
                 title: row.get(5)?,
                 subtitle: row.get(6)?,
