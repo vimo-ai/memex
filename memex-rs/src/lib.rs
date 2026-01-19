@@ -6,10 +6,12 @@
 // 核心模块
 pub mod adapter;
 pub mod collector;
+pub mod compact;
 pub mod config;
 pub mod domain;
 pub mod embedding;
 pub mod indexer;
+pub mod llm;
 pub mod rag;
 pub mod search;
 pub mod vector;

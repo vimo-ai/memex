@@ -5,7 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
-use crate::embedding::{Chunker, OllamaClient};
+use crate::embedding::Chunker;
+use crate::llm::EmbeddingProvider;
 use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::{VectorRecord, VectorStore};
 
@@ -61,7 +62,7 @@ impl IndexQueue {
 #[derive(Clone)]
 pub struct VectorIndexer {
     db: Arc<SharedDbAdapter>,
-    ollama: Arc<OllamaClient>,
+    embedding: Arc<dyn EmbeddingProvider>,
     vector: Arc<RwLock<VectorStore>>,
     chunker: Chunker,
     /// 后台全量索引任务是否正在运行
@@ -75,7 +76,7 @@ pub struct IndexResult {
     pub indexed_messages: usize,
     pub indexed_chunks: usize,
     pub skipped: usize,
-    pub failed: usize, // 新增：标记为失败的消息数量
+    pub failed: usize,
     pub errors: Vec<String>,
 }
 
@@ -83,12 +84,12 @@ impl VectorIndexer {
     /// 创建索引服务
     pub fn new(
         db: Arc<SharedDbAdapter>,
-        ollama: Arc<OllamaClient>,
+        embedding: Arc<dyn EmbeddingProvider>,
         vector: Arc<RwLock<VectorStore>>,
     ) -> Self {
         Self {
             db,
-            ollama,
+            embedding,
             vector,
             chunker: Chunker::default(),
             running: Arc::new(AtomicBool::new(false)),
@@ -181,10 +182,6 @@ impl VectorIndexer {
     }
 
     /// 索引单个会话（已弃用，请使用 index_batch）
-    ///
-    /// 注意：此方法会重新索引会话中所有 assistant 消息，
-    /// 包括已索引的消息（会在 LanceDB 中创建重复记录）。
-    /// 推荐使用 index_batch 进行增量索引。
     #[deprecated(note = "请使用 index_batch 进行增量索引")]
     pub async fn index_session(&self, session_id: &str) -> Result<IndexResult> {
         let mut result = IndexResult {
@@ -215,7 +212,7 @@ impl VectorIndexer {
 
             for chunk in chunks {
                 // 生成 embedding
-                match self.ollama.embed(&chunk.content).await {
+                match self.embedding.embed(&chunk.content).await {
                     Ok(embedding) => {
                         records.push(VectorRecord {
                             message_id: message.id,
@@ -262,8 +259,6 @@ impl VectorIndexer {
     }
 
     /// 按消息 ID 列表索引（用于实时索引新消息）
-    ///
-    /// 并发 embedding + 批量 insert
     pub async fn index_by_ids(&self, message_ids: &[i64]) -> Result<IndexResult> {
         let mut result = IndexResult {
             total_messages: message_ids.len(),
@@ -315,7 +310,7 @@ impl VectorIndexer {
 
         // 并发 embedding
         let texts: Vec<String> = all_chunks.iter().map(|c| c.content.clone()).collect();
-        let embeddings = match self.ollama.embed_batch(texts).await {
+        let embeddings = match self.embedding.embed_batch(texts).await {
             Ok(embs) => embs,
             Err(e) => {
                 result.errors.push(format!("Batch embedding failed: {}", e));
@@ -374,11 +369,6 @@ impl VectorIndexer {
     }
 
     /// 索引指定数量的消息（用于增量索引）
-    ///
-    /// 优化版本：
-    /// 1. 直接从 SQLite 查询未索引的消息
-    /// 2. 并发调用 Ollama embedding（10 个同时）
-    /// 3. 批量 insert 到 LanceDB（减少版本数）
     pub async fn index_batch(&self, limit: usize) -> Result<IndexResult> {
         let mut result = IndexResult {
             total_messages: 0,
@@ -433,7 +423,7 @@ impl VectorIndexer {
 
         // 2. Concurrent embedding
         let texts: Vec<String> = all_chunks.iter().map(|c| c.content.clone()).collect();
-        let embeddings = match self.ollama.embed_batch(texts).await {
+        let embeddings = match self.embedding.embed_batch(texts).await {
             Ok(embs) => embs,
             Err(e) => {
                 // All failed
@@ -496,14 +486,6 @@ impl VectorIndexer {
     }
 
     /// 索引所有待处理的消息（用于定时任务清空增量）
-    ///
-    /// 与 index_batch 的区别：
-    /// - index_batch(100): 固定索引 100 条
-    /// - index_pending(3000): 索引所有待处理的消息，但最多 3000 条（防止 Ollama 过载）
-    ///
-    /// 适用场景：
-    /// - 定时任务每小时清空增量
-    /// - 新用户首次启动时快速追赶历史数据
     pub async fn index_pending(&self, max_limit: usize) -> Result<IndexResult> {
         let pending_count = self.db.count_unindexed_messages().await? as usize;
 

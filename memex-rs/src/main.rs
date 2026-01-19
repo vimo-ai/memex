@@ -17,8 +17,8 @@ use memex::archive::ArchiveService;
 use memex::backup::BackupService;
 use memex::collector::Collector;
 use memex::config::Config;
-use memex::embedding::OllamaClient;
 use memex::indexer::{IndexQueue, VectorIndexer};
+use memex::llm::{ChatProvider, EmbeddingProvider, OllamaProvider};
 use memex::rag::RagService;
 use memex::search::HybridSearchService;
 use memex::shared_adapter::SharedDbAdapter;
@@ -218,61 +218,68 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Initialize Ollama client (core semantic search)
-    let ollama = {
-        let client = OllamaClient::new(
+    // Initialize LLM providers (embedding + chat)
+    let (embedding, chat): (Option<Arc<dyn EmbeddingProvider>>, Option<Arc<dyn ChatProvider>>) = {
+        let provider = OllamaProvider::new(
             &config.ollama_api,
             &config.embedding_model,
             &config.chat_model,
         );
 
-        if client.is_available().await {
+        if provider.is_embedding_model_available().await || provider.is_chat_model_available().await
+        {
             tracing::info!("🦙 Ollama connected: {}", config.ollama_api);
 
-            // Embedding model check (required for semantic search)
-            if client.is_embedding_model_available().await {
-                tracing::info!(
-                    "✅ Embedding model available: {} (semantic search enabled)",
-                    config.embedding_model
-                );
-            } else {
-                tracing::warn!(
-                    "⚠️ Embedding model unavailable: {}, run: ollama pull {}",
-                    config.embedding_model,
-                    config.embedding_model
-                );
-            }
+            // Embedding provider (required for semantic search)
+            let embedding: Option<Arc<dyn EmbeddingProvider>> =
+                if provider.is_embedding_model_available().await {
+                    tracing::info!(
+                        "✅ Embedding model available: {} (semantic search enabled)",
+                        config.embedding_model
+                    );
+                    Some(Arc::new(provider.clone()))
+                } else {
+                    tracing::warn!(
+                        "⚠️ Embedding model unavailable: {}, run: ollama pull {}",
+                        config.embedding_model,
+                        config.embedding_model
+                    );
+                    None
+                };
 
-            // Chat model check (optional for AI Q&A)
-            if config.enable_ai_chat {
-                if client.is_chat_model_available().await {
+            // Chat provider (optional for AI Q&A)
+            let chat: Option<Arc<dyn ChatProvider>> = if config.enable_ai_chat {
+                if provider.is_chat_model_available().await {
                     tracing::info!(
                         "✅ Chat model available: {} (AI Q&A enabled)",
                         config.chat_model
                     );
+                    Some(Arc::new(provider))
                 } else {
                     tracing::warn!(
                         "⚠️ Chat model unavailable: {}, AI Q&A will not work",
                         config.chat_model
                     );
+                    None
                 }
             } else {
                 tracing::info!("ℹ️ AI Q&A disabled (ENABLE_AI_CHAT=false)");
-            }
+                None
+            };
 
-            Some(Arc::new(client))
+            (embedding, chat)
         } else {
             tracing::warn!(
                 "⚠️ Ollama unavailable ({}), semantic search will fallback to FTS",
                 config.ollama_api
             );
             tracing::warn!("   Make sure Ollama is running: ollama serve");
-            None
+            (None, None)
         }
     };
 
     // Initialize vector store (optional)
-    let vector = if ollama.is_some() {
+    let vector = if embedding.is_some() {
         match VectorStore::open(&config.lancedb_path()).await {
             Ok(store) => {
                 tracing::info!("🗄️ LanceDB opened: {:?}", config.lancedb_path());
@@ -288,8 +295,8 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Create indexer service (optional)
-    let indexer = match (&ollama, &vector) {
-        (Some(o), Some(v)) => Some(VectorIndexer::new(shared_db.clone(), o.clone(), v.clone())),
+    let indexer = match (&embedding, &vector) {
+        (Some(e), Some(v)) => Some(VectorIndexer::new(shared_db.clone(), e.clone(), v.clone())),
         _ => None,
     };
 
@@ -319,15 +326,12 @@ async fn main() -> anyhow::Result<()> {
     let index_queue = indexer.clone().map(IndexQueue::new);
 
     // Create hybrid search service
-    let hybrid_search = HybridSearchService::new(shared_db.clone(), ollama.clone(), vector.clone());
+    let hybrid_search =
+        HybridSearchService::new(shared_db.clone(), embedding.clone(), vector.clone());
 
     // Create RAG service
-    let rag_service = RagService::new(
-        shared_db.clone(),
-        ollama.clone(),
-        vector.clone(),
-        config.chat_model.clone(),
-    );
+    let rag_service =
+        RagService::new(shared_db.clone(), chat.clone(), embedding.clone(), vector.clone());
 
     // Create app state
     let state = Arc::new(AppState {
@@ -335,7 +339,8 @@ async fn main() -> anyhow::Result<()> {
         db: shared_db,
         collector,
         backup,
-        ollama,
+        embedding,
+        chat,
         vector,
         indexer,
         hybrid_search,
