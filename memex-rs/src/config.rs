@@ -18,19 +18,13 @@ struct FileConfig {
     features: FeaturesConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct ServerConfig {
     port: Option<u16>,
 }
 
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self { port: None }
-    }
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct OllamaConfig {
     api: Option<String>,
@@ -38,28 +32,10 @@ struct OllamaConfig {
     chat_model: Option<String>,
 }
 
-impl Default for OllamaConfig {
-    fn default() -> Self {
-        Self {
-            api: None,
-            embedding_model: None,
-            chat_model: None,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct FeaturesConfig {
     enable_ai_chat: Option<bool>,
-}
-
-impl Default for FeaturesConfig {
-    fn default() -> Self {
-        Self {
-            enable_ai_chat: None,
-        }
-    }
 }
 
 /// 应用配置
