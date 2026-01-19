@@ -222,6 +222,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize LLM providers (embedding + chat)
     // chat_for_compact: 只要模型可用就启用（Compact 是后台服务）
     // chat: 需要 ENABLE_AI_CHAT=true（RAG Q&A 是用户主动调用）
+    #[allow(clippy::type_complexity)]
     let (embedding, chat, chat_for_compact): (
         Option<Arc<dyn EmbeddingProvider>>,
         Option<Arc<dyn ChatProvider>>,
