@@ -136,6 +136,7 @@ impl Default for CompactQueue {
 /// Compact Worker - 处理任务的 worker
 pub struct CompactWorker {
     service: CompactService,
+    compact_db: Arc<CompactDB>,
     tracker: SessionTracker,
     needs_l3: bool,
 }
@@ -150,10 +151,11 @@ impl CompactWorker {
         tracker: SessionTracker,
     ) -> Self {
         let needs_l3 = config.l3_session_summary;
-        let service = CompactService::new(shared_db, chat_provider, compact_db, config);
+        let service = CompactService::new(shared_db, chat_provider, compact_db.clone(), config);
 
         Self {
             service,
+            compact_db,
             tracker,
             needs_l3,
         }
@@ -172,21 +174,58 @@ impl CompactWorker {
     }
 
     /// 检查并处理 idle sessions
+    ///
+    /// idle 超时触发：
+    /// 1. 先执行 L1 + L2（当前 Talk 的 compact）
+    /// 2. 再生成 L3（如果启用）
     pub async fn check_idle_sessions(&self) {
-        if !self.needs_l3 {
-            return;
-        }
-
         let idle_sessions = self.tracker.drain_idle().await;
         for session_id in idle_sessions {
             tracing::debug!("Session idle detected: {}", session_id);
-            self.handle_generate_l3(&session_id).await;
+
+            // 1. 先触发 L1 + L2
+            self.handle_process_session(&session_id).await;
+
+            // 2. 再生成 L3（如果启用）
+            if self.needs_l3 {
+                self.handle_generate_l3(&session_id).await;
+            }
         }
     }
 
-    /// 处理会话（L1 + L2）
+    /// 处理会话（L1 + L2）- 统一触发入口
+    ///
+    /// 使用锁机制避免重复执行：
+    /// 1. try_lock → 失败则跳过
+    /// 2. 执行 compact（内部检查是否有新内容）
+    /// 3. unlock（调用者负责）
     async fn handle_process_session(&self, session_id: &str) {
-        match self.service.process_session(session_id).await {
+        // 1. 尝试获取锁
+        match self.compact_db.try_lock(session_id).await {
+            Ok(true) => {
+                // 获取锁成功，继续处理
+            }
+            Ok(false) => {
+                // 已有其他任务在处理，跳过
+                tracing::debug!("Compact 跳过 (已有任务在处理): {}", session_id);
+                return;
+            }
+            Err(e) => {
+                tracing::error!("Compact 获取锁失败 (session={}): {}", session_id, e);
+                return;
+            }
+        }
+
+        // 2. 执行 compact（内部会检查是否有新内容）
+        let result = self.service.process_session(session_id).await;
+
+        // 3. 释放锁（无论成功失败）
+        if let Err(unlock_err) = self.compact_db.unlock(session_id).await {
+            tracing::error!("Compact 释放锁失败 (session={}): {}", session_id, unlock_err);
+        }
+
+        // 4. 处理结果
+        match result {
             Ok(result) => {
                 if result.observations_count > 0 || result.talk_summaries_count > 0 {
                     tracing::debug!(

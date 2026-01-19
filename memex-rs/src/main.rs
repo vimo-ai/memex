@@ -16,7 +16,7 @@ use memex::api::{create_router, AppState};
 use memex::archive::ArchiveService;
 use memex::backup::BackupService;
 use memex::collector::Collector;
-use memex::compact::{run_compact_worker, CompactConfig, CompactDB, CompactQueue, CompactWorker};
+use memex::compact::{run_compact_worker, CompactDB, CompactQueue, CompactWorker};
 use memex::config::Config;
 use memex::indexer::{IndexQueue, VectorIndexer};
 use memex::llm::{ChatProvider, EmbeddingProvider, OllamaProvider};
@@ -66,6 +66,9 @@ async fn main() -> anyhow::Result<()> {
                 println!("  EMBEDDING_MODEL      Embedding model (default: bge-m3)");
                 println!("  CHAT_MODEL           Chat model (default: qwen3:0.6b)");
                 println!("  ENABLE_AI_CHAT       Enable AI chat (default: false)");
+                println!();
+                println!("Config file: ~/.vimo/memex/config.json");
+                println!("  Example: {{\"compact\": {{\"enabled\": true}}}}");
                 return Ok(());
             }
             "archive" => {
@@ -149,7 +152,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Load config
-    let config = Config::from_env();
+    let config = Config::load();
     tracing::info!("📁 Data directory: {:?}", config.data_dir);
     tracing::info!("📁 Web directory: {:?}", config.web_dir);
     tracing::info!("📁 Claude projects: {:?}", config.claude_projects_path);
@@ -341,54 +344,67 @@ async fn main() -> anyhow::Result<()> {
     // Create index queue (optional, for real-time indexing)
     let index_queue = indexer.clone().map(IndexQueue::new);
 
-    // Initialize Compact service (optional, requires chat provider)
-    // 使用 chat_for_compact（只要模型可用就启用，不依赖 ENABLE_AI_CHAT）
+    // Initialize Compact service (optional, requires enabled + chat provider)
+    // 通过配置文件 ~/.vimo/memex/config.json 控制
     // 注意: compact_db 会同时传给 CompactWorker 和 AppState（用于 MCP 渐进式披露）
-    let compact_config = CompactConfig::default(); // L2 + L3 enabled
+    let compact_config = config.compact.clone();
     let (compact_queue, compact_db): (Option<CompactQueue>, Option<Arc<CompactDB>>) =
-        if let Some(ref chat_provider) = chat_for_compact {
-            // 初始化 CompactDB（复用共享数据库文件）
-            // 传递 fts_tokenizer 配置（默认 trigram 支持中文）
-            match CompactDB::connect(config.db_path(), Some(&compact_config.fts_tokenizer)) {
-                Ok(compact_db) => {
-                    let compact_db = Arc::new(compact_db);
+        if compact_config.enabled {
+            if let Some(ref chat_provider) = chat_for_compact {
+                // 初始化 CompactDB（复用共享数据库文件）
+                // 传递 fts_tokenizer 配置（默认 trigram 支持中文）
+                match CompactDB::connect(config.db_path(), Some(&compact_config.fts_tokenizer)) {
+                    Ok(compact_db) => {
+                        let compact_db = Arc::new(compact_db);
 
-                    // 创建队列和 worker
-                    let (queue, receiver) = CompactQueue::new();
-                    let worker = CompactWorker::new(
-                        shared_db.clone(),
-                        chat_provider.clone(),
-                        compact_db.clone(), // Clone for worker
-                        compact_config.clone(),
-                        queue.tracker().clone(),
-                    );
+                        // 启动时清理超时的锁（进程崩溃恢复）
+                        if let Err(e) = compact_db.unlock_stale_locks().await {
+                            tracing::warn!("⚠️ Failed to clean stale locks: {}", e);
+                        }
 
-                    // 启动 worker（后台任务）
-                    tokio::spawn(run_compact_worker(worker, receiver));
+                        // 创建队列和 worker
+                        let (queue, receiver) = CompactQueue::new();
+                        let worker = CompactWorker::new(
+                            shared_db.clone(),
+                            chat_provider.clone(),
+                            compact_db.clone(), // Clone for worker
+                            compact_config.clone(),
+                            queue.tracker().clone(),
+                        );
 
-                    tracing::info!(
-                        "🗜️ Compact service enabled (L1={}, L2={}, L3={})",
-                        compact_config.l1_observations,
-                        compact_config.l2_talk_summary,
-                        compact_config.l3_session_summary
-                    );
+                        // 启动 worker（后台任务）
+                        tokio::spawn(run_compact_worker(worker, receiver));
 
-                    (Some(queue), Some(compact_db))
+                        tracing::info!(
+                            "🗜️ Compact service enabled (L1={}, L2={}, L3={})",
+                            compact_config.l1_observations,
+                            compact_config.l2_talk_summary,
+                            compact_config.l3_session_summary
+                        );
+
+                        (Some(queue), Some(compact_db))
+                    }
+                    Err(e) => {
+                        tracing::warn!("⚠️ Failed to initialize CompactDB: {}", e);
+                        (None, None)
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("⚠️ Failed to initialize CompactDB: {}", e);
-                    (None, None)
-                }
+            } else {
+                tracing::warn!("⚠️ Compact enabled but chat model unavailable, worker disabled");
+                // 连接 CompactDB（用于 MCP 搜索已有的摘要）
+                let compact_db = CompactDB::connect(config.db_path(), Some(&compact_config.fts_tokenizer))
+                    .ok()
+                    .map(Arc::new);
+                (None, compact_db)
             }
         } else {
-            // 即使没有 chat provider，也尝试连接 CompactDB（用于 MCP 搜索已有的摘要）
+            // Compact 未启用，只连接 CompactDB（用于 MCP 搜索已有的摘要）
             let compact_db = CompactDB::connect(config.db_path(), Some(&compact_config.fts_tokenizer))
                 .ok()
                 .map(Arc::new);
             if compact_db.is_some() {
-                tracing::info!("ℹ️ CompactDB connected for MCP search (no worker, read-only)");
+                tracing::info!("ℹ️ CompactDB connected for MCP search (read-only, COMPACT_ENABLED=false)");
             }
-            tracing::info!("ℹ️ Compact worker disabled (no chat provider)");
             (None, compact_db)
         };
 
@@ -401,9 +417,10 @@ async fn main() -> anyhow::Result<()> {
         RagService::new(shared_db.clone(), chat.clone(), embedding.clone(), vector.clone());
 
     // Create app state
+    // 注意：compact_queue 需要 clone，因为后面还要传给 file_watcher
     let state = Arc::new(AppState {
         config: config.clone(),
-        db: shared_db,
+        db: shared_db.clone(),
         collector,
         backup,
         embedding,
@@ -413,6 +430,7 @@ async fn main() -> anyhow::Result<()> {
         hybrid_search,
         rag_service,
         compact_db,
+        compact_queue: compact_queue.clone(),
     });
 
     // Run initial collection in background (non-blocking HTTP startup)
@@ -467,7 +485,8 @@ async fn main() -> anyhow::Result<()> {
     // Start file watcher service (with optional real-time index queue and compact queue)
     let mut file_watcher = FileWatcher::new(config.clone(), state.collector.clone(), index_queue);
     if let Some(queue) = compact_queue {
-        file_watcher = file_watcher.with_compact_queue(queue);
+        // 传入 compact_queue 和 shared_db（用于 Talk 边界检测）
+        file_watcher = file_watcher.with_compact(queue, shared_db.clone());
     }
     let file_watcher = Arc::new(file_watcher);
     file_watcher.start().await?;
@@ -541,7 +560,7 @@ async fn setup_scheduler(
     indexer: Option<VectorIndexer>,
 ) -> anyhow::Result<JobScheduler> {
     let scheduler = JobScheduler::new().await?;
-    let config = memex::config::Config::from_env();
+    let config = memex::config::Config::load();
 
     // Daily backup at 02:00
     let backup_clone = backup.clone();
@@ -722,7 +741,7 @@ async fn handle_archive_command(args: &[String]) -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer().with_timer(timer))
         .init();
 
-    let config = memex::config::Config::from_env();
+    let config = memex::config::Config::load();
     let archive_dir = config.data_dir.join("archive");
 
     let mut archive_service =

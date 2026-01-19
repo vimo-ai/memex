@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 
 use crate::backup::BackupService;
 use crate::collector::Collector;
-use crate::compact::CompactDB;
+use crate::compact::{CompactDB, CompactQueue};
 use crate::config::Config;
 use crate::domain::{MessageListDto, ProjectListDto, SessionListDto, SessionSearchDto};
 use crate::indexer::VectorIndexer;
@@ -40,6 +40,8 @@ pub struct AppState {
     pub rag_service: RagService,
     /// Compact 数据库（用于渐进式披露）
     pub compact_db: Option<Arc<CompactDB>>,
+    /// Compact 队列（用于触发 compact 任务）
+    pub compact_queue: Option<CompactQueue>,
 }
 
 /// 创建路由
@@ -95,6 +97,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/api/admin/deduplicate-projects",
             post(deduplicate_projects),
         )
+        // Compact
+        .route("/api/compact/trigger", post(compact_trigger))
+        .route("/api/compact/status", get(compact_status))
         .with_state(state)
 }
 
@@ -1326,6 +1331,85 @@ async fn deduplicate_projects(
     Ok(Json(DeduplicateProjectsResponse {
         merged_count,
         deleted_ids,
+    }))
+}
+
+// ==================== Compact ====================
+
+/// Compact 触发请求
+#[derive(Debug, Deserialize)]
+struct CompactTriggerRequest {
+    /// 会话 ID（必填）
+    session_id: String,
+}
+
+/// Compact 触发响应
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompactTriggerResponse {
+    /// 是否成功入队
+    queued: bool,
+    /// 消息
+    message: String,
+}
+
+/// 触发 Compact 任务
+///
+/// POST /api/compact/trigger
+/// Body: { "session_id": "xxx" }
+async fn compact_trigger(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CompactTriggerRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let queue = match &state.compact_queue {
+        Some(q) => q,
+        None => {
+            return Ok(Json(CompactTriggerResponse {
+                queued: false,
+                message: "Compact service not available (COMPACT_ENABLED=false or no chat model)".to_string(),
+            })
+            .into_response());
+        }
+    };
+
+    if req.session_id.trim().is_empty() {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "session_id is required"})),
+        )
+            .into_response());
+    }
+
+    // 入队处理（L1 + L2）
+    queue.enqueue_session(req.session_id.clone()).await;
+
+    Ok(Json(CompactTriggerResponse {
+        queued: true,
+        message: format!("Compact task queued for session: {}", req.session_id),
+    })
+    .into_response())
+}
+
+/// Compact 状态响应
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompactStatusResponse {
+    /// Compact 是否启用
+    enabled: bool,
+    /// Compact 队列是否可用
+    queue_available: bool,
+    /// CompactDB 是否已连接
+    db_connected: bool,
+}
+
+/// 获取 Compact 状态
+///
+/// GET /api/compact/status
+async fn compact_status(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
+    Ok(Json(CompactStatusResponse {
+        enabled: state.compact_queue.is_some(),
+        queue_available: state.compact_queue.is_some(),
+        db_connected: state.compact_db.is_some(),
     }))
 }
 

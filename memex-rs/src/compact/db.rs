@@ -255,10 +255,32 @@ impl CompactDB {
                 session_id TEXT PRIMARY KEY,
                 last_processed_offset INTEGER DEFAULT -1,
                 last_processed_prompt INTEGER DEFAULT 0,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                processing INTEGER DEFAULT 0,
+                processing_started_at INTEGER
             );
             "#,
         )?;
+
+        // 迁移：为旧表添加新字段（如果不存在）
+        // SQLite 不支持 ADD COLUMN IF NOT EXISTS，用 PRAGMA 检查
+        let has_processing: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('compact_progress') WHERE name = 'processing'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if !has_processing {
+            conn.execute_batch(
+                r#"
+                ALTER TABLE compact_progress ADD COLUMN processing INTEGER DEFAULT 0;
+                ALTER TABLE compact_progress ADD COLUMN processing_started_at INTEGER;
+                "#,
+            )?;
+            tracing::info!("compact_progress 表已添加 processing 字段");
+        }
 
         // FTS5 全文搜索索引
         // 使用 external content 模式减少数据冗余
@@ -800,6 +822,102 @@ impl CompactDB {
         Ok(())
     }
 
+    // ==================== 处理锁 ====================
+
+    /// 锁超时时间（毫秒）- 5 分钟
+    const LOCK_TIMEOUT_MS: i64 = 5 * 60 * 1000;
+
+    /// 尝试获取处理锁（原子操作）
+    ///
+    /// 返回 true 表示获取成功，false 表示已有其他任务在处理
+    /// 带超时保护：如果锁已超时，会自动抢占
+    pub async fn try_lock(&self, session_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().await;
+        let now_ms = current_time_ms();
+
+        // 原子操作：仅当 processing=0 或锁超时时才能获取
+        let rows = conn.execute(
+            r#"
+            INSERT INTO compact_progress (session_id, last_processed_offset, last_processed_prompt, updated_at, processing, processing_started_at)
+            VALUES (?1, -1, 0, ?2, 1, ?3)
+            ON CONFLICT(session_id) DO UPDATE SET
+                processing = 1,
+                processing_started_at = ?3
+            WHERE processing = 0
+               OR (?3 - processing_started_at) > ?4
+            "#,
+            params![
+                session_id,
+                chrono::Utc::now().to_rfc3339(),
+                now_ms,
+                Self::LOCK_TIMEOUT_MS,
+            ],
+        )?;
+
+        Ok(rows > 0)
+    }
+
+    /// 释放处理锁
+    pub async fn unlock(&self, session_id: &str) -> Result<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "UPDATE compact_progress SET processing = 0, processing_started_at = NULL WHERE session_id = ?1",
+            params![session_id],
+        )?;
+        Ok(())
+    }
+
+    /// 更新进度并释放锁（原子操作）
+    pub async fn update_progress_and_unlock(
+        &self,
+        session_id: &str,
+        progress: &ProcessingProgress,
+    ) -> Result<()> {
+        let conn = self.conn.lock().await;
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            r#"
+            UPDATE compact_progress SET
+                last_processed_offset = ?2,
+                last_processed_prompt = ?3,
+                updated_at = ?4,
+                processing = 0,
+                processing_started_at = NULL
+            WHERE session_id = ?1
+            "#,
+            params![
+                session_id,
+                progress.last_processed_offset,
+                progress.last_processed_prompt,
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 清理所有超时的锁（启动时调用）
+    pub async fn unlock_stale_locks(&self) -> Result<usize> {
+        let conn = self.conn.lock().await;
+        let now_ms = current_time_ms();
+
+        let rows = conn.execute(
+            r#"
+            UPDATE compact_progress SET
+                processing = 0,
+                processing_started_at = NULL
+            WHERE processing = 1
+              AND (?1 - processing_started_at) > ?2
+            "#,
+            params![now_ms, Self::LOCK_TIMEOUT_MS],
+        )?;
+
+        if rows > 0 {
+            tracing::info!("清理了 {} 个超时的 compact 锁", rows);
+        }
+
+        Ok(rows)
+    }
+
     // ==================== FTS 搜索 ====================
 
     /// 搜索 Observations
@@ -940,6 +1058,14 @@ impl CompactDB {
         }
         Ok(result)
     }
+}
+
+/// 获取当前时间戳（毫秒）
+fn current_time_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

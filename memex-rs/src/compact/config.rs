@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CompactConfig {
+    /// 全局开关：是否启用 Compact 功能
+    /// 默认关闭，需要用户显式开启
+    pub enabled: bool,
+
     /// L1: Observations（每个工具调用/操作一个）
     pub l1_observations: bool,
 
@@ -59,8 +63,10 @@ fn default_fts_tokenizer() -> String {
 
 impl Default for CompactConfig {
     fn default() -> Self {
+        // 全局开关默认关闭，通过配置文件 ~/.vimo/memex/config.json 开启
         // 注意：L3 依赖 L2，所以 L3=true 时 L2 也必须为 true
         Self {
+            enabled: false,
             l1_observations: false,
             l2_talk_summary: true,  // L3=true 时必须开启 L2
             l3_session_summary: true,
@@ -91,14 +97,15 @@ impl CompactConfig {
         }
     }
 
-    /// 是否需要 LLM（任意一层开启）
+    /// 是否需要 LLM（全局开关启用且任意一层开启）
     pub fn needs_llm(&self) -> bool {
-        self.l1_observations || self.l2_talk_summary || self.l3_session_summary
+        self.enabled && (self.l1_observations || self.l2_talk_summary || self.l3_session_summary)
     }
 
     /// 极简模式（只用原文搜索）
     pub fn minimal() -> Self {
         Self {
+            enabled: false,
             l1_observations: false,
             l2_talk_summary: false,
             l3_session_summary: false,
@@ -110,6 +117,7 @@ impl CompactConfig {
     /// 完整模式（类 claude-mem）
     pub fn full() -> Self {
         Self {
+            enabled: true,
             l1_observations: true,
             l2_talk_summary: true,
             l3_session_summary: true,
@@ -123,12 +131,14 @@ impl CompactConfig {
 mod tests {
     use super::*;
 
-    /// 验证 Default 配置一致性（已修复）
-    /// Default 配置：L3=true 时 L2 也为 true
+    /// 验证 Default 配置一致性
+    /// Default 配置：enabled=false（需通过配置文件开启），L3=true 时 L2 也为 true
     #[test]
     fn test_default_config_is_consistent() {
         let config = CompactConfig::default();
 
+        // 默认关闭
+        assert!(!config.enabled, "Compact should be disabled by default");
         // Default 配置现在是一致的
         assert!(config.l3_session_summary);
         assert!(config.l2_talk_summary, "L2 should be true when L3 is true in default config");
@@ -138,6 +148,7 @@ mod tests {
     #[test]
     fn test_validate_fixes_manual_inconsistency() {
         let mut config = CompactConfig {
+            enabled: true,
             l1_observations: false,
             l2_talk_summary: false,  // 手动设置不一致
             l3_session_summary: true,
@@ -177,5 +188,29 @@ mod tests {
         // 调用 validate 修复不一致
         config.validate();
         assert!(config.l2_talk_summary, "L2 should be auto-enabled after validate");
+    }
+
+    /// 验证 needs_llm 检查 enabled 字段
+    #[test]
+    fn test_needs_llm_checks_enabled() {
+        let config_disabled = CompactConfig {
+            enabled: false,
+            l1_observations: true,
+            l2_talk_summary: true,
+            l3_session_summary: true,
+            l1: L1Options::default(),
+            fts_tokenizer: "trigram".to_string(),
+        };
+        assert!(!config_disabled.needs_llm(), "needs_llm should return false when disabled");
+
+        let config_enabled = CompactConfig {
+            enabled: true,
+            l1_observations: true,
+            l2_talk_summary: true,
+            l3_session_summary: true,
+            l1: L1Options::default(),
+            fts_tokenizer: "trigram".to_string(),
+        };
+        assert!(config_enabled.needs_llm(), "needs_llm should return true when enabled");
     }
 }
