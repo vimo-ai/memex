@@ -9,35 +9,36 @@ pub struct L1Prompt;
 
 impl L1Prompt {
     /// 系统提示
-    pub const SYSTEM: &'static str = r#"你是一个代码操作分析助手。你的任务是分析工具调用，生成结构化的 observation。
+    pub const SYSTEM: &'static str = r#"You are a code operation analyst. Analyze tool calls and generate structured observations.
 
-输出格式（JSON）：
+Output format (JSON):
 {
   "type": "bugfix|feature|refactor|change|discovery|decision",
-  "title": "短标题（< 20 字）",
-  "subtitle": "一句话解释（可选）",
-  "facts": ["具体事实1", "具体事实2"],
-  "narrative": "完整上下文描述（可选，用于复杂操作）"
+  "title": "Short title (< 20 words)",
+  "subtitle": "One-line explanation (optional)",
+  "facts": ["Specific fact 1", "Specific fact 2"],
+  "narrative": "Full context description (optional, for complex operations)"
 }
 
-类型说明：
-- bugfix: 修复 bug
-- feature: 新功能
-- refactor: 重构代码
-- change: 一般修改
-- discovery: 发现/理解代码
-- decision: 做出技术决策
+Type definitions:
+- bugfix: Bug fix
+- feature: New feature
+- refactor: Code refactoring
+- change: General modification
+- discovery: Code discovery/understanding
+- decision: Technical decision
 
-要求：
-- 保持简洁，抓住核心
-- facts 用于精确搜索，应包含关键词
-- 如果操作很简单，narrative 可省略"#;
+Requirements:
+- Keep it concise, capture the core
+- facts should contain searchable keywords
+- narrative can be omitted for simple operations
+- Output language: Match the language of the input content"#;
 
     /// 构建用户消息
     pub fn build_user_message(tool_call: &ToolCall, context: Option<&str>) -> String {
         let mut prompt = String::new();
 
-        prompt.push_str(&format!("工具: {}\n", tool_call.name));
+        prompt.push_str(&format!("Tool: {}\n", tool_call.name));
 
         if let Some(args) = &tool_call.arguments {
             // 截断过长的参数
@@ -46,7 +47,7 @@ impl L1Prompt {
             } else {
                 args.clone()
             };
-            prompt.push_str(&format!("参数: {}\n", args_display));
+            prompt.push_str(&format!("Arguments: {}\n", args_display));
         }
 
         if let Some(output) = &tool_call.output {
@@ -56,14 +57,13 @@ impl L1Prompt {
             } else {
                 output.clone()
             };
-            prompt.push_str(&format!("输出: {}\n", output_display));
+            prompt.push_str(&format!("Output: {}\n", output_display));
         }
 
         if let Some(ctx) = context {
-            prompt.push_str(&format!("\n上下文: {}\n", ctx));
+            prompt.push_str(&format!("\nContext: {}\n", ctx));
         }
 
-        prompt.push_str("\n请分析这个工具调用，生成 observation JSON：");
         prompt
     }
 }
@@ -73,30 +73,26 @@ pub struct L2Prompt;
 
 impl L2Prompt {
     /// 系统提示
-    pub const SYSTEM: &'static str = r#"你是一个对话摘要助手。你的任务是将一轮 AI 编程对话压缩为简洁的摘要。
+    pub const SYSTEM: &'static str = r#"You are a conversation summarizer. Compress one round of AI coding conversation into a concise summary.
 
-输出格式（JSON）：
+Output format (JSON):
 {
-  "user_request": "用户请求的简要描述（< 50 字）",
-  "summary": "这轮对话完成了什么（< 200 字）",
-  "completed": "具体完成的事项（可选）",
-  "files_involved": ["涉及的文件路径"]
+  "user_request": "Brief description of user request (< 50 words)",
+  "summary": "What was accomplished in this round (< 200 words)",
+  "completed": "Specific completed items (optional)",
+  "files_involved": ["File paths involved"]
 }
 
-要求：
-- 保留关键决策和解决方案
-- 去除重复和冗余
-- 保持技术准确性
-- files_involved 从工具调用中提取"#;
+Requirements:
+- Preserve key decisions and solutions
+- Remove duplicates and redundancy
+- Maintain technical accuracy
+- Extract files_involved from tool calls
+- Output language: Match the language of the input content"#;
 
     /// 构建用户消息
     pub fn build_user_message(talk: &Talk) -> String {
         let mut prompt = String::new();
-
-        prompt.push_str(&format!(
-            "第 {} 轮对话\n\n",
-            talk.prompt_number
-        ));
 
         // 用户请求
         prompt.push_str(&format!(
@@ -114,7 +110,7 @@ impl L2Prompt {
 
         // 工具调用摘要
         if !talk.tool_calls.is_empty() {
-            prompt.push_str("工具调用：\n");
+            prompt.push_str("Tool calls:\n");
             for tc in &talk.tool_calls {
                 prompt.push_str(&format!("- {}", tc.name));
                 if let Some(path) = tc.extract_file_path() {
@@ -122,10 +118,8 @@ impl L2Prompt {
                 }
                 prompt.push('\n');
             }
-            prompt.push('\n');
         }
 
-        prompt.push_str("请生成这轮对话的摘要 JSON：");
         prompt
     }
 }
@@ -135,21 +129,22 @@ pub struct L3Prompt;
 
 impl L3Prompt {
     /// 系统提示
-    pub const SYSTEM: &'static str = r#"你是一个会话摘要助手。你的任务是将多轮对话的摘要汇总为一个完整的会话总结。
+    pub const SYSTEM: &'static str = r#"You are a session summarizer. Consolidate multiple conversation round summaries into a complete session summary.
 
-输出格式（JSON）：
+Output format (JSON):
 {
-  "summary": "一句话总结整个会话（< 100 字）",
-  "key_points": ["关键点1", "关键点2", ...],
-  "files_involved": ["涉及的主要文件"],
-  "technologies": ["涉及的技术/工具"]
+  "summary": "One-sentence summary of the entire session (< 100 words)",
+  "key_points": ["Key point 1", "Key point 2", ...],
+  "files_involved": ["Main files involved"],
+  "technologies": ["Technologies/tools involved"]
 }
 
-要求：
-- summary 要能让人快速理解这个会话做了什么
-- key_points 3-7 条，覆盖主要工作内容
-- 去除重复，合并相关内容
-- 保持技术准确性"#;
+Requirements:
+- summary should quickly convey what this session accomplished
+- key_points: 3-7 items covering main work
+- Remove duplicates, merge related content
+- Maintain technical accuracy
+- Output language: Match the language of the input content"#;
 
     /// 从 L2 Talk Summaries 构建用户消息
     pub fn build_user_message(
@@ -159,20 +154,17 @@ impl L3Prompt {
         let mut prompt = String::new();
 
         if let Some(path) = project_path {
-            prompt.push_str(&format!("项目: {}\n\n", path));
+            prompt.push_str(&format!("Project: {}\n\n", path));
         }
 
-        prompt.push_str(&format!("共 {} 轮对话：\n\n", talk_summaries.len()));
-
-        for (prompt_number, summary, completed) in talk_summaries {
-            prompt.push_str(&format!("第 {} 轮: {}\n", prompt_number, summary));
+        for (_prompt_number, summary, completed) in talk_summaries {
+            prompt.push_str(&format!("- {}", summary));
             if let Some(comp) = completed {
-                prompt.push_str(&format!("  完成: {}\n", comp));
+                prompt.push_str(&format!(". {}", comp));
             }
             prompt.push('\n');
         }
 
-        prompt.push_str("请生成整个会话的总结 JSON：");
         prompt
     }
 }
@@ -303,8 +295,8 @@ mod tests {
         };
 
         let prompt = L2Prompt::build_user_message(&talk);
-        assert!(prompt.contains("第 1 轮对话"));
-        assert!(prompt.contains("Help me fix the bug"));
+        assert!(prompt.contains("[User]: Help me fix the bug"));
+        assert!(prompt.contains("[Assistant]: I found the issue"));
     }
 
     #[test]
@@ -315,7 +307,8 @@ mod tests {
         ];
 
         let prompt = L3Prompt::build_user_message(&summaries, Some("/project/path"));
-        assert!(prompt.contains("项目: /project/path"));
-        assert!(prompt.contains("共 2 轮对话"));
+        assert!(prompt.contains("Project: /project/path"));
+        assert!(prompt.contains("- Fixed authentication bug. Added null check"));
+        assert!(prompt.contains("- Added new API endpoint"));
     }
 }
