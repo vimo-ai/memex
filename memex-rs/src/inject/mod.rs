@@ -218,7 +218,7 @@ impl InjectService {
                     }
                     let items: Vec<ContextItem> = summaries
                         .into_iter()
-                        .map(|s| ContextItem::SessionSummary(s))
+                        .map(ContextItem::SessionSummary)
                         .collect();
                     (items, "sessions")
                 }
@@ -232,7 +232,7 @@ impl InjectService {
                     }
                     let items: Vec<ContextItem> = talks
                         .into_iter()
-                        .map(|t| ContextItem::TalkSummary(t))
+                        .map(ContextItem::TalkSummary)
                         .collect();
                     (items, "talks")
                 }
@@ -246,7 +246,7 @@ impl InjectService {
                     }
                     let items: Vec<ContextItem> = obs
                         .into_iter()
-                        .map(|o| ContextItem::Observation(o))
+                        .map(ContextItem::Observation)
                         .collect();
                     (items, "observations")
                 }
@@ -257,7 +257,7 @@ impl InjectService {
                     }
                     let items: Vec<ContextItem> = messages
                         .into_iter()
-                        .map(|m| ContextItem::Message(m))
+                        .map(ContextItem::Message)
                         .collect();
                     (items, "messages")
                 }
@@ -539,7 +539,7 @@ impl InjectService {
                 text: r.text,
                 distance: r.distance,
                 score: 1.0,
-                created_at: None, // TODO: 需要从数据库获取
+                created_at: r.created_at,
             })
             .collect())
     }

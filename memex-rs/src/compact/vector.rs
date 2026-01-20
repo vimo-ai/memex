@@ -65,6 +65,8 @@ pub struct CompactVectorRecord {
     pub prompt_number: Option<i32>,
     /// 向量化的文本内容
     pub text: String,
+    /// 创建时间 (RFC3339)
+    pub created_at: String,
     /// 向量
     pub embedding: Vec<f32>,
 }
@@ -84,6 +86,8 @@ pub struct CompactVectorSearchResult {
     pub prompt_number: Option<i32>,
     /// 文本内容
     pub text: String,
+    /// 创建时间 (RFC3339)，老数据可能为 None
+    pub created_at: Option<String>,
     /// 距离（越小越相似）
     pub distance: f32,
 }
@@ -129,6 +133,7 @@ impl CompactVectorStore {
             Field::new("source_id", DataType::Utf8, false),
             Field::new("prompt_number", DataType::Int32, true), // nullable
             Field::new("text", DataType::Utf8, false),
+            Field::new("created_at", DataType::Utf8, false),
             Field::new(
                 "vector",
                 DataType::FixedSizeList(
@@ -171,6 +176,7 @@ impl CompactVectorStore {
         let source_ids = StringArray::from(Vec::<String>::new());
         let prompt_numbers = Int32Array::from(Vec::<Option<i32>>::new());
         let texts = StringArray::from(Vec::<String>::new());
+        let created_ats = StringArray::from(Vec::<String>::new());
         let vectors = Self::create_empty_vector_array();
 
         RecordBatch::try_new(
@@ -182,6 +188,7 @@ impl CompactVectorStore {
                 Arc::new(source_ids),
                 Arc::new(prompt_numbers),
                 Arc::new(texts),
+                Arc::new(created_ats),
                 Arc::new(vectors),
             ],
         )
@@ -229,6 +236,7 @@ impl CompactVectorStore {
         let source_ids: Vec<&str> = records.iter().map(|r| r.source_id.as_str()).collect();
         let prompt_numbers: Vec<Option<i32>> = records.iter().map(|r| r.prompt_number).collect();
         let texts: Vec<&str> = records.iter().map(|r| r.text.as_str()).collect();
+        let created_ats: Vec<&str> = records.iter().map(|r| r.created_at.as_str()).collect();
 
         // 构建向量数组
         let vectors =
@@ -252,6 +260,7 @@ impl CompactVectorStore {
                 Arc::new(StringArray::from(source_ids)),
                 Arc::new(prompt_builder.finish()),
                 Arc::new(StringArray::from(texts)),
+                Arc::new(StringArray::from(created_ats)),
                 Arc::new(vectors),
             ],
         )?;
@@ -339,10 +348,15 @@ impl CompactVectorStore {
             let texts = batch
                 .column_by_name("text")
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+            // created_at 是可选的，兼容老数据
+            let created_ats = batch
+                .column_by_name("created_at")
+                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
             let distances = batch
                 .column_by_name("_distance")
                 .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
 
+            // 核心字段必须存在，created_at 可选
             if let (Some(ids), Some(sids), Some(lvls), Some(src_ids), Some(pns), Some(txts), Some(dists)) =
                 (ids, session_ids, levels, source_ids, prompt_numbers, texts, distances)
             {
@@ -354,6 +368,7 @@ impl CompactVectorStore {
                         source_id: src_ids.value(i).to_string(),
                         prompt_number: if pns.is_null(i) { None } else { Some(pns.value(i)) },
                         text: txts.value(i).to_string(),
+                        created_at: created_ats.map(|cats| cats.value(i).to_string()),
                         distance: dists.value(i),
                     });
                 }
@@ -429,6 +444,7 @@ mod tests {
                 source_id: "obs-1".to_string(),
                 prompt_number: Some(1),
                 text: "Fixed a bug in user authentication".to_string(),
+                created_at: "2024-01-01T10:00:00Z".to_string(),
                 embedding: vec![0.1; EMBEDDING_DIM],
             },
             CompactVectorRecord {
@@ -438,6 +454,7 @@ mod tests {
                 source_id: "talk-1".to_string(),
                 prompt_number: Some(1),
                 text: "Implemented login flow with OAuth".to_string(),
+                created_at: "2024-01-01T11:00:00Z".to_string(),
                 embedding: vec![0.2; EMBEDDING_DIM],
             },
             CompactVectorRecord {
@@ -447,6 +464,7 @@ mod tests {
                 source_id: "summary-1".to_string(),
                 prompt_number: None,
                 text: "Complete authentication system implementation".to_string(),
+                created_at: "2024-01-01T12:00:00Z".to_string(),
                 embedding: vec![0.3; EMBEDDING_DIM],
             },
         ];
@@ -474,6 +492,16 @@ mod tests {
         let results = store.search(&query, Some(CompactLevel::L1), 10).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].level, "l1");
+
+        // 测试 created_at 正确返回
+        assert_eq!(results[0].created_at, Some("2024-01-01T10:00:00Z".to_string()));
+
+        // 测试搜索所有层级时 created_at 都正确
+        let results = store.search(&query, None, 10).await.unwrap();
+        let created_ats: Vec<Option<String>> = results.iter().map(|r| r.created_at.clone()).collect();
+        assert!(created_ats.contains(&Some("2024-01-01T10:00:00Z".to_string()))); // L1
+        assert!(created_ats.contains(&Some("2024-01-01T11:00:00Z".to_string()))); // L2
+        assert!(created_ats.contains(&Some("2024-01-01T12:00:00Z".to_string()))); // L3
     }
 
     #[test]

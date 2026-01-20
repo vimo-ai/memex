@@ -114,7 +114,7 @@ pub enum VectorDistanceType {
 ///
 /// 在会话开始时注入最近的历史上下文
 /// 按 sources 优先级 fallback，默认: L3 → L2 → L0
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SessionStartConfig {
     /// 是否启用
@@ -133,17 +133,6 @@ pub struct SessionStartConfig {
     /// 最大注入 token 数（默认 2000）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<usize>,
-}
-
-impl Default for SessionStartConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            sources: None,
-            max_items: None,
-            max_tokens: None,
-        }
-    }
 }
 
 impl SessionStartConfig {
@@ -175,7 +164,7 @@ impl SessionStartConfig {
 /// UserPromptSubmit Hook 配置
 ///
 /// 根据用户 prompt 进行向量搜索并注入相关上下文
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UserPromptConfig {
     /// 是否启用
@@ -221,24 +210,6 @@ pub struct UserPromptConfig {
     /// 时间衰减半衰期（天）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_decay_halflife: Option<u32>,
-}
-
-impl Default for UserPromptConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            mode: None,
-            sources: None,
-            similarity_threshold: None,
-            max_tokens: None,
-            limit_per_source: None,
-            distance_type: None,
-            project_scope: None,
-            time_window_days: None,
-            time_decay: None,
-            time_decay_halflife: None,
-        }
-    }
 }
 
 impl UserPromptConfig {
@@ -347,7 +318,7 @@ impl UserPromptConfig {
 ///   }
 /// }
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InjectConfig {
     /// 顶层快捷模式：none (全关) | full (全开)
@@ -362,16 +333,6 @@ pub struct InjectConfig {
     /// UserPromptSubmit Hook 配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_prompt: Option<UserPromptConfig>,
-}
-
-impl Default for InjectConfig {
-    fn default() -> Self {
-        Self {
-            mode: None,
-            session_start: None,
-            user_prompt: None,
-        }
-    }
 }
 
 impl InjectConfig {

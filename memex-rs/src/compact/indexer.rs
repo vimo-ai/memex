@@ -51,6 +51,7 @@ impl CompactIndexer {
             source_id: obs.id.clone(),
             prompt_number: Some(obs.prompt_number),
             text,
+            created_at: obs.created_at.clone(),
             embedding,
         };
 
@@ -77,6 +78,7 @@ impl CompactIndexer {
             source_id: summary.id.clone(),
             prompt_number: Some(summary.prompt_number),
             text,
+            created_at: summary.created_at.clone(),
             embedding,
         };
 
@@ -103,6 +105,7 @@ impl CompactIndexer {
             source_id: summary.id.clone(),
             prompt_number: None,
             text,
+            created_at: summary.created_at.clone(),
             embedding,
         };
 
@@ -140,6 +143,7 @@ impl CompactIndexer {
                 source_id: obs.id.clone(),
                 prompt_number: Some(obs.prompt_number),
                 text,
+                created_at: obs.created_at.clone(),
                 embedding,
             })
             .collect();
@@ -175,6 +179,7 @@ impl CompactIndexer {
                 source_id: s.id.clone(),
                 prompt_number: Some(s.prompt_number),
                 text,
+                created_at: s.created_at.clone(),
                 embedding,
             })
             .collect();
