@@ -11,6 +11,7 @@ use tokio::sync::{mpsc, RwLock};
 
 use super::config::CompactConfig;
 use super::db::CompactDB;
+use super::indexer::CompactIndexer;
 use super::service::CompactService;
 use crate::llm::ChatProvider;
 use crate::shared_adapter::SharedDbAdapter;
@@ -149,9 +150,15 @@ impl CompactWorker {
         compact_db: Arc<CompactDB>,
         config: CompactConfig,
         tracker: SessionTracker,
+        indexer: Option<CompactIndexer>,
     ) -> Self {
         let needs_l3 = config.l3_session_summary;
-        let service = CompactService::new(shared_db, chat_provider, compact_db.clone(), config);
+        let mut service = CompactService::new(shared_db, chat_provider, compact_db.clone(), config);
+
+        // 设置向量索引器（如果提供）
+        if let Some(idx) = indexer {
+            service = service.with_indexer(idx);
+        }
 
         Self {
             service,

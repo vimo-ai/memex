@@ -774,6 +774,82 @@ impl CompactDB {
         Ok(result)
     }
 
+    /// 获取最近的 Session Summaries（用于 Full 模式注入）
+    ///
+    /// # Arguments
+    /// * `project_id` - 可选的项目 ID 过滤（需要通过 session 表关联）
+    /// * `limit` - 最大返回数量
+    pub async fn get_recent_session_summaries(
+        &self,
+        project_id: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<SessionSummary>> {
+        let conn = self.conn.lock().await;
+
+        // 根据是否有 project_id 选择不同的查询
+        // 需要 JOIN sessions 表来获取 project_id
+        let sql = if project_id.is_some() {
+            r#"
+            SELECT ss.id, ss.session_id,
+                   ss.summary, ss.key_points, ss.files_involved, ss.technologies,
+                   ss.provider, ss.model, ss.tokens_input, ss.tokens_output,
+                   ss.created_at, ss.updated_at
+            FROM session_summaries ss
+            JOIN sessions s ON ss.session_id = s.id
+            WHERE s.project_id = ?1
+            ORDER BY ss.created_at DESC
+            LIMIT ?2
+            "#
+        } else {
+            r#"
+            SELECT id, session_id,
+                   summary, key_points, files_involved, technologies,
+                   provider, model, tokens_input, tokens_output,
+                   created_at, updated_at
+            FROM session_summaries
+            ORDER BY created_at DESC
+            LIMIT ?1
+            "#
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+        let rows = if let Some(pid) = project_id {
+            stmt.query_map(params![pid, limit], Self::row_to_session_summary)?
+        } else {
+            stmt.query_map(params![limit], Self::row_to_session_summary)?
+        };
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    /// 从 Row 转换为 SessionSummary
+    fn row_to_session_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
+        Ok(SessionSummary {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            summary: row.get(2)?,
+            key_points: row
+                .get::<_, Option<String>>(3)?
+                .and_then(|s| serde_json::from_str(&s).ok()),
+            files_involved: row
+                .get::<_, Option<String>>(4)?
+                .and_then(|s| serde_json::from_str(&s).ok()),
+            technologies: row
+                .get::<_, Option<String>>(5)?
+                .and_then(|s| serde_json::from_str(&s).ok()),
+            provider: row.get(6)?,
+            model: row.get(7)?,
+            tokens_input: row.get(8)?,
+            tokens_output: row.get(9)?,
+            created_at: row.get(10)?,
+            updated_at: row.get(11)?,
+        })
+    }
+
     // ==================== 处理进度 ====================
 
     /// 获取处理进度

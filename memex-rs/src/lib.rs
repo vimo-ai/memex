@@ -11,6 +11,7 @@ pub mod config;
 pub mod domain;
 pub mod embedding;
 pub mod indexer;
+pub mod inject;
 pub mod llm;
 pub mod rag;
 pub mod search;

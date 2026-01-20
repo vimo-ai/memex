@@ -9,10 +9,12 @@ use arrow_array::{
 };
 use arrow_schema::{DataType, Field, Schema};
 use lancedb::query::{ExecutableQuery, QueryBase};
-use lancedb::{connect, Connection, Table};
+use lancedb::{connect, Connection, DistanceType, Table};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
+
+use super::config::VectorDistanceType;
 
 /// 向量维度 (bge-m3 默认 1024)
 const EMBEDDING_DIM: usize = 1024;
@@ -274,15 +276,37 @@ impl CompactVectorStore {
         level: Option<CompactLevel>,
         limit: usize,
     ) -> Result<Vec<CompactVectorSearchResult>> {
+        self.search_with_distance_type(query_vector, level, limit, VectorDistanceType::Cosine)
+            .await
+    }
+
+    /// 向量搜索（指定距离类型）
+    ///
+    /// - `level`: None 表示搜索所有层级，Some 表示只搜索指定层级
+    /// - `distance_type`: 距离类型（默认 Cosine）
+    pub async fn search_with_distance_type(
+        &self,
+        query_vector: &[f32],
+        level: Option<CompactLevel>,
+        limit: usize,
+        distance_type: VectorDistanceType,
+    ) -> Result<Vec<CompactVectorSearchResult>> {
         let table = match &self.table {
             Some(t) => t,
             None => return Ok(vec![]),
         };
 
+        let lance_distance = match distance_type {
+            VectorDistanceType::Cosine => DistanceType::Cosine,
+            VectorDistanceType::Euclidean => DistanceType::L2,
+            VectorDistanceType::Dot => DistanceType::Dot,
+        };
+
         // 构建查询
         let mut query = table
             .vector_search(query_vector.to_vec())
-            .context("向量搜索失败")?;
+            .context("向量搜索失败")?
+            .distance_type(lance_distance);
 
         // 添加层级过滤
         if let Some(l) = level {

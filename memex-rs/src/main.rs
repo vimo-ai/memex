@@ -16,7 +16,9 @@ use memex::api::{create_router, AppState};
 use memex::archive::ArchiveService;
 use memex::backup::BackupService;
 use memex::collector::Collector;
-use memex::compact::{run_compact_worker, CompactDB, CompactQueue, CompactWorker};
+use memex::compact::{
+    run_compact_worker, CompactDB, CompactIndexer, CompactQueue, CompactVectorStore, CompactWorker,
+};
 use memex::config::Config;
 use memex::indexer::{IndexQueue, VectorIndexer};
 use memex::llm::{ChatProvider, EmbeddingProvider, OllamaProvider};
@@ -347,66 +349,123 @@ async fn main() -> anyhow::Result<()> {
     // Initialize Compact service (optional, requires enabled + chat provider)
     // 通过配置文件 ~/.vimo/memex/config.json 控制
     // 注意: compact_db 会同时传给 CompactWorker 和 AppState（用于 MCP 渐进式披露）
+    // 注意: compact_vector 会传给 CompactIndexer 和 AppState（用于 inject）
     let compact_config = config.compact.clone();
-    let (compact_queue, compact_db): (Option<CompactQueue>, Option<Arc<CompactDB>>) =
-        if compact_config.enabled {
-            if let Some(ref chat_provider) = chat_for_compact {
-                // 初始化 CompactDB（复用共享数据库文件）
-                // 传递 fts_tokenizer 配置（默认 trigram 支持中文）
-                match CompactDB::connect(config.db_path(), Some(&compact_config.fts_tokenizer)) {
-                    Ok(compact_db) => {
-                        let compact_db = Arc::new(compact_db);
+    #[allow(clippy::type_complexity)]
+    let (compact_queue, compact_db, compact_vector): (
+        Option<CompactQueue>,
+        Option<Arc<CompactDB>>,
+        Option<Arc<RwLock<CompactVectorStore>>>,
+    ) = if compact_config.enabled {
+        if let Some(ref chat_provider) = chat_for_compact {
+            // 初始化 CompactDB（复用共享数据库文件）
+            // 传递 fts_tokenizer 配置（默认 trigram 支持中文）
+            match CompactDB::connect(config.db_path(), Some(&compact_config.fts_tokenizer)) {
+                Ok(compact_db) => {
+                    let compact_db = Arc::new(compact_db);
 
-                        // 启动时清理超时的锁（进程崩溃恢复）
-                        if let Err(e) = compact_db.unlock_stale_locks().await {
-                            tracing::warn!("⚠️ Failed to clean stale locks: {}", e);
+                    // 启动时清理超时的锁（进程崩溃恢复）
+                    if let Err(e) = compact_db.unlock_stale_locks().await {
+                        tracing::warn!("⚠️ Failed to clean stale locks: {}", e);
+                    }
+
+                    // 初始化 compact 专用的向量存储（与 L0 分离）
+                    // 同时用于 CompactIndexer 和 AppState（inject）
+                    let compact_vector_store = if embedding.is_some() {
+                        let compact_vector_path = config.lancedb_path().join("compact");
+                        match CompactVectorStore::open(&compact_vector_path).await {
+                            Ok(store) => {
+                                tracing::info!(
+                                    "🗄️ Compact LanceDB opened: {:?}",
+                                    compact_vector_path
+                                );
+                                Some(Arc::new(RwLock::new(store)))
+                            }
+                            Err(e) => {
+                                tracing::warn!("⚠️ Failed to open Compact LanceDB: {}", e);
+                                None
+                            }
                         }
+                    } else {
+                        None
+                    };
 
-                        // 创建队列和 worker
-                        let (queue, receiver) = CompactQueue::new();
-                        let worker = CompactWorker::new(
-                            shared_db.clone(),
-                            chat_provider.clone(),
-                            compact_db.clone(), // Clone for worker
-                            compact_config.clone(),
-                            queue.tracker().clone(),
-                        );
+                    // 创建 CompactIndexer（可选，需要 embedding provider + vector store）
+                    let compact_indexer = match (&embedding, &compact_vector_store) {
+                        (Some(emb), Some(store)) => {
+                            Some(CompactIndexer::new(compact_db.clone(), emb.clone(), store.clone()))
+                        }
+                        _ => None,
+                    };
 
-                        // 启动 worker（后台任务）
-                        tokio::spawn(run_compact_worker(worker, receiver));
+                    // 创建队列和 worker
+                    let (queue, receiver) = CompactQueue::new();
+                    let worker = CompactWorker::new(
+                        shared_db.clone(),
+                        chat_provider.clone(),
+                        compact_db.clone(), // Clone for worker
+                        compact_config.clone(),
+                        queue.tracker().clone(),
+                        compact_indexer,
+                    );
 
-                        tracing::info!(
-                            "🗜️ Compact service enabled (L1={}, L2={}, L3={})",
-                            compact_config.l1_observations,
-                            compact_config.l2_talk_summary,
-                            compact_config.l3_session_summary
-                        );
+                    // 启动 worker（后台任务）
+                    tokio::spawn(run_compact_worker(worker, receiver));
 
-                        (Some(queue), Some(compact_db))
-                    }
-                    Err(e) => {
-                        tracing::warn!("⚠️ Failed to initialize CompactDB: {}", e);
-                        (None, None)
-                    }
+                    tracing::info!(
+                        "🗜️ Compact service enabled (L1={}, L2={}, L3={})",
+                        compact_config.l1_observations,
+                        compact_config.l2_talk_summary,
+                        compact_config.l3_session_summary
+                    );
+
+                    (Some(queue), Some(compact_db), compact_vector_store)
                 }
-            } else {
-                tracing::warn!("⚠️ Compact enabled but chat model unavailable, worker disabled");
-                // 连接 CompactDB（用于 MCP 搜索已有的摘要）
-                let compact_db = CompactDB::connect(config.db_path(), Some(&compact_config.fts_tokenizer))
-                    .ok()
-                    .map(Arc::new);
-                (None, compact_db)
+                Err(e) => {
+                    tracing::warn!("⚠️ Failed to initialize CompactDB: {}", e);
+                    (None, None, None)
+                }
             }
         } else {
-            // Compact 未启用，只连接 CompactDB（用于 MCP 搜索已有的摘要）
+            tracing::warn!("⚠️ Compact enabled but chat model unavailable, worker disabled");
+            // 连接 CompactDB（用于 MCP 搜索已有的摘要）
             let compact_db = CompactDB::connect(config.db_path(), Some(&compact_config.fts_tokenizer))
                 .ok()
                 .map(Arc::new);
-            if compact_db.is_some() {
-                tracing::info!("ℹ️ CompactDB connected for MCP search (read-only, COMPACT_ENABLED=false)");
-            }
-            (None, compact_db)
+            // 初始化 compact vector store（用于 inject，即使 worker 不启用）
+            let compact_vector_store = if embedding.is_some() && compact_db.is_some() {
+                let compact_vector_path = config.lancedb_path().join("compact");
+                CompactVectorStore::open(&compact_vector_path)
+                    .await
+                    .ok()
+                    .map(|s| Arc::new(RwLock::new(s)))
+            } else {
+                None
+            };
+            (None, compact_db, compact_vector_store)
+        }
+    } else {
+        // Compact 未启用，只连接 CompactDB（用于 MCP 搜索已有的摘要）
+        let compact_db = CompactDB::connect(config.db_path(), Some(&compact_config.fts_tokenizer))
+            .ok()
+            .map(Arc::new);
+        // 初始化 compact vector store（用于 inject，即使 compact 未启用）
+        let compact_vector_store = if embedding.is_some() && compact_db.is_some() {
+            let compact_vector_path = config.lancedb_path().join("compact");
+            CompactVectorStore::open(&compact_vector_path)
+                .await
+                .ok()
+                .map(|s| Arc::new(RwLock::new(s)))
+        } else {
+            None
         };
+        if compact_db.is_some() {
+            tracing::info!(
+                "ℹ️ CompactDB connected for MCP search (read-only, COMPACT_ENABLED=false)"
+            );
+        }
+        (None, compact_db, compact_vector_store)
+    };
 
     // Create hybrid search service
     let hybrid_search =
@@ -431,6 +490,7 @@ async fn main() -> anyhow::Result<()> {
         rag_service,
         compact_db,
         compact_queue: compact_queue.clone(),
+        compact_vector,
     });
 
     // Run initial collection in background (non-blocking HTTP startup)

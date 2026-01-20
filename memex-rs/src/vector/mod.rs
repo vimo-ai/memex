@@ -9,9 +9,11 @@ use arrow_array::{
 };
 use arrow_schema::{DataType, Field, Schema};
 use lancedb::query::{ExecutableQuery, QueryBase};
-use lancedb::{connect, Connection, Table};
+use lancedb::{connect, Connection, DistanceType, Table};
 use std::path::Path;
 use std::sync::Arc;
+
+use crate::compact::VectorDistanceType;
 
 /// 向量维度 (bge-m3 默认 1024)
 const EMBEDDING_DIM: usize = 1024;
@@ -192,19 +194,39 @@ impl VectorStore {
     }
 
     /// 向量搜索
+    ///
+    /// - `distance_type`: 距离类型（默认 Cosine）
     pub async fn search(
         &self,
         query_vector: &[f32],
         limit: usize,
+    ) -> Result<Vec<VectorSearchResult>> {
+        self.search_with_distance_type(query_vector, limit, VectorDistanceType::Cosine)
+            .await
+    }
+
+    /// 向量搜索（指定距离类型）
+    pub async fn search_with_distance_type(
+        &self,
+        query_vector: &[f32],
+        limit: usize,
+        distance_type: VectorDistanceType,
     ) -> Result<Vec<VectorSearchResult>> {
         let table = match &self.table {
             Some(t) => t,
             None => return Ok(vec![]),
         };
 
+        let lance_distance = match distance_type {
+            VectorDistanceType::Cosine => DistanceType::Cosine,
+            VectorDistanceType::Euclidean => DistanceType::L2,
+            VectorDistanceType::Dot => DistanceType::Dot,
+        };
+
         let results = table
             .vector_search(query_vector.to_vec())
             .context("向量搜索失败")?
+            .distance_type(lance_distance)
             .limit(limit)
             .execute()
             .await

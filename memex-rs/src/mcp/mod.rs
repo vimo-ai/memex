@@ -1047,6 +1047,7 @@ mod tests {
                 rag_service,
                 compact_db: None,
                 compact_queue: None,
+                compact_vector: None,
             };
 
             (Arc::new(state), dir)

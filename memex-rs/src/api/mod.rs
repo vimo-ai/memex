@@ -13,10 +13,11 @@ use tokio::sync::RwLock;
 
 use crate::backup::BackupService;
 use crate::collector::Collector;
-use crate::compact::{CompactDB, CompactQueue};
+use crate::compact::{CompactDB, CompactQueue, CompactVectorStore};
 use crate::config::Config;
 use crate::domain::{MessageListDto, ProjectListDto, SessionListDto, SessionSearchDto};
 use crate::indexer::VectorIndexer;
+use crate::inject::InjectService;
 use crate::llm::{ChatProvider, EmbeddingProvider};
 use crate::rag::{RagOptions, RagService};
 use crate::search::{HybridSearchOptions, HybridSearchResult, HybridSearchService};
@@ -42,6 +43,8 @@ pub struct AppState {
     pub compact_db: Option<Arc<CompactDB>>,
     /// Compact 队列（用于触发 compact 任务）
     pub compact_queue: Option<CompactQueue>,
+    /// Compact 向量存储（L1/L2/L3 摘要向量，用于 inject）
+    pub compact_vector: Option<Arc<RwLock<CompactVectorStore>>>,
 }
 
 /// 创建路由
@@ -100,6 +103,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Compact
         .route("/api/compact/trigger", post(compact_trigger))
         .route("/api/compact/status", get(compact_status))
+        // Inject (Claude Code Hook)
+        .route("/api/inject", post(inject))
         .with_state(state)
 }
 
@@ -1411,6 +1416,140 @@ async fn compact_status(State(state): State<Arc<AppState>>) -> Result<impl IntoR
         queue_available: state.compact_queue.is_some(),
         db_connected: state.compact_db.is_some(),
     }))
+}
+
+// ==================== Inject (Claude Code Hook) ====================
+
+/// Inject 请求
+#[derive(Debug, Deserialize)]
+struct InjectRequest {
+    /// 注入模式: none | full | combine | fallback
+    mode: Option<String>,
+    /// 用户查询（combine/fallback 模式需要）
+    query: Option<String>,
+    /// 项目路径（可选，用于项目过滤）
+    project: Option<String>,
+}
+
+/// Inject 响应
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InjectResponse {
+    /// Hook 输出（Claude Code 期望的格式）
+    hook_specific_output: HookSpecificOutput,
+    /// 元信息
+    #[serde(skip_serializing_if = "Option::is_none")]
+    meta: Option<InjectMeta>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HookSpecificOutput {
+    hook_event_name: String,
+    additional_context: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InjectMeta {
+    count: usize,
+    estimated_tokens: usize,
+    mode: String,
+}
+
+/// Claude Code Hook 上下文注入
+///
+/// POST /api/inject
+/// Body: { "mode": "combine", "query": "...", "project": "..." }
+async fn inject(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<InjectRequest>,
+) -> impl IntoResponse {
+    use crate::compact::InjectMode;
+
+    // 解析模式
+    let mode = req.mode.as_deref().and_then(|m| match m {
+        "none" => Some(InjectMode::None),
+        "full" => Some(InjectMode::Full),
+        "combine" => Some(InjectMode::Combine),
+        "fallback" => Some(InjectMode::Fallback),
+        _ => None,
+    });
+
+    // 检查必要的依赖
+    let compact_db = match &state.compact_db {
+        Some(db) => db.clone(),
+        None => {
+            // 静默失败：返回空上下文
+            return Json(InjectResponse {
+                hook_specific_output: HookSpecificOutput {
+                    hook_event_name: "UserPromptSubmit".to_string(),
+                    additional_context: String::new(),
+                },
+                meta: None,
+            });
+        }
+    };
+
+    // 创建 InjectService
+    let mut service = InjectService::new(
+        state.db.clone(),
+        compact_db,
+        state.config.compact.inject.clone(),
+    );
+
+    // 设置 embedding provider（如果有）
+    if let Some(embedding) = &state.embedding {
+        service = service.with_embedding(embedding.clone());
+    }
+
+    // 设置 L0 向量存储（如果有）
+    if let Some(vector) = &state.vector {
+        service = service.with_l0_vector(vector.clone());
+    }
+
+    // 设置 compact 向量存储（如果有）
+    if let Some(compact_vector) = &state.compact_vector {
+        service = service.with_compact_vector(compact_vector.clone());
+    }
+
+    // 执行注入
+    let result = match service
+        .inject(mode, req.query.as_deref(), req.project.as_deref())
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("Inject failed: {}", e);
+            // 静默失败：返回空上下文
+            return Json(InjectResponse {
+                hook_specific_output: HookSpecificOutput {
+                    hook_event_name: "UserPromptSubmit".to_string(),
+                    additional_context: String::new(),
+                },
+                meta: None,
+            });
+        }
+    };
+
+    // 确定事件名称
+    let event_name = match mode.unwrap_or(state.config.compact.inject.mode) {
+        InjectMode::Full => "SessionStart",
+        InjectMode::Combine | InjectMode::Fallback => "UserPromptSubmit",
+        InjectMode::None => "SessionStart",
+    };
+
+    Json(InjectResponse {
+        hook_specific_output: HookSpecificOutput {
+            hook_event_name: event_name.to_string(),
+            additional_context: result.context,
+        },
+        meta: Some(InjectMeta {
+            count: result.count,
+            estimated_tokens: result.estimated_tokens,
+            mode: result.mode,
+        }),
+    })
 }
 
 // ==================== 错误处理 ====================

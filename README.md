@@ -57,6 +57,26 @@ gemini mcp add --transport http memex http://localhost:10013/api/mcp
 use memex search "anything you want"
 ```
 
+### Claude Code Hooks (Optional)
+
+Auto-inject relevant memory context into your Claude Code sessions:
+
+```bash
+# ~/.claude/settings.json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "curl -s -X POST http://localhost:10013/api/inject -H 'Content-Type: application/json' -d '{\"mode\":\"combine\",\"query\":\"$PROMPT\"}' 2>/dev/null || echo '{}'"
+      }
+    ]
+  }
+}
+```
+
+See [Hook Documentation](https://vimoai.dev/docs/memex/hooks) for details.
+
 ## Documentation
 
 https://vimoai.dev/docs/memex
