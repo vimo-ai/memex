@@ -16,6 +16,21 @@ struct FileConfig {
     server: ServerConfig,
     ollama: OllamaConfig,
     features: FeaturesConfig,
+    backup: BackupConfig,
+}
+
+/// 备份配置
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct BackupConfig {
+    /// 最大备份数量（默认 7 天）
+    pub max_backups: usize,
+}
+
+impl Default for BackupConfig {
+    fn default() -> Self {
+        Self { max_backups: 7 }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -59,6 +74,8 @@ pub struct Config {
     pub enable_ai_chat: bool,
     /// Compact 配置
     pub compact: CompactConfig,
+    /// 备份配置
+    pub backup: BackupConfig,
 }
 
 impl Config {
@@ -158,6 +175,9 @@ impl Config {
                 }
                 compact
             },
+
+            // 备份配置
+            backup: file_config.backup,
         }
     }
 

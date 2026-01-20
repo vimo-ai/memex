@@ -850,6 +850,151 @@ impl CompactDB {
         })
     }
 
+    /// 获取最近的 Talk Summaries（用于 SessionStart fallback）
+    ///
+    /// # Arguments
+    /// * `project_id` - 可选的项目 ID 过滤（需要通过 session 表关联）
+    /// * `limit` - 最大返回数量
+    pub async fn get_recent_talk_summaries(
+        &self,
+        project_id: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<TalkSummary>> {
+        let conn = self.conn.lock().await;
+
+        let sql = if project_id.is_some() {
+            r#"
+            SELECT t.id, t.session_id, t.prompt_number,
+                   t.user_request, t.summary, t.completed, t.files_involved,
+                   t.provider, t.model, t.tokens_input, t.tokens_output, t.created_at
+            FROM talk_summaries t
+            JOIN sessions s ON t.session_id = s.id
+            WHERE s.project_id = ?1
+            ORDER BY t.created_at DESC
+            LIMIT ?2
+            "#
+        } else {
+            r#"
+            SELECT id, session_id, prompt_number,
+                   user_request, summary, completed, files_involved,
+                   provider, model, tokens_input, tokens_output, created_at
+            FROM talk_summaries
+            ORDER BY created_at DESC
+            LIMIT ?1
+            "#
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+        let rows = if let Some(pid) = project_id {
+            stmt.query_map(params![pid, limit], Self::row_to_talk_summary)?
+        } else {
+            stmt.query_map(params![limit], Self::row_to_talk_summary)?
+        };
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    /// 从 Row 转换为 TalkSummary
+    fn row_to_talk_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<TalkSummary> {
+        Ok(TalkSummary {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            prompt_number: row.get(2)?,
+            user_request: row.get(3)?,
+            summary: row.get(4)?,
+            completed: row.get(5)?,
+            files_involved: row
+                .get::<_, Option<String>>(6)?
+                .and_then(|s| serde_json::from_str(&s).ok()),
+            provider: row.get(7)?,
+            model: row.get(8)?,
+            tokens_input: row.get(9)?,
+            tokens_output: row.get(10)?,
+            created_at: row.get(11)?,
+        })
+    }
+
+    /// 获取最近的 Observations（用于 SessionStart fallback）
+    ///
+    /// # Arguments
+    /// * `project_id` - 可选的项目 ID 过滤（需要通过 session 表关联）
+    /// * `limit` - 最大返回数量
+    pub async fn get_recent_observations(
+        &self,
+        project_id: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<Observation>> {
+        let conn = self.conn.lock().await;
+
+        let sql = if project_id.is_some() {
+            r#"
+            SELECT o.id, o.session_id, o.prompt_number, o.source_offset,
+                   o.type, o.title, o.subtitle, o.facts, o.narrative,
+                   o.files_read, o.files_modified,
+                   o.provider, o.model, o.created_at
+            FROM observations o
+            JOIN sessions s ON o.session_id = s.id
+            WHERE s.project_id = ?1
+            ORDER BY o.created_at DESC
+            LIMIT ?2
+            "#
+        } else {
+            r#"
+            SELECT id, session_id, prompt_number, source_offset,
+                   type, title, subtitle, facts, narrative,
+                   files_read, files_modified,
+                   provider, model, created_at
+            FROM observations
+            ORDER BY created_at DESC
+            LIMIT ?1
+            "#
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+        let rows = if let Some(pid) = project_id {
+            stmt.query_map(params![pid, limit], Self::row_to_observation)?
+        } else {
+            stmt.query_map(params![limit], Self::row_to_observation)?
+        };
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
+    }
+
+    /// 从 Row 转换为 Observation
+    fn row_to_observation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Observation> {
+        Ok(Observation {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            prompt_number: row.get(2)?,
+            source_offset: row.get(3)?,
+            observation_type: ObservationType::parse(&row.get::<_, String>(4)?)
+                .unwrap_or(ObservationType::Change),
+            title: row.get(5)?,
+            subtitle: row.get(6)?,
+            facts: row
+                .get::<_, Option<String>>(7)?
+                .and_then(|s| serde_json::from_str(&s).ok()),
+            narrative: row.get(8)?,
+            files_read: row
+                .get::<_, Option<String>>(9)?
+                .and_then(|s| serde_json::from_str(&s).ok()),
+            files_modified: row
+                .get::<_, Option<String>>(10)?
+                .and_then(|s| serde_json::from_str(&s).ok()),
+            provider: row.get(11)?,
+            model: row.get(12)?,
+            created_at: row.get(13)?,
+        })
+    }
+
     // ==================== 处理进度 ====================
 
     /// 获取处理进度

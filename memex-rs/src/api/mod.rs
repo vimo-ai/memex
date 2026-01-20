@@ -1421,14 +1421,54 @@ async fn compact_status(State(state): State<Arc<AppState>>) -> Result<impl IntoR
 // ==================== Inject (Claude Code Hook) ====================
 
 /// Inject 请求
+///
+/// 支持两种 Hook 类型：
+/// - SessionStart: 会话开始时注入最近的 L3 摘要
+/// - UserPromptSubmit: 根据用户 prompt 进行向量搜索
+///
+/// 请求示例：
+/// ```json
+/// // SessionStart
+/// { "hook": "SessionStart" }
+///
+/// // UserPromptSubmit (combine 模式)
+/// { "hook": "UserPromptSubmit", "query": "...", "mode": "combine" }
+///
+/// // 带参数覆盖
+/// { "hook": "UserPromptSubmit", "query": "...", "mode": "combine", "max_tokens": 1000 }
+/// ```
 #[derive(Debug, Deserialize)]
 struct InjectRequest {
-    /// 注入模式: none | full | combine | fallback
-    mode: Option<String>,
-    /// 用户查询（combine/fallback 模式需要）
+    /// Hook 事件类型: SessionStart | UserPromptSubmit
+    hook: String,
+
+    /// 用户查询（UserPromptSubmit 需要）
     query: Option<String>,
+
     /// 项目路径（可选，用于项目过滤）
     project: Option<String>,
+
+    // ===== 可覆盖参数 =====
+    /// 是否启用（覆盖配置）
+    enabled: Option<bool>,
+
+    /// 搜索模式: combine | fallback（UserPromptSubmit）
+    mode: Option<String>,
+
+    /// 数据源（UserPromptSubmit）
+    sources: Option<Vec<String>>,
+
+    /// 最大条目数（SessionStart）
+    max_items: Option<usize>,
+
+    /// 最大 token 数
+    max_tokens: Option<usize>,
+
+    /// 相似度阈值（UserPromptSubmit）
+    similarity_threshold: Option<f32>,
+
+    /// 每个源的限制（UserPromptSubmit）
+    limit_per_source: Option<usize>,
 }
 
 /// Inject 响应
@@ -1460,21 +1500,13 @@ struct InjectMeta {
 /// Claude Code Hook 上下文注入
 ///
 /// POST /api/inject
-/// Body: { "mode": "combine", "query": "...", "project": "..." }
 async fn inject(
     State(state): State<Arc<AppState>>,
     Json(req): Json<InjectRequest>,
 ) -> impl IntoResponse {
-    use crate::compact::InjectMode;
-
-    // 解析模式
-    let mode = req.mode.as_deref().and_then(|m| match m {
-        "none" => Some(InjectMode::None),
-        "full" => Some(InjectMode::Full),
-        "combine" => Some(InjectMode::Combine),
-        "fallback" => Some(InjectMode::Fallback),
-        _ => None,
-    });
+    use crate::compact::{
+        InjectSource, SessionStartConfig, UserPromptConfig, UserPromptSearchMode,
+    };
 
     // 检查必要的依赖
     let compact_db = match &state.compact_db {
@@ -1483,7 +1515,7 @@ async fn inject(
             // 静默失败：返回空上下文
             return Json(InjectResponse {
                 hook_specific_output: HookSpecificOutput {
-                    hook_event_name: "UserPromptSubmit".to_string(),
+                    hook_event_name: req.hook.clone(),
                     additional_context: String::new(),
                 },
                 meta: None,
@@ -1513,18 +1545,95 @@ async fn inject(
         service = service.with_compact_vector(compact_vector.clone());
     }
 
-    // 执行注入
-    let result = match service
-        .inject(mode, req.query.as_deref(), req.project.as_deref())
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!("Inject failed: {}", e);
-            // 静默失败：返回空上下文
+    // 解析 sources（SessionStart 和 UserPromptSubmit 共用）
+    let sources = req.sources.as_ref().map(|s| {
+        s.iter()
+            .filter_map(|name| match name.as_str() {
+                "messages" => Some(InjectSource::Messages),
+                "observations" => Some(InjectSource::Observations),
+                "talks" => Some(InjectSource::Talks),
+                "sessions" => Some(InjectSource::Sessions),
+                "summaries" => Some(InjectSource::Summaries),
+                _ => None,
+            })
+            .collect()
+    });
+
+    // 根据 hook 类型分发
+    let result = match req.hook.as_str() {
+        "SessionStart" => {
+            // 构建配置覆盖
+            let config_override = if req.enabled.is_some()
+                || req.max_items.is_some()
+                || req.max_tokens.is_some()
+                || sources.is_some()
+            {
+                Some(SessionStartConfig {
+                    enabled: req.enabled.unwrap_or(true),
+                    sources: sources.clone(),
+                    max_items: req.max_items,
+                    max_tokens: req.max_tokens,
+                })
+            } else {
+                None
+            };
+
+            service
+                .inject_session_start(config_override, req.project.as_deref())
+                .await
+        }
+        "UserPromptSubmit" => {
+            let query = match &req.query {
+                Some(q) => q.as_str(),
+                None => {
+                    // UserPromptSubmit 需要 query
+                    return Json(InjectResponse {
+                        hook_specific_output: HookSpecificOutput {
+                            hook_event_name: req.hook.clone(),
+                            additional_context: String::new(),
+                        },
+                        meta: None,
+                    });
+                }
+            };
+
+            // 解析 mode
+            let search_mode = req.mode.as_deref().and_then(|m| match m {
+                "combine" => Some(UserPromptSearchMode::Combine),
+                "fallback" => Some(UserPromptSearchMode::Fallback),
+                _ => None,
+            });
+
+            // 构建配置覆盖
+            let config_override = if req.enabled.is_some()
+                || search_mode.is_some()
+                || sources.is_some()
+                || req.max_tokens.is_some()
+                || req.similarity_threshold.is_some()
+                || req.limit_per_source.is_some()
+            {
+                Some(UserPromptConfig {
+                    enabled: req.enabled.unwrap_or(true),
+                    mode: search_mode,
+                    sources,
+                    max_tokens: req.max_tokens,
+                    similarity_threshold: req.similarity_threshold,
+                    limit_per_source: req.limit_per_source,
+                    ..Default::default()
+                })
+            } else {
+                None
+            };
+
+            service
+                .inject_user_prompt(query, config_override, req.project.as_deref())
+                .await
+        }
+        _ => {
+            // 未知 hook 类型，静默返回空
             return Json(InjectResponse {
                 hook_specific_output: HookSpecificOutput {
-                    hook_event_name: "UserPromptSubmit".to_string(),
+                    hook_event_name: req.hook.clone(),
                     additional_context: String::new(),
                 },
                 meta: None,
@@ -1532,24 +1641,30 @@ async fn inject(
         }
     };
 
-    // 确定事件名称
-    let event_name = match mode.unwrap_or(state.config.compact.inject.mode) {
-        InjectMode::Full => "SessionStart",
-        InjectMode::Combine | InjectMode::Fallback => "UserPromptSubmit",
-        InjectMode::None => "SessionStart",
-    };
-
-    Json(InjectResponse {
-        hook_specific_output: HookSpecificOutput {
-            hook_event_name: event_name.to_string(),
-            additional_context: result.context,
-        },
-        meta: Some(InjectMeta {
-            count: result.count,
-            estimated_tokens: result.estimated_tokens,
-            mode: result.mode,
+    match result {
+        Ok(r) => Json(InjectResponse {
+            hook_specific_output: HookSpecificOutput {
+                hook_event_name: req.hook,
+                additional_context: r.context,
+            },
+            meta: Some(InjectMeta {
+                count: r.count,
+                estimated_tokens: r.estimated_tokens,
+                mode: r.mode,
+            }),
         }),
-    })
+        Err(e) => {
+            tracing::warn!("Inject failed: {}", e);
+            // 静默失败：返回空上下文
+            Json(InjectResponse {
+                hook_specific_output: HookSpecificOutput {
+                    hook_event_name: req.hook,
+                    additional_context: String::new(),
+                },
+                meta: None,
+            })
+        }
+    }
 }
 
 // ==================== 错误处理 ====================

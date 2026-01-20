@@ -6,6 +6,7 @@
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::signal;
 use tokio::sync::RwLock;
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tower_http::cors::{Any, CorsLayer};
@@ -101,6 +102,12 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("🚀 Memex Rust Backend starting...");
 
+    // Load config first (needed for backup path)
+    let config = Config::load();
+
+    // 启动时健康检查：检测数据库损坏并自动恢复
+    let needs_recollect = startup_health_check(&config).await?;
+
     // Initialize shared database (must succeed)
     let shared_db = {
         use claude_session_db::coordination::{Role, WriterHealth};
@@ -152,9 +159,6 @@ async fn main() -> anyhow::Result<()> {
         }
         adapter
     };
-
-    // Load config
-    let config = Config::load();
     tracing::info!("📁 Data directory: {:?}", config.data_dir);
     tracing::info!("📁 Web directory: {:?}", config.web_dir);
     tracing::info!("📁 Claude projects: {:?}", config.claude_projects_path);
@@ -172,7 +176,8 @@ async fn main() -> anyhow::Result<()> {
     let collector = Collector::new(config.clone(), shared_db.clone());
 
     // Create backup service
-    let backup = BackupService::new(config.db_path(), config.backup_dir());
+    let backup = BackupService::new(config.db_path(), config.backup_dir())
+        .with_max_backups(config.backup.max_backups);
 
     // Run archive compensation check on startup (async, non-blocking)
     {
@@ -494,21 +499,37 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Run initial collection in background (non-blocking HTTP startup)
+    // 如果从备份恢复了，立即执行采集补充增量数据
     {
         let collector = state.collector.clone();
+        let is_recovery = needs_recollect;
         tokio::spawn(async move {
-            // Delay 2 seconds to let HTTP start first
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-            tracing::info!("📥 Background initial collection starting...");
+            if is_recovery {
+                tracing::info!("🔄 Recovery mode: starting immediate collection to restore incremental data...");
+            } else {
+                // Normal startup: delay 2 seconds to let HTTP start first
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                tracing::info!("📥 Background initial collection starting...");
+            }
+
             match collector.collect_all() {
                 Ok(result) => {
                     if result.messages_inserted > 0 {
-                        tracing::info!(
-                            "✅ Collection done: {} projects, {} sessions, {} new messages",
-                            result.projects_scanned,
-                            result.sessions_scanned,
-                            result.messages_inserted
-                        );
+                        if is_recovery {
+                            tracing::info!(
+                                "✅ Recovery collection done: {} projects, {} sessions, {} messages restored",
+                                result.projects_scanned,
+                                result.sessions_scanned,
+                                result.messages_inserted
+                            );
+                        } else {
+                            tracing::info!(
+                                "✅ Collection done: {} projects, {} sessions, {} new messages",
+                                result.projects_scanned,
+                                result.sessions_scanned,
+                                result.messages_inserted
+                            );
+                        }
                     } else {
                         tracing::info!("📥 Initial collection done, no new messages");
                     }
@@ -605,12 +626,132 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("   POST /api/admin/merge-projects - Merge projects");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+
+    // 优雅关闭：执行 WAL checkpoint
+    tracing::info!("🛑 Shutting down, running WAL checkpoint...");
+    if let Err(e) = shared_db.checkpoint().await {
+        tracing::warn!("⚠️ Checkpoint failed: {}", e);
+    } else {
+        tracing::info!("✅ Checkpoint done");
+    }
 
     // Stop scheduler
     scheduler.shutdown().await?;
 
+    tracing::info!("👋 Memex shutdown complete");
     Ok(())
+}
+
+/// 优雅关闭信号处理
+///
+/// 监听 Ctrl+C (SIGINT) 和 SIGTERM 信号
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            tracing::info!("📥 Received Ctrl+C, initiating graceful shutdown...");
+        },
+        _ = terminate => {
+            tracing::info!("📥 Received SIGTERM, initiating graceful shutdown...");
+        },
+    }
+}
+
+/// 启动时健康检查
+///
+/// 检测数据库损坏，如果损坏则从最近的备份恢复
+/// 返回 true 表示需要重新采集数据
+async fn startup_health_check(config: &Config) -> anyhow::Result<bool> {
+    use claude_session_db::{DbConfig, IntegrityCheckResult, SessionDB};
+
+    let db_path = config.db_path();
+
+    // 如果数据库文件不存在，跳过检查
+    if !db_path.exists() {
+        tracing::info!("📂 Database not found, will be created on first run");
+        return Ok(false);
+    }
+
+    tracing::info!("🔍 Checking database integrity...");
+
+    // 尝试连接并检查完整性
+    let check_result = {
+        let db_config = DbConfig::local(db_path.to_string_lossy().into_owned());
+        match SessionDB::connect(db_config) {
+            Ok(db) => db.integrity_check(),
+            Err(e) => {
+                tracing::warn!("❌ Failed to connect to database: {}", e);
+                // 连接失败也视为损坏
+                Ok(IntegrityCheckResult::Corrupted(e.to_string()))
+            }
+        }
+    };
+
+    match check_result {
+        Ok(IntegrityCheckResult::Ok) => {
+            tracing::info!("✅ Database integrity check passed");
+            Ok(false)
+        }
+        Ok(IntegrityCheckResult::Corrupted(error)) => {
+            tracing::error!("❌ Database corrupted: {}", error);
+
+            // 尝试从备份恢复
+            let backup_service = BackupService::new(db_path.clone(), config.backup_dir());
+            let backups = backup_service.list_backups()?;
+
+            if backups.is_empty() {
+                tracing::error!("❌ No backups available, cannot recover!");
+                anyhow::bail!("Database corrupted and no backups available");
+            }
+
+            let latest = &backups[0]; // 备份已按时间降序排列
+            tracing::info!("🔄 Restoring from backup: {}", latest.name);
+
+            // 删除损坏的数据库文件（包括 WAL 文件）
+            let wal_path = db_path.with_extension("db-wal");
+            let shm_path = db_path.with_extension("db-shm");
+
+            if let Err(e) = std::fs::remove_file(&db_path) {
+                tracing::warn!("Failed to remove corrupted db: {}", e);
+            }
+            if wal_path.exists() {
+                let _ = std::fs::remove_file(&wal_path);
+            }
+            if shm_path.exists() {
+                let _ = std::fs::remove_file(&shm_path);
+            }
+
+            // 恢复备份
+            backup_service.restore(&latest.name)?;
+            tracing::info!("✅ Database restored from backup: {}", latest.name);
+
+            // 返回 true，表示需要重新采集增量数据
+            Ok(true)
+        }
+        Err(e) => {
+            tracing::error!("❌ Integrity check failed: {}", e);
+            anyhow::bail!("Failed to check database integrity: {}", e);
+        }
+    }
 }
 
 /// Setup scheduled task scheduler

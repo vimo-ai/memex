@@ -37,7 +37,7 @@ impl BackupService {
         Self {
             db_path,
             backup_dir,
-            max_backups: 30, // 保留 30 天备份
+            max_backups: 7, // 默认保留 7 天备份
         }
     }
 

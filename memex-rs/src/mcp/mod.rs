@@ -161,7 +161,8 @@ fn get_tools() -> Vec<Value> {
                 "properties": {
                     "query": { "type": "string", "description": "Search keywords" },
                     "level": { "type": "string", "enum": ["sessions", "talks", "raw"], "description": "Detail level: sessions (L3 summary, recommended), talks (L2 per-prompt), raw (L0 original). Default: sessions" },
-                    "cwd": { "type": "string", "description": "Filter to current project only" },
+                    "cwd": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Filter to specific project(s). Supports: exact path, prefix, or glob patterns (e.g. '*/ETerm*')" },
+                    "exclude_cwd": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Exclude specific project(s). Supports: exact path, prefix, or glob patterns (e.g. '*english*')" },
                     "time": { "type": "string", "description": "Time shortcut: 1d/3d/1w/1m (mutually exclusive with from/to)" },
                     "from": { "type": "string", "description": "Start date YYYY-MM-DD (mutually exclusive with time)" },
                     "to": { "type": "string", "description": "End date YYYY-MM-DD (mutually exclusive with time)" },
@@ -191,7 +192,8 @@ fn get_tools() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "cwd": { "type": "string", "description": "Filter to current project" },
+                    "cwd": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Filter to specific project(s). Supports: exact path, prefix, or glob patterns (e.g. '*/ETerm*')" },
+                    "exclude_cwd": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Exclude specific project(s). Supports: exact path, prefix, or glob patterns (e.g. '*english*')" },
                     "limit": { "type": "number", "description": "Max results, default 5" }
                 }
             }
@@ -342,8 +344,11 @@ fn date_to_timestamp(date: &str, is_start: bool) -> Option<i64> {
 async fn search_history(state: &AppState, args: Value) -> Result<Value, String> {
     let query = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
     let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(5) as usize;
-    let cwd = args.get("cwd").and_then(|c| c.as_str());
     let level = args.get("level").and_then(|l| l.as_str()).unwrap_or("sessions");
+
+    // 解析 cwd 参数（支持 string 或 array）
+    let include_cwds = parse_cwd_param(args.get("cwd"));
+    let exclude_cwds = parse_cwd_param(args.get("exclude_cwd"));
 
     // 时间参数：time 快捷方式 与 from/to 互斥
     let time_shortcut = args.get("time").and_then(|t| t.as_str());
@@ -359,11 +364,10 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
         return Ok(json!({ "results": [], "total": 0, "level": level }));
     }
 
-    // 根据 cwd 查找项目 ID
-    let project_id = if let Some(cwd_path) = cwd {
-        find_project_by_cwd(state, cwd_path).await
-    } else {
-        None
+    // 构建项目过滤器
+    let filter = ProjectFilter {
+        include: find_project_ids_by_cwds(state, &include_cwds).await,
+        exclude: find_project_ids_by_cwds(state, &exclude_cwds).await,
     };
 
     // 解析时间范围（无效日期报错而非静默忽略）
@@ -389,9 +393,9 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
 
     // 根据 level 选择搜索方式
     match level {
-        "sessions" => search_session_summaries(state, query, limit, project_id).await,
-        "talks" => search_talk_summaries(state, query, limit, project_id).await,
-        "raw" => search_raw_messages(state, query, limit, project_id, _start_ts, _end_ts).await,
+        "sessions" => search_session_summaries(state, query, limit, &filter).await,
+        "talks" => search_talk_summaries(state, query, limit, &filter).await,
+        "raw" => search_raw_messages(state, query, limit, &filter, _start_ts, _end_ts).await,
         _ => Err(format!("Invalid level: {}. Use sessions/talks/raw", level)),
     }
 }
@@ -401,26 +405,46 @@ async fn search_session_summaries(
     state: &AppState,
     query: &str,
     limit: usize,
-    _project_id: Option<i64>,
+    filter: &ProjectFilter,
 ) -> Result<Value, String> {
     // 如果 compact_db 不可用，fallback 到 talks
     let compact_db = match &state.compact_db {
         Some(db) => db,
-        None => return search_talk_summaries(state, query, limit, _project_id).await,
+        None => return search_talk_summaries(state, query, limit, filter).await,
     };
 
+    // 多取一些结果用于过滤
+    let search_limit = if filter.is_empty() { limit } else { limit * 3 };
     let results = compact_db
-        .search_session_summaries(query, limit)
+        .search_session_summaries(query, search_limit)
         .await
         .map_err(|e| e.to_string())?;
 
     // 如果没有结果，fallback 到 talks
     if results.is_empty() {
-        return search_talk_summaries(state, query, limit, _project_id).await;
+        return search_talk_summaries(state, query, limit, filter).await;
     }
+
+    // 获取 session 到 project_id 的映射（用于过滤）
+    let session_project_map = if !filter.is_empty() {
+        get_session_project_map(state, &results.iter().map(|s| s.session_id.clone()).collect::<Vec<_>>()).await
+    } else {
+        std::collections::HashMap::new()
+    };
 
     let formatted: Vec<Value> = results
         .iter()
+        .filter(|s| {
+            if filter.is_empty() {
+                return true;
+            }
+            if let Some(&project_id) = session_project_map.get(&s.session_id) {
+                filter.matches(project_id)
+            } else {
+                true // 如果找不到映射，不过滤
+            }
+        })
+        .take(limit)
         .map(|s| {
             json!({
                 "session": &s.session_id,
@@ -446,26 +470,46 @@ async fn search_talk_summaries(
     state: &AppState,
     query: &str,
     limit: usize,
-    project_id: Option<i64>,
+    filter: &ProjectFilter,
 ) -> Result<Value, String> {
     // 如果 compact_db 不可用，fallback 到 raw
     let compact_db = match &state.compact_db {
         Some(db) => db,
-        None => return search_raw_messages(state, query, limit, project_id, None, None).await,
+        None => return search_raw_messages(state, query, limit, filter, None, None).await,
     };
 
+    // 多取一些结果用于过滤
+    let search_limit = if filter.is_empty() { limit } else { limit * 3 };
     let results = compact_db
-        .search_talk_summaries(query, limit)
+        .search_talk_summaries(query, search_limit)
         .await
         .map_err(|e| e.to_string())?;
 
     // 如果没有结果，fallback 到 raw
     if results.is_empty() {
-        return search_raw_messages(state, query, limit, project_id, None, None).await;
+        return search_raw_messages(state, query, limit, filter, None, None).await;
     }
+
+    // 获取 session 到 project_id 的映射（用于过滤）
+    let session_project_map = if !filter.is_empty() {
+        get_session_project_map(state, &results.iter().map(|t| t.session_id.clone()).collect::<Vec<_>>()).await
+    } else {
+        std::collections::HashMap::new()
+    };
 
     let formatted: Vec<Value> = results
         .iter()
+        .filter(|t| {
+            if filter.is_empty() {
+                return true;
+            }
+            if let Some(&project_id) = session_project_map.get(&t.session_id) {
+                filter.matches(project_id)
+            } else {
+                true // 如果找不到映射，不过滤
+            }
+        })
+        .take(limit)
         .map(|t| {
             json!({
                 "session": &t.session_id,
@@ -492,18 +536,27 @@ async fn search_raw_messages(
     state: &AppState,
     query: &str,
     limit: usize,
-    project_id: Option<i64>,
+    filter: &ProjectFilter,
     start_ts: Option<i64>,
     end_ts: Option<i64>,
 ) -> Result<Value, String> {
-    // 执行 FTS 搜索，多取一些用于计算 sessionMatches
-    let search_limit = (limit * 3).max(30); // 多取一些用于聚合
+    // 对于单个 include 项目，使用 SQL 层过滤（向后兼容，更高效）
+    // 对于复杂过滤（多 include 或 exclude），使用内存过滤
+    let sql_project_id = filter.single_include();
+    let need_memory_filter = !filter.is_empty() && sql_project_id.is_none();
+
+    // 执行 FTS 搜索，多取一些用于计算 sessionMatches 和过滤
+    let search_limit = if need_memory_filter {
+        (limit * 5).max(50)
+    } else {
+        (limit * 3).max(30)
+    };
     let results = state
         .db
         .search_fts_full(
             query,
             search_limit,
-            project_id,
+            sql_project_id,
             claude_session_db::SearchOrderBy::Score,
             start_ts,
             end_ts,
@@ -522,12 +575,16 @@ async fn search_raw_messages(
     let formatted: Vec<Value> = results
         .iter()
         .filter(|r| {
+            // 去重
             if seen_sessions.contains_key(&r.session_id) {
-                false
-            } else {
-                seen_sessions.insert(r.session_id.clone(), true);
-                true
+                return false;
             }
+            // 内存过滤
+            if need_memory_filter && !filter.matches(r.project_id) {
+                return false;
+            }
+            seen_sessions.insert(r.session_id.clone(), true);
+            true
         })
         .take(limit)
         .map(|r| {
@@ -653,17 +710,26 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
 /// 获取最近会话
 async fn get_recent_sessions(state: &AppState, args: Value) -> Result<Value, String> {
     let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(5) as usize;
-    let cwd = args.get("cwd").and_then(|c| c.as_str());
 
-    let project_id = if let Some(cwd_path) = cwd {
-        find_project_by_cwd(state, cwd_path).await
-    } else {
-        None
+    // 解析 cwd 参数（支持 string 或 array）
+    let include_cwds = parse_cwd_param(args.get("cwd"));
+    let exclude_cwds = parse_cwd_param(args.get("exclude_cwd"));
+
+    // 构建项目过滤器
+    let filter = ProjectFilter {
+        include: find_project_ids_by_cwds(state, &include_cwds).await,
+        exclude: find_project_ids_by_cwds(state, &exclude_cwds).await,
     };
 
+    // 对于单个 include 项目，使用 SQL 层过滤
+    let sql_project_id = filter.single_include();
+    let need_memory_filter = !filter.is_empty() && sql_project_id.is_none();
+
+    // 多取一些用于过滤
+    let fetch_limit = if need_memory_filter { limit * 3 } else { limit };
     let sessions = state
         .db
-        .get_sessions(project_id, limit)
+        .get_sessions(sql_project_id, fetch_limit)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -680,6 +746,14 @@ async fn get_recent_sessions(state: &AppState, args: Value) -> Result<Value, Str
 
     let formatted: Vec<Value> = sessions
         .iter()
+        .filter(|s| {
+            if need_memory_filter {
+                filter.matches(s.project_id)
+            } else {
+                true
+            }
+        })
+        .take(limit)
         .map(|s| {
             let project_name = project_names
                 .get(&s.project_id)
@@ -735,6 +809,150 @@ async fn find_project_by_cwd(state: &AppState, cwd: &str) -> Option<i64> {
     }
 
     None
+}
+
+/// 解析 cwd 参数（支持 string 或 array）
+fn parse_cwd_param(value: Option<&Value>) -> Vec<String> {
+    match value {
+        None => vec![],
+        Some(Value::String(s)) => vec![s.clone()],
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect(),
+        _ => vec![],
+    }
+}
+
+/// 简单的 glob 通配符匹配
+/// 支持 `*` 匹配任意字符序列（包括空字符串）
+fn matches_glob(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    let (m, n) = (p.len(), t.len());
+
+    // dp[i][j] = pattern[0..i] 是否匹配 text[0..j]
+    let mut dp = vec![vec![false; n + 1]; m + 1];
+    dp[0][0] = true;
+
+    // 处理 pattern 开头的 * 可以匹配空字符串
+    for i in 1..=m {
+        if p[i - 1] == '*' {
+            dp[i][0] = dp[i - 1][0];
+        } else {
+            break;
+        }
+    }
+
+    for i in 1..=m {
+        for j in 1..=n {
+            if p[i - 1] == '*' {
+                // * 可以匹配空字符串 (dp[i-1][j]) 或匹配一个字符后继续 (dp[i][j-1])
+                dp[i][j] = dp[i - 1][j] || dp[i][j - 1];
+            } else if p[i - 1] == t[j - 1] {
+                // 普通字符匹配
+                dp[i][j] = dp[i - 1][j - 1];
+            }
+            // 否则 dp[i][j] 保持 false
+        }
+    }
+
+    dp[m][n]
+}
+
+/// 检查 cwd 是否包含通配符
+fn is_glob_pattern(cwd: &str) -> bool {
+    cwd.contains('*')
+}
+
+/// 根据多个 cwd 路径查找项目 ID 列表
+/// 支持三种匹配模式：
+/// 1. 通配符匹配（包含 *）: `*/ETerm*` 匹配所有包含 ETerm 的路径
+/// 2. 精确匹配: `/path/to/project` 精确匹配
+/// 3. 前缀匹配: `/path/to` 匹配以此开头的项目
+async fn find_project_ids_by_cwds(state: &AppState, cwds: &[String]) -> Vec<i64> {
+    if cwds.is_empty() {
+        return vec![];
+    }
+
+    let projects = match state.db.list_projects_with_stats(1000, 0).await {
+        Ok(p) => p,
+        Err(_) => return vec![],
+    };
+
+    let mut result = Vec::new();
+    for cwd in cwds {
+        if is_glob_pattern(cwd) {
+            // 通配符匹配：匹配所有符合模式的项目
+            for p in &projects {
+                if matches_glob(cwd, &p.path) && !result.contains(&p.id) {
+                    result.push(p.id);
+                }
+            }
+        } else {
+            // 精确匹配
+            if let Some(p) = projects.iter().find(|p| p.path == *cwd) {
+                if !result.contains(&p.id) {
+                    result.push(p.id);
+                }
+                continue;
+            }
+            // 前缀匹配
+            if let Some(p) = projects.iter().find(|p| cwd.starts_with(&p.path)) {
+                if !result.contains(&p.id) {
+                    result.push(p.id);
+                }
+            }
+        }
+    }
+    result
+}
+
+/// 项目过滤器（支持 include 和 exclude）
+#[derive(Debug, Default)]
+struct ProjectFilter {
+    include: Vec<i64>,
+    exclude: Vec<i64>,
+}
+
+impl ProjectFilter {
+    /// 检查项目 ID 是否通过过滤器
+    fn matches(&self, project_id: i64) -> bool {
+        // 如果有 include 列表，项目必须在其中
+        if !self.include.is_empty() && !self.include.contains(&project_id) {
+            return false;
+        }
+        // 如果在 exclude 列表中，排除
+        if self.exclude.contains(&project_id) {
+            return false;
+        }
+        true
+    }
+
+    /// 是否为空过滤器（不过滤任何项目）
+    fn is_empty(&self) -> bool {
+        self.include.is_empty() && self.exclude.is_empty()
+    }
+
+    /// 获取单个 include 项目 ID（用于向后兼容）
+    fn single_include(&self) -> Option<i64> {
+        if self.include.len() == 1 && self.exclude.is_empty() {
+            Some(self.include[0])
+        } else {
+            None
+        }
+    }
+}
+
+/// 获取 session_id 到 project_id 的映射
+async fn get_session_project_map(state: &AppState, session_ids: &[String]) -> HashMap<String, i64> {
+    let mut result = HashMap::new();
+    for session_id in session_ids {
+        if let Ok(Some(session)) = state.db.get_session(session_id).await {
+            result.insert(session_id.clone(), session.project_id);
+        }
+    }
+    result
 }
 
 #[cfg(test)]
@@ -809,6 +1027,185 @@ mod tests {
         assert_eq!(truncate_str("hello", 10), "hello");
         assert_eq!(truncate_str("hello world", 5), "hello...");
         assert_eq!(truncate_str("你好世界", 2), "你好...");
+    }
+
+    // ==================== cwd 参数解析测试 ====================
+
+    #[test]
+    fn test_parse_cwd_param_none() {
+        let result = parse_cwd_param(None);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_cwd_param_string() {
+        let value = json!("/path/to/project");
+        let result = parse_cwd_param(Some(&value));
+        assert_eq!(result, vec!["/path/to/project"]);
+    }
+
+    #[test]
+    fn test_parse_cwd_param_array() {
+        let value = json!(["/path/a", "/path/b", "/path/c"]);
+        let result = parse_cwd_param(Some(&value));
+        assert_eq!(result, vec!["/path/a", "/path/b", "/path/c"]);
+    }
+
+    #[test]
+    fn test_parse_cwd_param_invalid() {
+        // 数字
+        let value = json!(123);
+        let result = parse_cwd_param(Some(&value));
+        assert!(result.is_empty());
+
+        // 对象
+        let value = json!({"path": "/foo"});
+        let result = parse_cwd_param(Some(&value));
+        assert!(result.is_empty());
+    }
+
+    // ==================== ProjectFilter 测试 ====================
+
+    #[test]
+    fn test_project_filter_empty() {
+        let filter = ProjectFilter::default();
+        assert!(filter.is_empty());
+        assert!(filter.matches(1));
+        assert!(filter.matches(999));
+        assert!(filter.single_include().is_none());
+    }
+
+    #[test]
+    fn test_project_filter_single_include() {
+        let filter = ProjectFilter {
+            include: vec![1],
+            exclude: vec![],
+        };
+        assert!(!filter.is_empty());
+        assert!(filter.matches(1));
+        assert!(!filter.matches(2));
+        assert_eq!(filter.single_include(), Some(1));
+    }
+
+    #[test]
+    fn test_project_filter_multi_include() {
+        let filter = ProjectFilter {
+            include: vec![1, 2, 3],
+            exclude: vec![],
+        };
+        assert!(filter.matches(1));
+        assert!(filter.matches(2));
+        assert!(filter.matches(3));
+        assert!(!filter.matches(4));
+        assert!(filter.single_include().is_none()); // 多个 include 不返回单个
+    }
+
+    #[test]
+    fn test_project_filter_exclude_only() {
+        let filter = ProjectFilter {
+            include: vec![],
+            exclude: vec![1, 2],
+        };
+        assert!(!filter.matches(1));
+        assert!(!filter.matches(2));
+        assert!(filter.matches(3));
+        assert!(filter.matches(999));
+    }
+
+    #[test]
+    fn test_project_filter_include_and_exclude() {
+        let filter = ProjectFilter {
+            include: vec![1, 2, 3],
+            exclude: vec![2],
+        };
+        assert!(filter.matches(1));
+        assert!(!filter.matches(2)); // 在 exclude 中
+        assert!(filter.matches(3));
+        assert!(!filter.matches(4)); // 不在 include 中
+        assert!(filter.single_include().is_none()); // 有 exclude，不返回单个
+    }
+
+    // ==================== Glob 通配符测试 ====================
+
+    #[test]
+    fn test_matches_glob_exact() {
+        assert!(matches_glob("hello", "hello"));
+        assert!(!matches_glob("hello", "world"));
+        assert!(!matches_glob("hello", "hello world"));
+    }
+
+    #[test]
+    fn test_matches_glob_star_end() {
+        assert!(matches_glob("hello*", "hello"));
+        assert!(matches_glob("hello*", "hello world"));
+        assert!(matches_glob("hello*", "hellooooo"));
+        assert!(!matches_glob("hello*", "hell"));
+    }
+
+    #[test]
+    fn test_matches_glob_star_start() {
+        assert!(matches_glob("*world", "world"));
+        assert!(matches_glob("*world", "hello world"));
+        assert!(!matches_glob("*world", "world!"));
+    }
+
+    #[test]
+    fn test_matches_glob_star_middle() {
+        assert!(matches_glob("hello*world", "helloworld"));
+        assert!(matches_glob("hello*world", "hello world"));
+        assert!(matches_glob("hello*world", "hello beautiful world"));
+        assert!(!matches_glob("hello*world", "hello worlds"));
+    }
+
+    #[test]
+    fn test_matches_glob_multiple_stars() {
+        assert!(matches_glob("*ETerm*", "/Users/test/ETerm"));
+        assert!(matches_glob("*ETerm*", "/Users/test/ETerm/subdir"));
+        assert!(matches_glob("*ETerm*", "ETerm"));
+        assert!(!matches_glob("*ETerm*", "/Users/test/english"));
+    }
+
+    #[test]
+    fn test_matches_glob_path_patterns() {
+        // 实际路径匹配场景
+        assert!(matches_glob(
+            "*/ETerm*",
+            "/Users/higuaifan/Desktop/vimo/ETerm"
+        ));
+        assert!(matches_glob(
+            "*/ETerm*",
+            "/Users/higuaifan/Desktop/vimo/ETerm/memex"
+        ));
+        assert!(matches_glob(
+            "*english*",
+            "/Users/higuaifan/Desktop/hi/小工具/english"
+        ));
+        assert!(!matches_glob(
+            "*english*",
+            "/Users/higuaifan/Desktop/vimo/ETerm"
+        ));
+    }
+
+    #[test]
+    fn test_matches_glob_edge_cases() {
+        // 空字符串
+        assert!(matches_glob("", ""));
+        assert!(!matches_glob("", "a"));
+        assert!(matches_glob("*", ""));
+        assert!(matches_glob("*", "anything"));
+
+        // 连续 *
+        assert!(matches_glob("**", "anything"));
+        assert!(matches_glob("a**b", "ab"));
+        assert!(matches_glob("a**b", "aXXXb"));
+    }
+
+    #[test]
+    fn test_is_glob_pattern() {
+        assert!(is_glob_pattern("*ETerm*"));
+        assert!(is_glob_pattern("*/vimo/*"));
+        assert!(!is_glob_pattern("/Users/test/ETerm"));
+        assert!(!is_glob_pattern(""));
     }
 
     #[test]

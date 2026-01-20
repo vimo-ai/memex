@@ -37,18 +37,25 @@ pub struct CompactConfig {
     pub inject: InjectConfig,
 }
 
-/// 注入模式
+/// 顶层快捷模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum InjectMode {
-    /// 不自动注入，纯 Pull 模式（默认）
+pub enum InjectQuickMode {
+    /// 全关（session_start 和 user_prompt 都禁用）
     #[default]
     None,
-    /// 全量注入（SessionStart 时注入最近 L3 摘要）
+    /// 全开（session_start 启用，user_prompt 启用 combine 模式）
     Full,
-    /// 组合模式（向量匹配，合并所有 sources 结果）
+}
+
+/// UserPrompt 搜索模式
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UserPromptSearchMode {
+    /// 合并所有 sources 结果
+    #[default]
     Combine,
-    /// Fallback 模式（向量匹配，按 sources 顺序尝试，有结果即停）
+    /// 按 sources 顺序尝试，有结果即停
     Fallback,
 }
 
@@ -103,42 +110,95 @@ pub enum VectorDistanceType {
     Dot,
 }
 
-/// 注入配置
+/// SessionStart Hook 配置
 ///
-/// 配置示例：
-/// ```json
-/// // 不注入（默认）
-/// {}
-///
-/// // 全量注入 L3 摘要
-/// { "mode": "full", "max_sessions": 10 }
-///
-/// // 向量匹配，组合多个源
-/// { "mode": "combine", "sources": ["summaries", "messages"] }
-///
-/// // 向量匹配，按顺序 fallback
-/// { "mode": "fallback", "sources": ["summaries", "messages"] }
-/// ```
+/// 在会话开始时注入最近的历史上下文
+/// 按 sources 优先级 fallback，默认: L3 → L2 → L0
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct InjectConfig {
-    /// 注入模式
-    pub mode: InjectMode,
+pub struct SessionStartConfig {
+    /// 是否启用
+    pub enabled: bool,
 
-    /// 数据源（combine/fallback 模式需要）
+    /// 数据源优先级（按顺序 fallback）
+    /// 默认: ["sessions", "talks", "messages"]
+    /// 有高层数据就用高层，没有就降级
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<InjectSource>>,
+
+    /// 最大注入条目数（默认 10）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_items: Option<usize>,
+
+    /// 最大注入 token 数（默认 2000）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<usize>,
+}
+
+impl Default for SessionStartConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            sources: None,
+            max_items: None,
+            max_tokens: None,
+        }
+    }
+}
+
+impl SessionStartConfig {
+    /// 获取 sources（默认 L3 → L2 → L0）
+    ///
+    /// 自动展开 Summaries 为 [Sessions, Talks, Observations]
+    pub fn sources(&self) -> Vec<InjectSource> {
+        let raw = self.sources.clone().unwrap_or_else(|| {
+            vec![
+                InjectSource::Sessions,    // L3
+                InjectSource::Talks,       // L2
+                InjectSource::Messages,    // L0
+            ]
+        });
+        InjectSource::expand(&raw)
+    }
+
+    /// 获取 max_items（默认 10）
+    pub fn max_items(&self) -> usize {
+        self.max_items.unwrap_or(10)
+    }
+
+    /// 获取 max_tokens（默认 2000）
+    pub fn max_tokens(&self) -> usize {
+        self.max_tokens.unwrap_or(2000)
+    }
+}
+
+/// UserPromptSubmit Hook 配置
+///
+/// 根据用户 prompt 进行向量搜索并注入相关上下文
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UserPromptConfig {
+    /// 是否启用
+    pub enabled: bool,
+
+    /// 搜索模式: combine | fallback
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<UserPromptSearchMode>,
+
+    /// 数据源
     /// 可选值: messages, observations, talks, sessions, summaries
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sources: Option<Vec<InjectSource>>,
 
-    /// 最大注入的 session 数量（full 模式）
+    /// 向量相似度阈值（0.0-1.0，越高越严格）
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_sessions: Option<usize>,
+    pub similarity_threshold: Option<f32>,
 
-    /// 最大注入 token 数
+    /// 最大注入 token 数（默认 2000）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<usize>,
 
-    /// 每个源的最大返回数
+    /// 每个源的最大返回数（默认 10）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit_per_source: Option<usize>,
 
@@ -146,13 +206,7 @@ pub struct InjectConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub distance_type: Option<VectorDistanceType>,
 
-    /// 向量相似度阈值（0.0-1.0，越高越严格）
-    /// cosine: similarity = 1 - distance/2
-    /// l2: 不使用 similarity，直接按 distance 排序
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub similarity_threshold: Option<f32>,
-
-    /// 是否限定当前项目
+    /// 是否限定当前项目（默认 true）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_scope: Option<bool>,
 
@@ -169,16 +223,16 @@ pub struct InjectConfig {
     pub time_decay_halflife: Option<u32>,
 }
 
-impl Default for InjectConfig {
+impl Default for UserPromptConfig {
     fn default() -> Self {
         Self {
-            mode: InjectMode::None,
+            enabled: false,
+            mode: None,
             sources: None,
-            max_sessions: None,
+            similarity_threshold: None,
             max_tokens: None,
             limit_per_source: None,
             distance_type: None,
-            similarity_threshold: None,
             project_scope: None,
             time_window_days: None,
             time_decay: None,
@@ -187,10 +241,10 @@ impl Default for InjectConfig {
     }
 }
 
-impl InjectConfig {
-    /// 获取 max_sessions（full 模式默认 10）
-    pub fn max_sessions(&self) -> usize {
-        self.max_sessions.unwrap_or(10)
+impl UserPromptConfig {
+    /// 获取搜索模式（默认 Combine）
+    pub fn mode(&self) -> UserPromptSearchMode {
+        self.mode.unwrap_or_default()
     }
 
     /// 获取 max_tokens（默认 2000）
@@ -237,19 +291,137 @@ impl InjectConfig {
     pub fn expanded_sources(&self) -> Vec<InjectSource> {
         match &self.sources {
             Some(sources) => InjectSource::expand(sources),
-            None => vec![], // 用户没配置 sources，返回空
+            None => vec![InjectSource::Summaries], // 默认使用 summaries
         }
     }
 
     /// 校验配置
     pub fn validate(&self) -> Result<(), String> {
-        match self.mode {
-            InjectMode::Combine | InjectMode::Fallback => {
-                if self.sources.is_none() || self.sources.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
-                    return Err(format!("{:?} 模式需要配置 sources", self.mode));
-                }
+        if self.enabled {
+            // 启用时，sources 不能为空
+            if self.sources.as_ref().map(|s| s.is_empty()).unwrap_or(false) {
+                return Err("UserPrompt 启用时 sources 不能为空".to_string());
             }
-            _ => {}
+        }
+        Ok(())
+    }
+}
+
+/// 注入配置
+///
+/// 支持两种配置方式：
+/// 1. 顶层 mode 快捷方式：`{ "mode": "full" }` 或 `{ "mode": "none" }`
+/// 2. 详细配置：分别配置 `session_start` 和 `user_prompt`
+///
+/// 详细配置会覆盖顶层 mode。
+///
+/// 配置示例：
+/// ```json
+/// // 全关（默认）
+/// {}
+///
+/// // 全开
+/// { "mode": "full" }
+///
+/// // 只开 SessionStart
+/// {
+///   "session_start": { "enabled": true, "max_sessions": 10 }
+/// }
+///
+/// // 只开 UserPrompt 向量搜索
+/// {
+///   "user_prompt": {
+///     "enabled": true,
+///     "mode": "combine",
+///     "sources": ["summaries", "messages"]
+///   }
+/// }
+///
+/// // 两个都开，精细控制
+/// {
+///   "session_start": { "enabled": true, "max_sessions": 5 },
+///   "user_prompt": {
+///     "enabled": true,
+///     "mode": "fallback",
+///     "sources": ["sessions", "talks"]
+///   }
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InjectConfig {
+    /// 顶层快捷模式：none (全关) | full (全开)
+    /// 如果同时配置了 session_start 或 user_prompt，则详细配置会覆盖顶层 mode
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<InjectQuickMode>,
+
+    /// SessionStart Hook 配置
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_start: Option<SessionStartConfig>,
+
+    /// UserPromptSubmit Hook 配置
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_prompt: Option<UserPromptConfig>,
+}
+
+impl Default for InjectConfig {
+    fn default() -> Self {
+        Self {
+            mode: None,
+            session_start: None,
+            user_prompt: None,
+        }
+    }
+}
+
+impl InjectConfig {
+    /// 获取有效的 SessionStart 配置
+    ///
+    /// 优先级：session_start > mode > 默认禁用
+    pub fn effective_session_start(&self) -> SessionStartConfig {
+        // 如果有详细配置，使用详细配置
+        if let Some(config) = &self.session_start {
+            return config.clone();
+        }
+
+        // 否则根据顶层 mode 决定
+        match self.mode {
+            Some(InjectQuickMode::Full) => SessionStartConfig {
+                enabled: true,
+                sources: None,     // 使用默认 fallback: L3 → L2 → L0
+                max_items: None,
+                max_tokens: None,
+            },
+            _ => SessionStartConfig::default(), // None 或未配置
+        }
+    }
+
+    /// 获取有效的 UserPrompt 配置
+    ///
+    /// 优先级：user_prompt > mode > 默认禁用
+    pub fn effective_user_prompt(&self) -> UserPromptConfig {
+        // 如果有详细配置，使用详细配置
+        if let Some(config) = &self.user_prompt {
+            return config.clone();
+        }
+
+        // 否则根据顶层 mode 决定
+        match self.mode {
+            Some(InjectQuickMode::Full) => UserPromptConfig {
+                enabled: true,
+                mode: Some(UserPromptSearchMode::Combine),
+                sources: Some(vec![InjectSource::Summaries]), // full 模式默认使用 summaries
+                ..Default::default()
+            },
+            _ => UserPromptConfig::default(), // None 或未配置
+        }
+    }
+
+    /// 校验配置
+    pub fn validate(&self) -> Result<(), String> {
+        // 校验 user_prompt
+        if let Some(config) = &self.user_prompt {
+            config.validate()?;
         }
         Ok(())
     }
@@ -348,7 +520,7 @@ impl CompactConfig {
             l1: L1Options::default(),
             fts_tokenizer: default_fts_tokenizer(),
             inject: InjectConfig {
-                mode: InjectMode::Full,
+                mode: Some(InjectQuickMode::Full),
                 ..Default::default()
             },
         }
@@ -449,60 +621,129 @@ mod tests {
     #[test]
     fn test_inject_config_default() {
         let config = InjectConfig::default();
-        assert_eq!(config.mode, InjectMode::None);
-        assert!(config.sources.is_none());
-        assert_eq!(config.max_sessions(), 10);
-        assert_eq!(config.max_tokens(), 2000);
-        assert_eq!(config.distance_type(), VectorDistanceType::Cosine);
-        assert!((config.similarity_threshold() - 0.65).abs() < 0.01);
-        assert_eq!(config.time_window_days(), 90);
-        assert!(config.time_decay());
+        assert!(config.mode.is_none());
+        assert!(config.session_start.is_none());
+        assert!(config.user_prompt.is_none());
+
+        // 检查 effective 配置
+        let session_start = config.effective_session_start();
+        assert!(!session_start.enabled);
+        assert_eq!(session_start.max_items(), 10);
+        assert_eq!(session_start.max_tokens(), 2000);
+
+        let user_prompt = config.effective_user_prompt();
+        assert!(!user_prompt.enabled);
+        assert_eq!(user_prompt.distance_type(), VectorDistanceType::Cosine);
+        assert!((user_prompt.similarity_threshold() - 0.65).abs() < 0.01);
+        assert_eq!(user_prompt.time_window_days(), 90);
+        assert!(user_prompt.time_decay());
+    }
+
+    /// 验证 quick mode: full
+    #[test]
+    fn test_inject_config_full_mode() {
+        let json = r#"{"mode": "full"}"#;
+        let config: InjectConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.mode, Some(InjectQuickMode::Full));
+
+        // full 模式下 session_start 和 user_prompt 都启用
+        let session_start = config.effective_session_start();
+        assert!(session_start.enabled);
+
+        let user_prompt = config.effective_user_prompt();
+        assert!(user_prompt.enabled);
+        assert_eq!(user_prompt.mode(), UserPromptSearchMode::Combine);
+    }
+
+    /// 验证 quick mode: none
+    #[test]
+    fn test_inject_config_none_mode() {
+        let json = r#"{"mode": "none"}"#;
+        let config: InjectConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.mode, Some(InjectQuickMode::None));
+
+        // none 模式下 session_start 和 user_prompt 都禁用
+        let session_start = config.effective_session_start();
+        assert!(!session_start.enabled);
+
+        let user_prompt = config.effective_user_prompt();
+        assert!(!user_prompt.enabled);
+    }
+
+    /// 验证详细配置覆盖顶层 mode
+    #[test]
+    fn test_inject_config_detailed_overrides_mode() {
+        let json = r#"{
+            "mode": "none",
+            "session_start": { "enabled": true, "max_items": 5 }
+        }"#;
+        let config: InjectConfig = serde_json::from_str(json).unwrap();
+
+        // 详细配置覆盖顶层 mode
+        let session_start = config.effective_session_start();
+        assert!(session_start.enabled);
+        assert_eq!(session_start.max_items(), 5);
+
+        // user_prompt 仍然使用顶层 mode (none)
+        let user_prompt = config.effective_user_prompt();
+        assert!(!user_prompt.enabled);
+    }
+
+    /// 验证 UserPromptConfig
+    #[test]
+    fn test_user_prompt_config_serde() {
+        let json = r#"{
+            "user_prompt": {
+                "enabled": true,
+                "mode": "combine",
+                "sources": ["messages", "summaries"],
+                "similarity_threshold": 0.5
+            }
+        }"#;
+        let config: InjectConfig = serde_json::from_str(json).unwrap();
+
+        let user_prompt = config.effective_user_prompt();
+        assert!(user_prompt.enabled);
+        assert_eq!(user_prompt.mode(), UserPromptSearchMode::Combine);
+        assert_eq!(user_prompt.sources, Some(vec![InjectSource::Messages, InjectSource::Summaries]));
+        assert!((user_prompt.similarity_threshold() - 0.5).abs() < 0.01);
+    }
+
+    /// 验证 UserPromptConfig fallback 模式
+    #[test]
+    fn test_user_prompt_config_fallback() {
+        let json = r#"{
+            "user_prompt": {
+                "enabled": true,
+                "mode": "fallback",
+                "sources": ["sessions", "talks"]
+            }
+        }"#;
+        let config: InjectConfig = serde_json::from_str(json).unwrap();
+
+        let user_prompt = config.effective_user_prompt();
+        assert!(user_prompt.enabled);
+        assert_eq!(user_prompt.mode(), UserPromptSearchMode::Fallback);
+        assert_eq!(user_prompt.sources, Some(vec![InjectSource::Sessions, InjectSource::Talks]));
     }
 
     /// 验证 distance_type 配置
     #[test]
-    fn test_distance_type_serde() {
+    fn test_user_prompt_distance_type_serde() {
         // 默认 cosine
-        let json = r#"{"mode": "combine", "sources": ["messages"]}"#;
+        let json = r#"{"user_prompt": {"enabled": true, "sources": ["messages"]}}"#;
         let config: InjectConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.distance_type(), VectorDistanceType::Cosine);
-
-        // 显式 cosine
-        let json = r#"{"mode": "combine", "sources": ["messages"], "distance_type": "cosine"}"#;
-        let config: InjectConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.distance_type(), VectorDistanceType::Cosine);
+        assert_eq!(config.effective_user_prompt().distance_type(), VectorDistanceType::Cosine);
 
         // 显式 euclidean
-        let json = r#"{"mode": "combine", "sources": ["messages"], "distance_type": "euclidean"}"#;
+        let json = r#"{"user_prompt": {"enabled": true, "sources": ["messages"], "distance_type": "euclidean"}}"#;
         let config: InjectConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.distance_type(), VectorDistanceType::Euclidean);
+        assert_eq!(config.effective_user_prompt().distance_type(), VectorDistanceType::Euclidean);
 
         // 显式 dot
-        let json = r#"{"mode": "combine", "sources": ["messages"], "distance_type": "dot"}"#;
+        let json = r#"{"user_prompt": {"enabled": true, "sources": ["messages"], "distance_type": "dot"}}"#;
         let config: InjectConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.distance_type(), VectorDistanceType::Dot);
-    }
-
-    /// 验证 InjectMode 序列化
-    #[test]
-    fn test_inject_mode_serde() {
-        let json = r#"{"mode": "combine", "sources": ["messages"]}"#;
-        let config: InjectConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.mode, InjectMode::Combine);
-        assert_eq!(config.sources, Some(vec![InjectSource::Messages]));
-
-        let json = r#"{"mode": "fallback", "sources": ["summaries", "messages"]}"#;
-        let config: InjectConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.mode, InjectMode::Fallback);
-        assert_eq!(config.sources, Some(vec![InjectSource::Summaries, InjectSource::Messages]));
-
-        let json = r#"{"mode": "full"}"#;
-        let config: InjectConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.mode, InjectMode::Full);
-
-        let json = r#"{"mode": "none"}"#;
-        let config: InjectConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.mode, InjectMode::None);
+        assert_eq!(config.effective_user_prompt().distance_type(), VectorDistanceType::Dot);
     }
 
     /// 验证 sources 展开
@@ -518,25 +759,48 @@ mod tests {
         ]);
     }
 
-    /// 验证配置校验
+    /// 验证 UserPromptConfig 校验
     #[test]
-    fn test_inject_config_validate() {
-        // none 模式不需要 sources
-        let config = InjectConfig { mode: InjectMode::None, ..Default::default() };
+    fn test_user_prompt_config_validate() {
+        // 禁用时不需要 sources
+        let config = UserPromptConfig { enabled: false, ..Default::default() };
         assert!(config.validate().is_ok());
 
-        // full 模式不需要 sources
-        let config = InjectConfig { mode: InjectMode::Full, ..Default::default() };
-        assert!(config.validate().is_ok());
-
-        // combine 模式需要 sources
-        let config = InjectConfig { mode: InjectMode::Combine, ..Default::default() };
+        // 启用时 sources 为空则报错
+        let config = UserPromptConfig {
+            enabled: true,
+            sources: Some(vec![]),
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
 
-        // combine 模式有 sources 时 OK
-        let config = InjectConfig {
-            mode: InjectMode::Combine,
+        // 启用时有 sources 则 OK
+        let config = UserPromptConfig {
+            enabled: true,
             sources: Some(vec![InjectSource::Messages]),
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+
+        // 启用时 sources 为 None 也 OK（使用默认值）
+        let config = UserPromptConfig {
+            enabled: true,
+            sources: None,
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+    }
+
+    /// 验证 InjectConfig 校验
+    #[test]
+    fn test_inject_config_validate() {
+        // 空配置 OK
+        let config = InjectConfig::default();
+        assert!(config.validate().is_ok());
+
+        // full 模式 OK
+        let config = InjectConfig {
+            mode: Some(InjectQuickMode::Full),
             ..Default::default()
         };
         assert!(config.validate().is_ok());

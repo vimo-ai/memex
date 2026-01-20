@@ -1,17 +1,15 @@
 //! 注入模块 - Claude Code Hook 上下文注入
 //!
-//! 支持四种模式：
-//! - None: 不自动注入，纯 Pull 模式（MCP 主动查询）
-//! - Full: SessionStart 时全量注入最近 L3 摘要
-//! - Combine: 向量匹配，合并所有 sources 结果
-//! - Fallback: 向量匹配，按 sources 顺序尝试，有结果即停
+//! 支持两种 Hook:
+//! - SessionStart: 会话开始时注入最近历史，按 sources 优先级 fallback
+//! - UserPromptSubmit: 根据用户 prompt 进行向量搜索
 //!
 //! 数据源 (sources):
 //! - messages: 原始消息（L0）
 //! - observations: 工具调用观察（L1）
 //! - talks: 对话摘要（L2）
 //! - sessions: 会话摘要（L3）
-//! - summaries: L1+L2+L3 的快捷方式
+//! - summaries: L3+L2+L1 的快捷方式（自动展开）
 
 use std::sync::Arc;
 
@@ -21,9 +19,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::compact::{
-    CompactDB, CompactLevel, CompactVectorStore, InjectConfig, InjectMode, InjectSource,
-    SessionSummary, VectorDistanceType,
+    CompactDB, CompactLevel, CompactVectorStore, InjectConfig, InjectSource, Observation,
+    SessionStartConfig, SessionSummary, TalkSummary, UserPromptConfig, UserPromptSearchMode,
+    VectorDistanceType,
 };
+use claude_session_db::Message;
 use crate::llm::EmbeddingProvider;
 use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::VectorStore;
@@ -118,34 +118,57 @@ impl InjectService {
         self
     }
 
-    /// 执行注入
+    /// 执行 SessionStart 注入
     ///
-    /// - `mode`: 注入模式（如果为 None，使用配置中的默认模式）
-    /// - `query`: 用户查询（Combine/Fallback 模式需要）
+    /// - `config_override`: 可选的配置覆盖
     /// - `project_path`: 项目路径（可选，用于项目过滤）
-    pub async fn inject(
+    pub async fn inject_session_start(
         &self,
-        mode: Option<InjectMode>,
-        query: Option<&str>,
+        config_override: Option<SessionStartConfig>,
         project_path: Option<&str>,
     ) -> Result<InjectResult> {
-        let mode = mode.unwrap_or(self.config.mode);
+        // 获取有效配置（覆盖 > 详细配置 > 顶层 mode > 默认）
+        let config = config_override.unwrap_or_else(|| self.config.effective_session_start());
 
-        match mode {
-            InjectMode::None => Ok(InjectResult {
+        if !config.enabled {
+            return Ok(InjectResult {
                 context: String::new(),
                 count: 0,
                 mode: "none".to_string(),
                 estimated_tokens: 0,
-            }),
-            InjectMode::Full => self.inject_full(project_path).await,
-            InjectMode::Combine => {
-                let query = query.ok_or_else(|| anyhow::anyhow!("Combine 模式需要提供 query"))?;
-                self.inject_combine(query, project_path).await
-            }
-            InjectMode::Fallback => {
-                let query = query.ok_or_else(|| anyhow::anyhow!("Fallback 模式需要提供 query"))?;
-                self.inject_fallback(query, project_path).await
+            });
+        }
+
+        self.inject_full(&config, project_path).await
+    }
+
+    /// 执行 UserPromptSubmit 注入
+    ///
+    /// - `query`: 用户查询（必须）
+    /// - `config_override`: 可选的配置覆盖
+    /// - `project_path`: 项目路径（可选，用于项目过滤）
+    pub async fn inject_user_prompt(
+        &self,
+        query: &str,
+        config_override: Option<UserPromptConfig>,
+        project_path: Option<&str>,
+    ) -> Result<InjectResult> {
+        // 获取有效配置（覆盖 > 详细配置 > 顶层 mode > 默认）
+        let config = config_override.unwrap_or_else(|| self.config.effective_user_prompt());
+
+        if !config.enabled {
+            return Ok(InjectResult {
+                context: String::new(),
+                count: 0,
+                mode: "none".to_string(),
+                estimated_tokens: 0,
+            });
+        }
+
+        match config.mode() {
+            UserPromptSearchMode::Combine => self.inject_combine(query, &config, project_path).await,
+            UserPromptSearchMode::Fallback => {
+                self.inject_fallback(query, &config, project_path).await
             }
         }
     }
@@ -162,12 +185,18 @@ impl InjectService {
         Ok(None)
     }
 
-    /// Full 模式注入
+    /// SessionStart 注入
     ///
-    /// 获取最近的 Session Summaries (L3)，格式化为 Markdown
-    async fn inject_full(&self, project_path: Option<&str>) -> Result<InjectResult> {
-        let max_sessions = self.config.max_sessions();
-        let max_tokens = self.config.max_tokens();
+    /// 按 sources 优先级 fallback：有高层数据就用高层，没有就降级
+    /// 默认顺序: L3 (sessions) → L2 (talks) → L0 (messages)
+    async fn inject_full(
+        &self,
+        config: &SessionStartConfig,
+        project_path: Option<&str>,
+    ) -> Result<InjectResult> {
+        let sources = config.sources();
+        let max_items = config.max_items();
+        let max_tokens = config.max_tokens();
 
         // 获取项目 ID（如果指定了项目路径）
         let project_id = if let Some(path) = project_path {
@@ -176,28 +205,107 @@ impl InjectService {
             None
         };
 
-        // 获取最近的 Session Summaries
-        let summaries = self
-            .compact_db
-            .get_recent_session_summaries(project_id, max_sessions)
-            .await?;
+        // 按 sources 优先级 fallback
+        for source in &sources {
+            let (items, source_name) = match source {
+                InjectSource::Sessions => {
+                    let summaries = self
+                        .compact_db
+                        .get_recent_session_summaries(project_id, max_items)
+                        .await?;
+                    if summaries.is_empty() {
+                        continue; // fallback 到下一个 source
+                    }
+                    let items: Vec<ContextItem> = summaries
+                        .into_iter()
+                        .map(|s| ContextItem::SessionSummary(s))
+                        .collect();
+                    (items, "sessions")
+                }
+                InjectSource::Talks => {
+                    let talks = self
+                        .compact_db
+                        .get_recent_talk_summaries(project_id, max_items)
+                        .await?;
+                    if talks.is_empty() {
+                        continue;
+                    }
+                    let items: Vec<ContextItem> = talks
+                        .into_iter()
+                        .map(|t| ContextItem::TalkSummary(t))
+                        .collect();
+                    (items, "talks")
+                }
+                InjectSource::Observations => {
+                    let obs = self
+                        .compact_db
+                        .get_recent_observations(project_id, max_items)
+                        .await?;
+                    if obs.is_empty() {
+                        continue;
+                    }
+                    let items: Vec<ContextItem> = obs
+                        .into_iter()
+                        .map(|o| ContextItem::Observation(o))
+                        .collect();
+                    (items, "observations")
+                }
+                InjectSource::Messages => {
+                    let messages = self.db.get_recent_messages(project_id, max_items).await?;
+                    if messages.is_empty() {
+                        continue;
+                    }
+                    let items: Vec<ContextItem> = messages
+                        .into_iter()
+                        .map(|m| ContextItem::Message(m))
+                        .collect();
+                    (items, "messages")
+                }
+                InjectSource::Summaries => {
+                    // Summaries 已在 config.sources() 中展开为具体类型，不会到达这里
+                    unreachable!("Summaries should be expanded by config.sources()")
+                }
+            };
 
-        if summaries.is_empty() {
-            return Ok(InjectResult {
-                context: String::new(),
-                count: 0,
-                mode: "full".to_string(),
-                estimated_tokens: 0,
-            });
+            // 找到数据了，格式化输出
+            return self.format_context_items(items, source_name, max_tokens).await;
         }
 
-        // 格式化为 Markdown，控制 token 数
-        let mut context = String::from("# Memory Context (Recent Sessions)\n\n");
+        // 所有 sources 都没有数据
+        Ok(InjectResult {
+            context: String::new(),
+            count: 0,
+            mode: "fallback".to_string(),
+            estimated_tokens: 0,
+        })
+    }
+
+    /// 格式化上下文条目
+    async fn format_context_items(
+        &self,
+        items: Vec<ContextItem>,
+        source_name: &str,
+        max_tokens: usize,
+    ) -> Result<InjectResult> {
+        let title = match source_name {
+            "sessions" => "Memory Context (Recent Sessions)",
+            "talks" => "Memory Context (Recent Conversations)",
+            "observations" => "Memory Context (Recent Operations)",
+            "messages" => "Memory Context (Recent Messages)",
+            _ => "Memory Context",
+        };
+
+        let mut context = format!("# {}\n\n", title);
         let mut total_chars = context.len();
         let mut count = 0;
 
-        for summary in summaries {
-            let entry = self.format_session_summary(&summary).await;
+        for item in items {
+            let entry = match &item {
+                ContextItem::SessionSummary(s) => self.format_session_summary(s).await,
+                ContextItem::TalkSummary(t) => self.format_talk_summary(t).await,
+                ContextItem::Observation(o) => self.format_observation(o),
+                ContextItem::Message(m) => self.format_message(m).await,
+            };
             let entry_chars = entry.len();
 
             // 粗略估计 token（字符数 / 4）
@@ -214,7 +322,7 @@ impl InjectService {
         Ok(InjectResult {
             context,
             count,
-            mode: "full".to_string(),
+            mode: source_name.to_string(),
             estimated_tokens: total_chars / 4,
         })
     }
@@ -222,8 +330,13 @@ impl InjectService {
     /// Combine 模式注入
     ///
     /// 向量匹配，合并所有 sources 结果
-    async fn inject_combine(&self, query: &str, project_path: Option<&str>) -> Result<InjectResult> {
-        let sources = self.config.expanded_sources();
+    async fn inject_combine(
+        &self,
+        query: &str,
+        config: &UserPromptConfig,
+        project_path: Option<&str>,
+    ) -> Result<InjectResult> {
+        let sources = config.expanded_sources();
         if sources.is_empty() {
             return Err(anyhow::anyhow!("Combine 模式需要配置 sources"));
         }
@@ -236,7 +349,7 @@ impl InjectService {
         let query_embedding = embedding.embed(query).await?;
 
         // 获取项目 ID
-        let project_id = if self.config.project_scope() {
+        let project_id = if config.project_scope() {
             if let Some(path) = project_path {
                 self.find_project_id_by_path(path).await?
             } else {
@@ -251,23 +364,29 @@ impl InjectService {
 
         for source in &sources {
             let results = self
-                .search_source(*source, &query_embedding, project_id)
+                .search_source(*source, &query_embedding, project_id, config)
                 .await?;
             all_results.extend(results);
         }
 
         // 应用过滤和排序
-        self.filter_and_rank(&mut all_results)?;
+        self.filter_and_rank(&mut all_results, config)?;
 
         // 格式化输出
-        self.format_vector_results(all_results, "combine").await
+        self.format_vector_results(all_results, config, "combine")
+            .await
     }
 
     /// Fallback 模式注入
     ///
     /// 按 sources 顺序尝试，有足够结果即停
-    async fn inject_fallback(&self, query: &str, project_path: Option<&str>) -> Result<InjectResult> {
-        let sources = self.config.expanded_sources();
+    async fn inject_fallback(
+        &self,
+        query: &str,
+        config: &UserPromptConfig,
+        project_path: Option<&str>,
+    ) -> Result<InjectResult> {
+        let sources = config.expanded_sources();
         if sources.is_empty() {
             return Err(anyhow::anyhow!("Fallback 模式需要配置 sources"));
         }
@@ -280,7 +399,7 @@ impl InjectService {
         let query_embedding = embedding.embed(query).await?;
 
         // 获取项目 ID
-        let project_id = if self.config.project_scope() {
+        let project_id = if config.project_scope() {
             if let Some(path) = project_path {
                 self.find_project_id_by_path(path).await?
             } else {
@@ -293,15 +412,15 @@ impl InjectService {
         // 按顺序尝试每个 source
         for source in &sources {
             let mut results = self
-                .search_source(*source, &query_embedding, project_id)
+                .search_source(*source, &query_embedding, project_id, config)
                 .await?;
 
             // 应用过滤
-            self.filter_and_rank(&mut results)?;
+            self.filter_and_rank(&mut results, config)?;
 
             // 如果有结果，返回
             if !results.is_empty() {
-                return self.format_vector_results(results, "fallback").await;
+                return self.format_vector_results(results, config, "fallback").await;
             }
         }
 
@@ -320,9 +439,10 @@ impl InjectService {
         source: InjectSource,
         query_embedding: &[f32],
         _project_id: Option<i64>,
+        config: &UserPromptConfig,
     ) -> Result<Vec<ScoredResult>> {
-        let limit = self.config.limit_per_source();
-        let distance_type = self.config.distance_type();
+        let limit = config.limit_per_source();
+        let distance_type = config.distance_type();
 
         match source {
             InjectSource::Messages => {
@@ -369,15 +489,15 @@ impl InjectService {
                 Ok(scored_results)
             }
             InjectSource::Observations => {
-                self.search_compact_level(CompactLevel::L1, query_embedding, limit)
+                self.search_compact_level(CompactLevel::L1, query_embedding, limit, config)
                     .await
             }
             InjectSource::Talks => {
-                self.search_compact_level(CompactLevel::L2, query_embedding, limit)
+                self.search_compact_level(CompactLevel::L2, query_embedding, limit, config)
                     .await
             }
             InjectSource::Sessions => {
-                self.search_compact_level(CompactLevel::L3, query_embedding, limit)
+                self.search_compact_level(CompactLevel::L3, query_embedding, limit, config)
                     .await
             }
             InjectSource::Summaries => {
@@ -393,8 +513,9 @@ impl InjectService {
         level: CompactLevel,
         query_embedding: &[f32],
         limit: usize,
+        config: &UserPromptConfig,
     ) -> Result<Vec<ScoredResult>> {
-        let distance_type = self.config.distance_type();
+        let distance_type = config.distance_type();
         let store = self
             .compact_vector
             .as_ref()
@@ -424,12 +545,16 @@ impl InjectService {
     }
 
     /// 过滤和排序结果
-    fn filter_and_rank(&self, results: &mut Vec<ScoredResult>) -> Result<()> {
-        let threshold = self.config.similarity_threshold();
-        let distance_type = self.config.distance_type();
-        let time_window = self.config.time_window_days();
-        let time_decay = self.config.time_decay();
-        let halflife = self.config.time_decay_halflife() as f64;
+    fn filter_and_rank(
+        &self,
+        results: &mut Vec<ScoredResult>,
+        config: &UserPromptConfig,
+    ) -> Result<()> {
+        let threshold = config.similarity_threshold();
+        let distance_type = config.distance_type();
+        let time_window = config.time_window_days();
+        let time_decay = config.time_decay();
+        let halflife = config.time_decay_halflife() as f64;
 
         // 过滤：相似度阈值
         // Cosine distance: range [0, 2], similarity = 1 - distance/2
@@ -488,6 +613,7 @@ impl InjectService {
     async fn format_vector_results(
         &self,
         results: Vec<ScoredResult>,
+        config: &UserPromptConfig,
         mode: &str,
     ) -> Result<InjectResult> {
         if results.is_empty() {
@@ -499,7 +625,7 @@ impl InjectService {
             });
         }
 
-        let max_tokens = self.config.max_tokens();
+        let max_tokens = config.max_tokens();
 
         let mut context = String::from("# Relevant Memory Context\n\n");
         context.push_str("> *Matched based on your current query*\n\n");
@@ -573,6 +699,128 @@ impl InjectService {
         output
     }
 
+    /// 格式化 Talk Summary 为 Markdown
+    async fn format_talk_summary(&self, summary: &TalkSummary) -> String {
+        let project_name = if let Ok(Some(session)) = self.db.get_session(&summary.session_id).await
+        {
+            if let Ok(Some(project)) = self.db.get_project(session.project_id).await {
+                project.name
+            } else {
+                "Unknown".to_string()
+            }
+        } else {
+            "Unknown".to_string()
+        };
+
+        let time_ago = format_time_ago(&summary.created_at);
+
+        let mut output = format!(
+            "## {} ({})\n**Session**: `{}` | **Turn**: #{}\n\n",
+            project_name,
+            time_ago,
+            &summary.session_id[..8.min(summary.session_id.len())],
+            summary.prompt_number
+        );
+
+        if let Some(user_request) = &summary.user_request {
+            output.push_str(&format!("**User**: {}\n\n", user_request));
+        }
+
+        output.push_str(&format!("{}\n", summary.summary));
+
+        if let Some(completed) = &summary.completed {
+            output.push_str(&format!("\n**Completed**: {}\n", completed));
+        }
+
+        if let Some(files) = &summary.files_involved {
+            if !files.is_empty() && files.len() <= 5 {
+                output.push_str(&format!("\n**Files:** {}\n", files.join(", ")));
+            }
+        }
+
+        output
+    }
+
+    /// 格式化 Observation 为 Markdown
+    fn format_observation(&self, obs: &Observation) -> String {
+        let time_ago = format_time_ago(&obs.created_at);
+
+        let mut output = format!(
+            "## [{}] {} ({})\n**Session**: `{}` | **Turn**: #{}\n\n",
+            obs.observation_type.as_str().to_uppercase(),
+            obs.title,
+            time_ago,
+            &obs.session_id[..8.min(obs.session_id.len())],
+            obs.prompt_number
+        );
+
+        if let Some(subtitle) = &obs.subtitle {
+            output.push_str(&format!("{}\n\n", subtitle));
+        }
+
+        if let Some(narrative) = &obs.narrative {
+            output.push_str(&format!("{}\n", narrative));
+        }
+
+        if let Some(facts) = &obs.facts {
+            if !facts.is_empty() {
+                output.push_str("\n**Facts:**\n");
+                for fact in facts {
+                    output.push_str(&format!("- {}\n", fact));
+                }
+            }
+        }
+
+        if let Some(files) = &obs.files_modified {
+            if !files.is_empty() && files.len() <= 5 {
+                output.push_str(&format!("\n**Files modified:** {}\n", files.join(", ")));
+            }
+        }
+
+        output
+    }
+
+    /// 格式化 Message 为 Markdown
+    async fn format_message(&self, msg: &Message) -> String {
+        let project_name = if let Ok(Some(session)) = self.db.get_session(&msg.session_id).await {
+            if let Ok(Some(project)) = self.db.get_project(session.project_id).await {
+                project.name
+            } else {
+                "Unknown".to_string()
+            }
+        } else {
+            "Unknown".to_string()
+        };
+
+        let time_ago = DateTime::from_timestamp_millis(msg.timestamp)
+            .map(|dt| format_time_ago(&dt.to_rfc3339()))
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        // 使用 type 字段的字符串表示
+        let type_str = format!("{:?}", msg.r#type);
+        let role_label = if type_str.contains("User") {
+            "User"
+        } else {
+            "Assistant"
+        };
+
+        // 截断过长的内容
+        let content = if msg.content_text.len() > 500 {
+            format!("{}...", &msg.content_text[..500])
+        } else {
+            msg.content_text.clone()
+        };
+
+        format!(
+            "## {} ({})\n**[{}]** Session: `{}`\n\n{}\n",
+            project_name,
+            time_ago,
+            role_label,
+            &msg.session_id[..8.min(msg.session_id.len())],
+            content
+        )
+    }
+
     /// 格式化搜索结果为 Markdown
     async fn format_scored_result(&self, result: &ScoredResult) -> String {
         let project_name = if let Ok(Some(session)) = self.db.get_session(&result.session_id).await
@@ -619,6 +867,14 @@ struct ScoredResult {
     distance: f32,
     score: f32,
     created_at: Option<String>,
+}
+
+/// 上下文条目（用于 SessionStart fallback）
+enum ContextItem {
+    SessionSummary(SessionSummary),
+    TalkSummary(TalkSummary),
+    Observation(Observation),
+    Message(Message),
 }
 
 /// 格式化时间为 "X ago" 格式

@@ -507,6 +507,71 @@ impl SharedDbAdapter {
         let db = self.db.write().await;
         Ok(db.deduplicate_projects()?)
     }
+
+    /// 获取最近的消息（用于 SessionStart fallback）
+    ///
+    /// 当没有 L3/L2/L1 数据时，直接返回最近的原始消息
+    ///
+    /// # Arguments
+    /// * `project_id` - 可选的项目 ID 过滤
+    /// * `limit` - 最大返回数量
+    pub async fn get_recent_messages(
+        &self,
+        project_id: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
+        // 获取最近的 sessions（最多 limit 个）
+        let sessions = self.get_sessions(project_id, limit).await?;
+
+        if sessions.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut all_messages = Vec::new();
+
+        // 从每个 session 获取最新的消息
+        for session in sessions {
+            // 获取该 session 最新的几条消息（降序）
+            let msgs = self
+                .get_messages_with_options(&session.session_id, Some(3), true)
+                .await?;
+            all_messages.extend(msgs);
+
+            // 如果已经够了，就停止
+            if all_messages.len() >= limit {
+                break;
+            }
+        }
+
+        // 按时间戳排序（降序）并截断
+        all_messages.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        all_messages.truncate(limit);
+
+        Ok(all_messages)
+    }
+
+    // ==================== 数据库维护 ====================
+
+    /// 执行 WAL checkpoint，将 WAL 数据合并回主数据库
+    ///
+    /// 在优雅关闭时调用，确保数据持久化
+    pub async fn checkpoint(&self) -> Result<()> {
+        let db = self.db.write().await;
+        db.checkpoint()?;
+        Ok(())
+    }
+
+    /// 检查数据库完整性（快速检查）
+    pub async fn quick_check(&self) -> Result<claude_session_db::IntegrityCheckResult> {
+        let db = self.db.read().await;
+        Ok(db.quick_check()?)
+    }
+
+    /// 检查数据库完整性（完整检查，较慢）
+    pub async fn integrity_check(&self) -> Result<claude_session_db::IntegrityCheckResult> {
+        let db = self.db.read().await;
+        Ok(db.integrity_check()?)
+    }
 }
 
 impl Drop for SharedDbAdapter {

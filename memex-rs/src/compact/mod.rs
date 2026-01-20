@@ -17,7 +17,10 @@ mod service;
 mod source;
 mod vector;
 
-pub use config::{CompactConfig, InjectConfig, InjectMode, InjectSource, VectorDistanceType};
+pub use config::{
+    CompactConfig, InjectConfig, InjectQuickMode, InjectSource, SessionStartConfig,
+    UserPromptConfig, UserPromptSearchMode, VectorDistanceType,
+};
 pub use db::{CompactDB, Observation, ObservationType, SessionSummary, TalkSummary};
 pub use indexer::CompactIndexer;
 pub use prompt::{L1Output, L1Prompt, L2Output, L2Prompt, L3Output, L3Prompt};

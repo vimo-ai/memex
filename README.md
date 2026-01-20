@@ -61,14 +61,28 @@ use memex search "anything you want"
 
 Auto-inject relevant memory context into your Claude Code sessions:
 
-```bash
-# ~/.claude/settings.json
+```json
+// ~/.claude/settings.json
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -X POST http://localhost:10013/api/inject -H 'Content-Type: application/json' -d '{\"hook\":\"SessionStart\"}' 2>/dev/null || echo '{}'"
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
-        "type": "command",
-        "command": "curl -s -X POST http://localhost:10013/api/inject -H 'Content-Type: application/json' -d '{\"mode\":\"combine\",\"query\":\"$PROMPT\"}' 2>/dev/null || echo '{}'"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -X POST http://localhost:10013/api/inject -H 'Content-Type: application/json' -d '{\"hook\":\"UserPromptSubmit\",\"query\":\"$PROMPT\"}' 2>/dev/null || echo '{}'"
+          }
+        ]
       }
     ]
   }
