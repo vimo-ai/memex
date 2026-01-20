@@ -163,7 +163,7 @@ Memex Lite 直接读取 JSONL 文件，无需数据库，适合：
 | `OLLAMA_API` | `http://localhost:11434` | Ollama API 地址 |
 | `EMBEDDING_MODEL` | `bge-m3` | Ollama embedding 模型 |
 | `ENABLE_AI_CHAT` | `false` | 启用 RAG 问答功能 |
-| `CHAT_MODEL` | `qwen3:8b` | Ollama 聊天模型（用于问答） |
+| `CHAT_MODEL` | `qwen3:0.6b` | Ollama 聊天模型（用于问答） |
 
 ## 入门指南
 
