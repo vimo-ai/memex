@@ -1,15 +1,22 @@
-# Memex
+<div align="center">
+  <img src=".github/assets/logo.svg" alt="Memex" width="200">
+</div>
+
+[English](README.md) | [中文](.github/README_zh-CN.md)
 
 **One Memory. All CLIs. Never Compacted. Exact Search.**
 
 Session history management for AI coding assistants. Never lose your conversations again.
 
-## Supported Tools
+## Features
 
-- Claude Code
-- Codex CLI
-- OpenCode
-- Gemini CLI
+- **On-demand search** - You control when to search; automatic injection is opt-in
+- **Original preservation** - Raw messages always kept; summaries are optional layers
+- **Multi-CLI support** - Claude Code, Codex, OpenCode, Gemini in one database
+- **Powerful search** - Full-text (FTS5) + semantic vectors + hybrid ranking
+- **MCP integration** - Search directly from your AI CLI
+- **REST API** - Integrate into any workflow
+- **Local storage** - All data stays on your machine
 
 ## Quick Start
 
@@ -49,6 +56,9 @@ codex mcp add memex -- npx -y mcp-remote http://localhost:10013/api/mcp
 
 # Gemini
 gemini mcp add --transport http memex http://localhost:10013/api/mcp
+
+# OpenCode - edit ~/.config/opencode/opencode.json
+# { "mcp": { "memex": { "type": "remote", "url": "http://localhost:10013/api/mcp" } } }
 ```
 
 **3. Search in Your AI CLI**
@@ -57,44 +67,10 @@ gemini mcp add --transport http memex http://localhost:10013/api/mcp
 use memex search "anything you want"
 ```
 
-### Claude Code Hooks (Optional)
+### Hooks (Optional)
 
-Auto-inject relevant memory context into your Claude Code sessions:
-
-```json
-// ~/.claude/settings.json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "curl -s -X POST http://localhost:10013/api/inject -H 'Content-Type: application/json' -d '{\"hook\":\"SessionStart\"}' 2>/dev/null || echo '{}'"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "curl -s -X POST http://localhost:10013/api/inject -H 'Content-Type: application/json' -d '{\"hook\":\"UserPromptSubmit\",\"query\":\"$PROMPT\"}' 2>/dev/null || echo '{}'"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-See [Hook Documentation](https://vimoai.dev/docs/memex/hooks) for details.
+Auto-inject relevant memory context into Claude Code sessions. See [Hook Documentation](https://vimoai.dev/docs/memex/advanced/hooks) for setup.
 
 ## Documentation
 
 https://vimoai.dev/docs/memex
-
-## License
-
-MIT
