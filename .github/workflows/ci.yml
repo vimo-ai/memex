@@ -43,6 +43,15 @@ jobs:
           ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-db $GITHUB_WORKSPACE/../claude-session-db
           ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-collector $GITHUB_WORKSPACE/../ai-cli-session-collector
 
+      - name: Patch dependencies to use local checkout
+        run: |
+          echo '' >> memex-rs/Cargo.toml
+          echo '[patch."https://github.com/vimo-ai/ai-cli-session-db"]' >> memex-rs/Cargo.toml
+          echo 'claude-session-db = { path = "../deps/ai-cli-session-db" }' >> memex-rs/Cargo.toml
+          echo '' >> memex-rs/Cargo.toml
+          echo '[patch."https://github.com/vimo-ai/ai-cli-session-collector"]' >> memex-rs/Cargo.toml
+          echo 'ai-cli-session-collector = { path = "../deps/ai-cli-session-collector" }' >> memex-rs/Cargo.toml
+
       - name: Install protobuf
         run: sudo apt-get install -y protobuf-compiler
 
