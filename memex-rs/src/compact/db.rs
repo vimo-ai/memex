@@ -3,6 +3,7 @@
 //! 管理 observations / talk_summaries / session_summaries 三张表
 
 use anyhow::Result;
+use claude_session_db::escape_fts5_query;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -1144,6 +1145,7 @@ impl CompactDB {
     /// 搜索 Observations
     pub async fn search_observations(&self, query: &str, limit: usize) -> Result<Vec<Observation>> {
         let conn = self.conn.lock().await;
+        let escaped_query = escape_fts5_query(query);
         let mut stmt = conn.prepare(
             r#"
             SELECT o.id, o.session_id, o.prompt_number, o.source_offset,
@@ -1158,7 +1160,7 @@ impl CompactDB {
             "#,
         )?;
 
-        let rows = stmt.query_map(params![query, limit as i64], |row| {
+        let rows = stmt.query_map(params![escaped_query, limit as i64], |row| {
             Ok(Observation {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
@@ -1194,6 +1196,7 @@ impl CompactDB {
     /// 搜索 Talk Summaries
     pub async fn search_talk_summaries(&self, query: &str, limit: usize) -> Result<Vec<TalkSummary>> {
         let conn = self.conn.lock().await;
+        let escaped_query = escape_fts5_query(query);
         let mut stmt = conn.prepare(
             r#"
             SELECT t.id, t.session_id, t.prompt_number,
@@ -1207,7 +1210,7 @@ impl CompactDB {
             "#,
         )?;
 
-        let rows = stmt.query_map(params![query, limit as i64], |row| {
+        let rows = stmt.query_map(params![escaped_query, limit as i64], |row| {
             Ok(TalkSummary {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
@@ -1236,6 +1239,7 @@ impl CompactDB {
     /// 搜索 Session Summaries
     pub async fn search_session_summaries(&self, query: &str, limit: usize) -> Result<Vec<SessionSummary>> {
         let conn = self.conn.lock().await;
+        let escaped_query = escape_fts5_query(query);
         let mut stmt = conn.prepare(
             r#"
             SELECT s.id, s.session_id,
@@ -1250,7 +1254,7 @@ impl CompactDB {
             "#,
         )?;
 
-        let rows = stmt.query_map(params![query, limit as i64], |row| {
+        let rows = stmt.query_map(params![escaped_query, limit as i64], |row| {
             Ok(SessionSummary {
                 id: row.get(0)?,
                 session_id: row.get(1)?,

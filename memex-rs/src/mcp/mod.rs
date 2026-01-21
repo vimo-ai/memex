@@ -1445,6 +1445,7 @@ mod tests {
                 compact_db: None,
                 compact_queue: None,
                 compact_vector: None,
+                startup_duration_ms: 0,
             };
 
             (Arc::new(state), dir)

@@ -45,6 +45,8 @@ pub struct AppState {
     pub compact_queue: Option<CompactQueue>,
     /// Compact 向量存储（L1/L2/L3 摘要向量，用于 inject）
     pub compact_vector: Option<Arc<RwLock<CompactVectorStore>>>,
+    /// 启动初始化耗时（毫秒）
+    pub startup_duration_ms: u64,
 }
 
 /// 创建路由
@@ -125,16 +127,33 @@ struct StatsResponse {
     semantic_search_enabled: bool,
     /// AI 问答是否启用 (Ollama Chat)
     ai_chat_enabled: bool,
+    /// 数据库文件大小（字节）
+    db_size_bytes: u64,
+    /// 启动初始化耗时（毫秒）
+    startup_duration_ms: u64,
 }
 
 async fn get_stats(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
     let stats = state.db.get_stats().await?;
+
+    // 计算数据库文件大小（主文件 + WAL）
+    let db_path = state.config.db_path();
+    let mut db_size: u64 = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+
+    // 加上 WAL 文件大小
+    let wal_path = db_path.with_extension("db-wal");
+    if wal_path.exists() {
+        db_size += std::fs::metadata(&wal_path).map(|m| m.len()).unwrap_or(0);
+    }
+
     Ok(Json(StatsResponse {
         project_count: stats.project_count,
         session_count: stats.session_count,
         message_count: stats.message_count,
         semantic_search_enabled: state.embedding.is_some(),
         ai_chat_enabled: state.config.enable_ai_chat && state.chat.is_some(),
+        db_size_bytes: db_size,
+        startup_duration_ms: state.startup_duration_ms,
     }))
 }
 

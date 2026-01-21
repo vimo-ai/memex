@@ -58,6 +58,12 @@ impl Collector {
             };
 
             for meta in sessions {
+                // 跳过空 project_path 的会话（文件可能不完整，下次采集会重试）
+                if meta.project_path.is_empty() {
+                    tracing::debug!("跳过空 project_path: session_id={}", meta.id);
+                    continue;
+                }
+
                 // 获取或创建项目
                 let project_name = meta
                     .project_name
@@ -260,6 +266,12 @@ impl Collector {
             .blocking_get_session_latest_timestamp(&meta.id)
             .unwrap_or(None);
         let cutoff_ts = latest_ts.map(|ts| ts - BUFFER_MS).unwrap_or(0);
+
+        // 跳过空 project_path 的会话（文件可能不完整，下次采集会重试）
+        if meta.project_path.is_empty() {
+            tracing::debug!("跳过空 project_path: session_id={}", meta.id);
+            return Ok(result);
+        }
 
         // 获取或创建项目
         let project_name = meta

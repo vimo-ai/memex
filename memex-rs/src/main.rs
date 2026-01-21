@@ -100,13 +100,21 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer().with_timer(timer))
         .init();
 
+    // 记录启动开始时间
+    let startup_start = std::time::Instant::now();
+    let mut phase_start = std::time::Instant::now();
+
     tracing::info!("🚀 Memex Rust Backend starting...");
 
     // Load config first (needed for backup path)
     let config = Config::load();
+    tracing::info!("⏱️ [Config] {}ms", phase_start.elapsed().as_millis());
+    phase_start = std::time::Instant::now();
 
     // 启动时健康检查：检测数据库损坏并自动恢复
     let needs_recollect = startup_health_check(&config).await?;
+    tracing::info!("⏱️ [HealthCheck] {}ms", phase_start.elapsed().as_millis());
+    phase_start = std::time::Instant::now();
 
     // Initialize shared database (must succeed)
     let shared_db = {
@@ -159,6 +167,8 @@ async fn main() -> anyhow::Result<()> {
         }
         adapter
     };
+    tracing::info!("⏱️ [SharedDB] {}ms", phase_start.elapsed().as_millis());
+    phase_start = std::time::Instant::now();
     tracing::info!("📁 Data directory: {:?}", config.data_dir);
     tracing::info!("📁 Web directory: {:?}", config.web_dir);
     tracing::info!("📁 Claude projects: {:?}", config.claude_projects_path);
@@ -303,6 +313,8 @@ async fn main() -> anyhow::Result<()> {
             (None, None, None)
         }
     };
+    tracing::info!("⏱️ [Ollama] {}ms", phase_start.elapsed().as_millis());
+    phase_start = std::time::Instant::now();
 
     // Initialize vector store (optional)
     let vector = if embedding.is_some() {
@@ -319,6 +331,8 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
+    tracing::info!("⏱️ [LanceDB] {}ms", phase_start.elapsed().as_millis());
+    phase_start = std::time::Instant::now();
 
     // Create indexer service (optional)
     let indexer = match (&embedding, &vector) {
@@ -471,6 +485,7 @@ async fn main() -> anyhow::Result<()> {
         }
         (None, compact_db, compact_vector_store)
     };
+    tracing::info!("⏱️ [Compact] {}ms", phase_start.elapsed().as_millis());
 
     // Create hybrid search service
     let hybrid_search =
@@ -479,6 +494,10 @@ async fn main() -> anyhow::Result<()> {
     // Create RAG service
     let rag_service =
         RagService::new(shared_db.clone(), chat.clone(), embedding.clone(), vector.clone());
+
+    // 计算启动初始化耗时
+    let startup_duration_ms = startup_start.elapsed().as_millis() as u64;
+    tracing::info!("⏱️ Startup initialization took {}ms", startup_duration_ms);
 
     // Create app state
     // 注意：compact_queue 需要 clone，因为后面还要传给 file_watcher
@@ -496,6 +515,7 @@ async fn main() -> anyhow::Result<()> {
         compact_db,
         compact_queue: compact_queue.clone(),
         compact_vector,
+        startup_duration_ms,
     });
 
     // Run initial collection in background (non-blocking HTTP startup)
@@ -676,12 +696,12 @@ async fn shutdown_signal() {
     }
 }
 
-/// 启动时健康检查
+/// 启动时轻量检查
 ///
-/// 检测数据库损坏，如果损坏则从最近的备份恢复
+/// 只验证数据库能否连接，不做完整性检查（完整检查由 doctor 模块负责）
 /// 返回 true 表示需要重新采集数据
 async fn startup_health_check(config: &Config) -> anyhow::Result<bool> {
-    use claude_session_db::{DbConfig, IntegrityCheckResult, SessionDB};
+    use claude_session_db::{DbConfig, SessionDB};
 
     let db_path = config.db_path();
 
@@ -691,39 +711,28 @@ async fn startup_health_check(config: &Config) -> anyhow::Result<bool> {
         return Ok(false);
     }
 
-    tracing::info!("🔍 Checking database integrity...");
+    tracing::info!("🔍 Verifying database connection...");
 
-    // 尝试连接并检查完整性
-    let check_result = {
-        let db_config = DbConfig::local(db_path.to_string_lossy().into_owned());
-        match SessionDB::connect(db_config) {
-            Ok(db) => db.integrity_check(),
-            Err(e) => {
-                tracing::warn!("❌ Failed to connect to database: {}", e);
-                // 连接失败也视为损坏
-                Ok(IntegrityCheckResult::Corrupted(e.to_string()))
-            }
-        }
-    };
-
-    match check_result {
-        Ok(IntegrityCheckResult::Ok) => {
-            tracing::info!("✅ Database integrity check passed");
+    // 轻量检查：只验证能否连接
+    let db_config = DbConfig::local(db_path.to_string_lossy().into_owned());
+    match SessionDB::connect(db_config) {
+        Ok(_) => {
+            tracing::info!("✅ Database connection verified");
             Ok(false)
         }
-        Ok(IntegrityCheckResult::Corrupted(error)) => {
-            tracing::error!("❌ Database corrupted: {}", error);
+        Err(e) => {
+            tracing::error!("❌ Failed to connect to database: {}", e);
 
-            // 尝试从备份恢复
+            // 连接失败，尝试从备份恢复
             let backup_service = BackupService::new(db_path.clone(), config.backup_dir());
             let backups = backup_service.list_backups()?;
 
             if backups.is_empty() {
                 tracing::error!("❌ No backups available, cannot recover!");
-                anyhow::bail!("Database corrupted and no backups available");
+                anyhow::bail!("Database connection failed and no backups available: {}", e);
             }
 
-            let latest = &backups[0]; // 备份已按时间降序排列
+            let latest = &backups[0];
             tracing::info!("🔄 Restoring from backup: {}", latest.name);
 
             // 删除损坏的数据库文件（包括 WAL 文件）
@@ -744,12 +753,7 @@ async fn startup_health_check(config: &Config) -> anyhow::Result<bool> {
             backup_service.restore(&latest.name)?;
             tracing::info!("✅ Database restored from backup: {}", latest.name);
 
-            // 返回 true，表示需要重新采集增量数据
             Ok(true)
-        }
-        Err(e) => {
-            tracing::error!("❌ Integrity check failed: {}", e);
-            anyhow::bail!("Failed to check database integrity: {}", e);
         }
     }
 }
