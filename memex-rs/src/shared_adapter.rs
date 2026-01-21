@@ -64,18 +64,27 @@ impl SharedDbAdapter {
     }
 
     /// 注册为 Writer（启动时调用）
+    ///
+    /// 成为 Writer 时会自动触发全量采集，统一所有组件的采集逻辑。
     pub async fn register(&self) -> Result<Role> {
         // 重置取消标志
         *self.heartbeat_cancel.write().await = false;
 
         let mut db = self.db.write().await;
-        let role = db.register_writer(WriterType::MemexDaemon)?;
+        let (role, collect_result) = db.register_writer_and_collect(WriterType::MemexDaemon)?;
         drop(db);
 
         *self.role.write().await = role;
 
         if role == Role::Writer {
-            info!("[SharedDB] 成为 Writer，启动协调任务");
+            if let Some(result) = collect_result {
+                info!(
+                    "[SharedDB] 成为 Writer，采集完成: {} sessions, {} 条新消息",
+                    result.sessions_scanned, result.messages_inserted
+                );
+            } else {
+                info!("[SharedDB] 成为 Writer，启动协调任务");
+            }
         } else {
             info!("[SharedDB] 成为 Reader（已有其他 Writer），启动协调任务");
         }
@@ -198,17 +207,26 @@ impl SharedDbAdapter {
     }
 
     /// 尝试接管（Reader 在检测到超时后调用）
+    ///
+    /// 接管成功时会自动触发全量采集，统一所有组件的采集逻辑。
     pub async fn try_takeover(&self) -> Result<bool> {
         // 重置取消标志
         *self.heartbeat_cancel.write().await = false;
 
         let mut db = self.db.write().await;
-        let taken = db.try_takeover()?;
+        let (taken, collect_result) = db.try_takeover_and_collect()?;
 
         if taken {
             drop(db);
             *self.role.write().await = Role::Writer;
             self.start_heartbeat().await;
+
+            if let Some(result) = collect_result {
+                info!(
+                    "[SharedDB] 接管成功，采集完成: {} sessions, {} 条新消息",
+                    result.sessions_scanned, result.messages_inserted
+                );
+            }
         }
 
         Ok(taken)
@@ -571,6 +589,32 @@ impl SharedDbAdapter {
     pub async fn integrity_check(&self) -> Result<claude_session_db::IntegrityCheckResult> {
         let db = self.db.read().await;
         Ok(db.integrity_check()?)
+    }
+
+    // ==================== 采集操作 ====================
+
+    /// 执行全量采集（同步，使用 claude-session-db::Collector）
+    ///
+    /// 此方法是同步的，会阻塞当前线程直到完成。
+    /// 应该在 spawn_blocking 或非 async 上下文中调用。
+    pub fn collect_all_sync(&self) -> Result<claude_session_db::CollectResult> {
+        // 使用 try_write 获取锁，避免 async 死锁
+        let db = self.db.try_write().map_err(|_| {
+            anyhow::anyhow!("无法获取数据库写锁，可能有其他操作正在进行")
+        })?;
+
+        let collector = claude_session_db::Collector::new(&db);
+        Ok(collector.collect_all()?)
+    }
+
+    /// 按路径采集单个会话（同步，使用 claude-session-db::Collector）
+    pub fn collect_by_path_sync(&self, path: &str) -> Result<claude_session_db::CollectResult> {
+        let db = self.db.try_write().map_err(|_| {
+            anyhow::anyhow!("无法获取数据库写锁，可能有其他操作正在进行")
+        })?;
+
+        let collector = claude_session_db::Collector::new(&db);
+        Ok(collector.collect_by_path(path)?)
     }
 }
 

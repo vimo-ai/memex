@@ -4,7 +4,6 @@
 //! 支持多种 CLI 数据源 (Claude Code, Codex CLI)
 
 // 核心模块
-pub mod adapter;
 pub mod collector;
 pub mod compact;
 pub mod config;
@@ -33,6 +32,6 @@ pub mod mcp;
 pub mod watcher;
 
 // Re-export 常用类型
-pub use adapter::ParsedMessage;
+pub use claude_session_db::ParsedMessage;
 pub use config::Config;
 pub use domain::{Message, Project, SearchResult, Session};
