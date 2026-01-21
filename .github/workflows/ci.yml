@@ -40,14 +40,14 @@ jobs:
 
       - name: Create symlinks for dependencies
         run: |
-          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-db $GITHUB_WORKSPACE/../claude-session-db
+          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-db $GITHUB_WORKSPACE/../ai-cli-session-db
           ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-collector $GITHUB_WORKSPACE/../ai-cli-session-collector
 
       - name: Patch dependencies to use local checkout
         run: |
           echo '' >> memex-rs/Cargo.toml
           echo '[patch."https://github.com/vimo-ai/ai-cli-session-db"]' >> memex-rs/Cargo.toml
-          echo 'claude-session-db = { path = "../deps/ai-cli-session-db" }' >> memex-rs/Cargo.toml
+          echo 'ai-cli-session-db = { path = "../deps/ai-cli-session-db" }' >> memex-rs/Cargo.toml
           echo '' >> memex-rs/Cargo.toml
           echo '[patch."https://github.com/vimo-ai/ai-cli-session-collector"]' >> memex-rs/Cargo.toml
           echo 'ai-cli-session-collector = { path = "../deps/ai-cli-session-collector" }' >> memex-rs/Cargo.toml
@@ -116,3 +116,64 @@ jobs:
       - name: Test
         working-directory: memex-lite
         run: cargo test
+
+  preview-release:
+    name: Preview Release Build
+    runs-on: macos-14
+    needs: [check-memex-rs, check-memex-lite]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout ai-cli-session-db
+        uses: actions/checkout@v4
+        with:
+          repository: vimo-ai/ai-cli-session-db
+          path: deps/ai-cli-session-db
+
+      - name: Checkout ai-cli-session-collector
+        uses: actions/checkout@v4
+        with:
+          repository: vimo-ai/ai-cli-session-collector
+          path: deps/ai-cli-session-collector
+
+      - name: Create symlinks for dependencies
+        run: |
+          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-db $GITHUB_WORKSPACE/../ai-cli-session-db
+          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-collector $GITHUB_WORKSPACE/../ai-cli-session-collector
+
+      - name: Install protobuf
+        run: brew install protobuf
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Build
+        working-directory: memex-rs
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Prepare artifact
+        run: |
+          BINARY="memex-rs/target/aarch64-apple-darwin/release/memex"
+          SIZE=$(stat -f%z "$BINARY")
+          SIZE_MB=$(echo "scale=2; $SIZE / 1048576" | bc)
+          SHA256=$(shasum -a 256 "$BINARY" | cut -d' ' -f1)
+
+          cp "$BINARY" memex-darwin-arm64
+          chmod +x memex-darwin-arm64
+          shasum -a 256 memex-darwin-arm64 > memex-darwin-arm64.sha256
+          codesign -f -s - memex-darwin-arm64
+
+          echo "### Preview Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Size**: ${SIZE_MB}MB" >> $GITHUB_STEP_SUMMARY
+          echo "- **SHA256**: \`$SHA256\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memex-preview
+          path: |
+            memex-darwin-arm64
+            memex-darwin-arm64.sha256

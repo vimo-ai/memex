@@ -51,7 +51,7 @@ tokio-cron-scheduler = { version = "0.13", optional = true }
 # 共享数据库（ETerm/Vlaude 数据统一层）
 # 同时 re-export ai-cli-session-collector 类型，避免重复依赖
 # 使用 git 依赖，支持独立编译；在 ETerm 主仓库中通过 [patch] 覆盖成本地路径
-claude-session-db = { git = "https://github.com/vimo-ai/ai-cli-session-db", features = ["writer", "reader", "search", "coordination"] }
+ai-cli-session-db = { git = "https://github.com/vimo-ai/ai-cli-session-db", features = ["writer", "reader", "search", "coordination"] }
 
 # 工具
 anyhow = "1"

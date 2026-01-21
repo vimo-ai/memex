@@ -25,7 +25,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Checkout ai-cli-session-db (as claude-session-db)
+      - name: Checkout ai-cli-session-db (as ai-cli-session-db)
         uses: actions/checkout@v4
         with:
           repository: vimo-ai/ai-cli-session-db
@@ -39,9 +39,9 @@ jobs:
 
       - name: Create symlinks for dependencies
         run: |
-          # memex-rs/Cargo.toml uses path = "../../claude-session-db"
+          # memex-rs/Cargo.toml uses path = "../../ai-cli-session-db"
           # From memex-rs/, ../../ goes to parent of memex repo
-          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-db $GITHUB_WORKSPACE/../claude-session-db
+          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-db $GITHUB_WORKSPACE/../ai-cli-session-db
           ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-collector $GITHUB_WORKSPACE/../ai-cli-session-collector
 
       - name: Install protobuf

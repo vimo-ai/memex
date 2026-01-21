@@ -17,7 +17,7 @@ use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
 use tokio::sync::mpsc;
 
-use claude_session_db::all_watch_configs;
+use ai_cli_session_db::all_watch_configs;
 
 use crate::collector::Collector;
 use crate::compact::CompactQueue;
@@ -240,7 +240,7 @@ impl FileWatcher {
     /// 规则：如果最新消息的 type 是 User，说明新的 Talk 开始了，
     /// 应该触发上一个 Talk 的 compact。
     async fn detect_new_user_prompt(&self, db: &SharedDbAdapter, session_id: &str) -> bool {
-        use claude_session_db::MessageType;
+        use ai_cli_session_db::MessageType;
 
         // 获取最新 1 条消息
         match db.get_messages_with_options(session_id, Some(1), true).await {

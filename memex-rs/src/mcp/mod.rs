@@ -557,7 +557,7 @@ async fn search_raw_messages(
             query,
             search_limit,
             sql_project_id,
-            claude_session_db::SearchOrderBy::Score,
+            ai_cli_session_db::SearchOrderBy::Score,
             start_ts,
             end_ts,
         )
@@ -1362,8 +1362,8 @@ mod tests {
         use crate::rag::RagService;
         use crate::search::HybridSearchService;
         use crate::shared_adapter::SharedDbAdapter;
-        use claude_session_db::db::{MessageInput, SessionInput};
-        use claude_session_db::MessageType;
+        use ai_cli_session_db::db::{MessageInput, SessionInput};
+        use ai_cli_session_db::MessageType;
         use std::sync::Arc;
         use tempfile::tempdir;
 

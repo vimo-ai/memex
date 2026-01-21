@@ -32,6 +32,6 @@ pub mod mcp;
 pub mod watcher;
 
 // Re-export 常用类型
-pub use claude_session_db::ParsedMessage;
+pub use ai_cli_session_db::ParsedMessage;
 pub use config::Config;
 pub use domain::{Message, Project, SearchResult, Session};

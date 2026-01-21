@@ -1150,7 +1150,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
 
 [[package]]
-name = "claude-session-db"
+name = "ai-cli-session-db"
 version = "0.1.0"
 source = "git+https://github.com/vimo-ai/ai-cli-session-db#a24e58ebf262df68a8c77b6adb714f54ab27b194"
 dependencies = [
@@ -3662,7 +3662,7 @@ dependencies = [
  "async-trait",
  "axum",
  "chrono",
- "claude-session-db",
+ "ai-cli-session-db",
  "dirs 5.0.1",
  "futures",
  "lancedb",

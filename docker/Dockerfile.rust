@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY memex-rs/Cargo.toml memex-rs/Cargo.lock ./
 
 # 预编译依赖 (Docker 层缓存)
-# git 依赖会被自动拉取：claude-session-db → ai-cli-session-collector
+# git 依赖会被自动拉取：ai-cli-session-db → ai-cli-session-collector
 # 创建空的模块结构以匹配真实的 lib.rs
 RUN mkdir -p src && \
     echo "fn main() {}" > src/main.rs && \

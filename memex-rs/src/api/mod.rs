@@ -1277,7 +1277,7 @@ async fn merge_projects(State(state): State<Arc<AppState>>) -> Result<impl IntoR
     // 按 path 分组
     let mut path_groups: std::collections::HashMap<
         String,
-        Vec<claude_session_db::ProjectWithSource>,
+        Vec<ai_cli_session_db::ProjectWithSource>,
     > = std::collections::HashMap::new();
 
     for project in projects {

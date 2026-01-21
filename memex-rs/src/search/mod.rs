@@ -102,12 +102,12 @@ pub enum SearchOrderBy {
     TimeAsc,
 }
 
-impl From<SearchOrderBy> for claude_session_db::SearchOrderBy {
+impl From<SearchOrderBy> for ai_cli_session_db::SearchOrderBy {
     fn from(order: SearchOrderBy) -> Self {
         match order {
-            SearchOrderBy::Score => claude_session_db::SearchOrderBy::Score,
-            SearchOrderBy::TimeDesc => claude_session_db::SearchOrderBy::TimeDesc,
-            SearchOrderBy::TimeAsc => claude_session_db::SearchOrderBy::TimeAsc,
+            SearchOrderBy::Score => ai_cli_session_db::SearchOrderBy::Score,
+            SearchOrderBy::TimeDesc => ai_cli_session_db::SearchOrderBy::TimeDesc,
+            SearchOrderBy::TimeAsc => ai_cli_session_db::SearchOrderBy::TimeAsc,
         }
     }
 }
@@ -306,7 +306,7 @@ impl HybridSearchService {
 
         // FTS 搜索（日期过滤在 SQL 层完成）
         if effective_mode == SearchMode::Fts || effective_mode == SearchMode::Hybrid {
-            let db_order_by: claude_session_db::SearchOrderBy = order_by.into();
+            let db_order_by: ai_cli_session_db::SearchOrderBy = order_by.into();
             match self
                 .db
                 .search_fts_full(

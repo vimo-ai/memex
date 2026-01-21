@@ -2,7 +2,7 @@
 //!
 //! 消息、工具调用、对话轮次等核心类型
 
-use claude_session_db::{Message as DbMessage, MessageType};
+use ai_cli_session_db::{Message as DbMessage, MessageType};
 use serde::{Deserialize, Serialize};
 
 /// 消息角色

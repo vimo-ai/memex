@@ -118,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize shared database (must succeed)
     let shared_db = {
-        use claude_session_db::coordination::{Role, WriterHealth};
+        use ai_cli_session_db::coordination::{Role, WriterHealth};
 
         let adapter = SharedDbAdapter::new(None)?;
         tracing::info!("[SharedDB] Connected to shared database");
@@ -701,7 +701,7 @@ async fn shutdown_signal() {
 /// 只验证数据库能否连接，不做完整性检查（完整检查由 doctor 模块负责）
 /// 返回 true 表示需要重新采集数据
 async fn startup_health_check(config: &Config) -> anyhow::Result<bool> {
-    use claude_session_db::{DbConfig, SessionDB};
+    use ai_cli_session_db::{DbConfig, SessionDB};
 
     let db_path = config.db_path();
 

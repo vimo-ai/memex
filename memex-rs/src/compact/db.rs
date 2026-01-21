@@ -3,7 +3,7 @@
 //! 管理 observations / talk_summaries / session_summaries 三张表
 
 use anyhow::Result;
-use claude_session_db::escape_fts5_query;
+use ai_cli_session_db::escape_fts5_query;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;

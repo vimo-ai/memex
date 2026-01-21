@@ -1,9 +1,9 @@
 //! 共享数据库适配器
 //!
-//! 集成 claude-session-db，实现 Writer 协调和数据共享
+//! 集成 ai-cli-session-db，实现 Writer 协调和数据共享
 
 use anyhow::Result;
-use claude_session_db::{
+use ai_cli_session_db::{
     coordination::{Role, WriterHealth, WriterType},
     db::{MessageInput, SessionInput},
     DbConfig, Message, Project, SearchResult, Session, SessionDB,
@@ -16,7 +16,7 @@ use tracing::{debug, info, warn};
 
 /// 共享数据库适配器
 ///
-/// 封装 claude-session-db，提供：
+/// 封装 ai-cli-session-db，提供：
 /// - Writer 协调（多组件共存）
 /// - 心跳维护
 /// - 角色切换回调
@@ -281,7 +281,7 @@ impl SharedDbAdapter {
         &self,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<claude_session_db::ProjectWithStats>> {
+    ) -> Result<Vec<ai_cli_session_db::ProjectWithStats>> {
         let db = self.db.read().await;
         Ok(db.list_projects_with_stats(limit, offset)?)
     }
@@ -326,7 +326,7 @@ impl SharedDbAdapter {
         query: &str,
         limit: usize,
         project_id: Option<i64>,
-        order_by: claude_session_db::SearchOrderBy,
+        order_by: ai_cli_session_db::SearchOrderBy,
         start_timestamp: Option<i64>,
         end_timestamp: Option<i64>,
     ) -> Result<Vec<SearchResult>> {
@@ -342,7 +342,7 @@ impl SharedDbAdapter {
     }
 
     /// 获取统计信息
-    pub async fn get_stats(&self) -> Result<claude_session_db::Stats> {
+    pub async fn get_stats(&self) -> Result<ai_cli_session_db::Stats> {
         let db = self.db.read().await;
         Ok(db.get_stats()?)
     }
@@ -353,7 +353,7 @@ impl SharedDbAdapter {
     pub async fn get_unindexed_messages(
         &self,
         limit: usize,
-    ) -> Result<Vec<claude_session_db::Message>> {
+    ) -> Result<Vec<ai_cli_session_db::Message>> {
         let db = self.db.read().await;
         Ok(db.get_unindexed_messages(limit)?)
     }
@@ -386,7 +386,7 @@ impl SharedDbAdapter {
     pub async fn get_failed_indexed_messages(
         &self,
         limit: usize,
-    ) -> Result<Vec<claude_session_db::Message>> {
+    ) -> Result<Vec<ai_cli_session_db::Message>> {
         let db = self.db.read().await;
         Ok(db.get_failed_indexed_messages(limit)?)
     }
@@ -407,7 +407,7 @@ impl SharedDbAdapter {
     pub async fn get_messages_by_ids(
         &self,
         ids: &[i64],
-    ) -> Result<Vec<claude_session_db::Message>> {
+    ) -> Result<Vec<ai_cli_session_db::Message>> {
         let db = self.db.read().await;
         Ok(db.get_messages_by_ids(ids)?)
     }
@@ -418,7 +418,7 @@ impl SharedDbAdapter {
     pub async fn get_session(
         &self,
         session_id: &str,
-    ) -> Result<Option<claude_session_db::Session>> {
+    ) -> Result<Option<ai_cli_session_db::Session>> {
         let db = self.db.read().await;
         Ok(db.get_session(session_id)?)
     }
@@ -499,7 +499,7 @@ impl SharedDbAdapter {
     /// 获取所有项目（带 source 字段）
     pub async fn get_all_projects_with_source(
         &self,
-    ) -> Result<Vec<claude_session_db::ProjectWithSource>> {
+    ) -> Result<Vec<ai_cli_session_db::ProjectWithSource>> {
         let db = self.db.read().await;
         Ok(db.get_all_projects_with_source()?)
     }
@@ -580,41 +580,41 @@ impl SharedDbAdapter {
     }
 
     /// 检查数据库完整性（快速检查）
-    pub async fn quick_check(&self) -> Result<claude_session_db::IntegrityCheckResult> {
+    pub async fn quick_check(&self) -> Result<ai_cli_session_db::IntegrityCheckResult> {
         let db = self.db.read().await;
         Ok(db.quick_check()?)
     }
 
     /// 检查数据库完整性（完整检查，较慢）
-    pub async fn integrity_check(&self) -> Result<claude_session_db::IntegrityCheckResult> {
+    pub async fn integrity_check(&self) -> Result<ai_cli_session_db::IntegrityCheckResult> {
         let db = self.db.read().await;
         Ok(db.integrity_check()?)
     }
 
     // ==================== 采集操作 ====================
 
-    /// 执行全量采集（同步，使用 claude-session-db::Collector）
+    /// 执行全量采集（同步，使用 ai-cli-session-db::Collector）
     ///
     /// 此方法是同步的，会阻塞当前线程直到完成。
     /// 应该在 spawn_blocking 或非 async 上下文中调用。
-    pub fn collect_all_sync(&self) -> Result<claude_session_db::CollectResult> {
+    pub fn collect_all_sync(&self) -> Result<ai_cli_session_db::CollectResult> {
         // 使用 try_write 获取锁，避免 async 死锁
         let db = self.db.try_write().map_err(|_| {
             anyhow::anyhow!("无法获取数据库写锁，可能有其他操作正在进行")
         })?;
 
-        let collector = claude_session_db::Collector::new(&db);
-        Ok(collector.collect_all()?)
+        let collector = ai_cli_session_db::Collector::new(&db);
+        collector.collect_all()
     }
 
-    /// 按路径采集单个会话（同步，使用 claude-session-db::Collector）
-    pub fn collect_by_path_sync(&self, path: &str) -> Result<claude_session_db::CollectResult> {
+    /// 按路径采集单个会话（同步，使用 ai-cli-session-db::Collector）
+    pub fn collect_by_path_sync(&self, path: &str) -> Result<ai_cli_session_db::CollectResult> {
         let db = self.db.try_write().map_err(|_| {
             anyhow::anyhow!("无法获取数据库写锁，可能有其他操作正在进行")
         })?;
 
-        let collector = claude_session_db::Collector::new(&db);
-        Ok(collector.collect_by_path(path)?)
+        let collector = ai_cli_session_db::Collector::new(&db);
+        collector.collect_by_path(path)
     }
 }
 

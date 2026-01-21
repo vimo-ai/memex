@@ -1,9 +1,9 @@
 //! 领域模型 - API DTO 和类型转换
 //!
-//! 定义 API 响应格式（DTO），并提供从 claude_session_db 类型的转换
+//! 定义 API 响应格式（DTO），并提供从 ai_cli_session_db 类型的转换
 
 use chrono::{DateTime, Local, Utc};
-use claude_session_db::{
+use ai_cli_session_db::{
     Message as DbMessage, Project as DbProject, SearchResult as DbSearchResult,
     Session as DbSession,
 };
@@ -317,7 +317,7 @@ impl SearchResult {
     }
 }
 
-// ==================== 从 claude_session_db 类型转换 ====================
+// ==================== 从 ai_cli_session_db 类型转换 ====================
 
 /// 毫秒时间戳转 ISO 8601 字符串（本地时区）
 pub fn ms_to_local_iso(ms: i64) -> String {

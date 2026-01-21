@@ -23,7 +23,7 @@ use crate::compact::{
     SessionStartConfig, SessionSummary, TalkSummary, UserPromptConfig, UserPromptSearchMode,
     VectorDistanceType,
 };
-use claude_session_db::Message;
+use ai_cli_session_db::Message;
 use crate::llm::EmbeddingProvider;
 use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::VectorStore;
