@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use memex::{
     compact::{build_parsed_session, CompactConfig, CompactDB, CompactService},
+    db_reader::DbReader,
     llm::{ChatProviderExt, OllamaProvider},
-    shared_adapter::SharedDbAdapter,
 };
 
 const TEST_SESSION_ID: &str = "170de28f-cb5b-4d21-a50d-e0d998543ead";
@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
     let db_path = dirs::home_dir().unwrap().join(".vimo/db/ai-cli-session.db");
     println!("\n📂 数据库: {:?}", db_path);
 
-    let shared_db = Arc::new(SharedDbAdapter::new(Some(db_path))?);
+    let shared_db = Arc::new(DbReader::new(Some(db_path))?);
 
     // 5. 创建 Compact DB（使用临时目录）
     let compact_db_path = std::env::temp_dir().join("compact_test.db");
