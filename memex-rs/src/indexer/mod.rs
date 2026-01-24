@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
+use crate::db_reader::DbReader;
 use crate::embedding::Chunker;
 use crate::llm::EmbeddingProvider;
-use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::{VectorRecord, VectorStore};
 
 // ==================== 索引队列 ====================
@@ -27,6 +27,11 @@ impl IndexQueue {
         tokio::spawn(Self::process_queue(rx, indexer));
 
         Self { tx }
+    }
+
+    /// 获取发送端（用于 Agent 事件循环）
+    pub fn sender(&self) -> mpsc::Sender<Vec<i64>> {
+        self.tx.clone()
     }
 
     /// 发送消息 ID 到队列
@@ -61,7 +66,7 @@ impl IndexQueue {
 /// 向量索引服务
 #[derive(Clone)]
 pub struct VectorIndexer {
-    db: Arc<SharedDbAdapter>,
+    db: Arc<DbReader>,
     embedding: Arc<dyn EmbeddingProvider>,
     vector: Arc<RwLock<VectorStore>>,
     chunker: Chunker,
@@ -83,7 +88,7 @@ pub struct IndexResult {
 impl VectorIndexer {
     /// 创建索引服务
     pub fn new(
-        db: Arc<SharedDbAdapter>,
+        db: Arc<DbReader>,
         embedding: Arc<dyn EmbeddingProvider>,
         vector: Arc<RwLock<VectorStore>>,
     ) -> Self {

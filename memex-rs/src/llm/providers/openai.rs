@@ -42,8 +42,7 @@ impl OpenAIProvider {
     ///
     /// OpenRouter 不支持 embedding，只支持 chat
     pub fn openrouter(api_key: &str, model: &str) -> Self {
-        let config =
-            LlmClientConfig::new("https://openrouter.ai/api/v1").with_api_key(api_key);
+        let config = LlmClientConfig::new("https://openrouter.ai/api/v1").with_api_key(api_key);
         Self {
             core: LlmClientCore::new(config),
             model: model.to_string(),
@@ -101,11 +100,10 @@ impl ChatProvider for OpenAIProvider {
             .context("OpenAI chat 请求失败")?;
 
         // choices 为空时返回明确错误，而非静默返回空字符串
-        let choice = response
-            .choices
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("OpenAI 返回空 choices，可能由于内容过滤或 API 错误"))?;
+        let choice =
+            response.choices.into_iter().next().ok_or_else(|| {
+                anyhow::anyhow!("OpenAI 返回空 choices，可能由于内容过滤或 API 错误")
+            })?;
 
         // content 可能为 null（如 tool call），此时返回空字符串
         let content = choice.message.content.unwrap_or_default();

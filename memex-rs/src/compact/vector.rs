@@ -117,7 +117,9 @@ impl CompactVectorStore {
                 tracing::info!("LanceDB compact_vectors table opened");
             }
             Err(_) => {
-                tracing::info!("LanceDB compact_vectors table not found, will create on first insert");
+                tracing::info!(
+                    "LanceDB compact_vectors table not found, will create on first insert"
+                );
             }
         }
 
@@ -322,7 +324,11 @@ impl CompactVectorStore {
             query = query.only_if(format!("level = '{}'", l.as_str()));
         }
 
-        let results = query.limit(limit).execute().await.context("执行向量搜索失败")?;
+        let results = query
+            .limit(limit)
+            .execute()
+            .await
+            .context("执行向量搜索失败")?;
 
         let mut search_results = Vec::new();
 
@@ -357,16 +363,34 @@ impl CompactVectorStore {
                 .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
 
             // 核心字段必须存在，created_at 可选
-            if let (Some(ids), Some(sids), Some(lvls), Some(src_ids), Some(pns), Some(txts), Some(dists)) =
-                (ids, session_ids, levels, source_ids, prompt_numbers, texts, distances)
-            {
+            if let (
+                Some(ids),
+                Some(sids),
+                Some(lvls),
+                Some(src_ids),
+                Some(pns),
+                Some(txts),
+                Some(dists),
+            ) = (
+                ids,
+                session_ids,
+                levels,
+                source_ids,
+                prompt_numbers,
+                texts,
+                distances,
+            ) {
                 for i in 0..batch.num_rows() {
                     search_results.push(CompactVectorSearchResult {
                         id: ids.value(i).to_string(),
                         session_id: sids.value(i).to_string(),
                         level: lvls.value(i).to_string(),
                         source_id: src_ids.value(i).to_string(),
-                        prompt_number: if pns.is_null(i) { None } else { Some(pns.value(i)) },
+                        prompt_number: if pns.is_null(i) {
+                            None
+                        } else {
+                            Some(pns.value(i))
+                        },
                         text: txts.value(i).to_string(),
                         created_at: created_ats.map(|cats| cats.value(i).to_string()),
                         distance: dists.value(i),
@@ -489,19 +513,27 @@ mod tests {
         assert_eq!(results.len(), 3);
 
         // 测试搜索（只搜 L1）
-        let results = store.search(&query, Some(CompactLevel::L1), 10).await.unwrap();
+        let results = store
+            .search(&query, Some(CompactLevel::L1), 10)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].level, "l1");
 
         // 测试 created_at 正确返回
-        assert_eq!(results[0].created_at, Some("2024-01-01T10:00:00Z".to_string()));
+        assert_eq!(
+            results[0].created_at,
+            Some("2024-01-01T10:00:00Z".to_string())
+        );
 
         // 测试搜索所有层级时 created_at 都正确
         let results = store.search(&query, None, 10).await.unwrap();
-        let created_ats: Vec<Option<String>> = results.iter().map(|r| r.created_at.clone()).collect();
+        let created_ats: Vec<Option<String>> =
+            results.iter().map(|r| r.created_at.clone()).collect();
         assert!(created_ats.contains(&Some("2024-01-01T10:00:00Z".to_string()))); // L1
         assert!(created_ats.contains(&Some("2024-01-01T11:00:00Z".to_string()))); // L2
-        assert!(created_ats.contains(&Some("2024-01-01T12:00:00Z".to_string()))); // L3
+        assert!(created_ats.contains(&Some("2024-01-01T12:00:00Z".to_string())));
+        // L3
     }
 
     #[test]

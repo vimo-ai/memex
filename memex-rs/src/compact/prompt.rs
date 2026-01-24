@@ -302,7 +302,11 @@ mod tests {
     #[test]
     fn test_l3_prompt_build() {
         let summaries = vec![
-            (1, "Fixed authentication bug".to_string(), Some("Added null check".to_string())),
+            (
+                1,
+                "Fixed authentication bug".to_string(),
+                Some("Added null check".to_string()),
+            ),
             (2, "Added new API endpoint".to_string(), None),
         ];
 

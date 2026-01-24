@@ -37,10 +37,7 @@ impl OllamaProvider {
     async fn check_model(&self, model: &str) -> bool {
         let result: Result<OllamaTagsResponse> = self.core.get("/api/tags").await;
         match result {
-            Ok(resp) => resp
-                .models
-                .iter()
-                .any(|m| m.name.starts_with(model)),
+            Ok(resp) => resp.models.iter().any(|m| m.name.starts_with(model)),
             Err(_) => false,
         }
     }
@@ -240,10 +237,7 @@ mod tests {
         println!("buffered:    {:?}", results);
 
         // buffered 应该保持顺序
-        assert_eq!(
-            results, inputs,
-            "buffered 应该保持输入顺序"
-        );
+        assert_eq!(results, inputs, "buffered 应该保持输入顺序");
         println!("✓ 修复验证: buffered 保持输入顺序");
     }
 }

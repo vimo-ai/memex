@@ -4,8 +4,8 @@
 //! cargo run --example compact_test              # 默认用 Ollama qwen3:0.6b
 //! OLLAMA_MODEL=qwen3:8b cargo run --example compact_test  # 指定模型
 
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
 
 use memex::{
     compact::{build_parsed_session, CompactConfig, CompactDB, CompactService},
@@ -26,18 +26,21 @@ async fn main() -> Result<()> {
     let model = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "qwen3:0.6b".to_string());
     println!("📡 使用 Ollama 本地模型: {}", model);
 
-    let chat_provider: Arc<dyn memex::llm::ChatProvider> =
-        Arc::new(OllamaProvider::new("http://localhost:11434", &model, &model));
+    let chat_provider: Arc<dyn memex::llm::ChatProvider> = Arc::new(OllamaProvider::new(
+        "http://localhost:11434",
+        &model,
+        &model,
+    ));
 
     // 3. 测试 LLM 连通性
     println!("\n🔌 测试 LLM 连接...");
-    let test_response = chat_provider.chat_simple("Say 'OK' if you can hear me.").await?;
+    let test_response = chat_provider
+        .chat_simple("Say 'OK' if you can hear me.")
+        .await?;
     println!("   LLM 响应: {}", test_response.content.trim());
 
     // 4. 连接数据库
-    let db_path = dirs::home_dir()
-        .unwrap()
-        .join(".vimo/db/ai-cli-session.db");
+    let db_path = dirs::home_dir().unwrap().join(".vimo/db/ai-cli-session.db");
     println!("\n📂 数据库: {:?}", db_path);
 
     let shared_db = Arc::new(SharedDbAdapter::new(Some(db_path))?);
@@ -61,7 +64,8 @@ async fn main() -> Result<()> {
     println!("\n📋 对话概要:");
     for talk in &parsed.talks {
         let user_preview: String = talk.user_message.content.chars().take(50).collect();
-        let assistant_preview: String = talk.assistant_messages
+        let assistant_preview: String = talk
+            .assistant_messages
             .first()
             .map(|m| m.content.chars().take(30).collect())
             .unwrap_or_else(|| "(empty)".to_string());

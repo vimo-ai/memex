@@ -344,7 +344,10 @@ fn date_to_timestamp(date: &str, is_start: bool) -> Option<i64> {
 async fn search_history(state: &AppState, args: Value) -> Result<Value, String> {
     let query = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
     let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(5) as usize;
-    let level = args.get("level").and_then(|l| l.as_str()).unwrap_or("sessions");
+    let level = args
+        .get("level")
+        .and_then(|l| l.as_str())
+        .unwrap_or("sessions");
 
     // 解析 cwd 参数（支持 string 或 array）
     let include_cwds = parse_cwd_param(args.get("cwd"));
@@ -377,14 +380,18 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
         (Some(start), None)
     } else {
         let start = if let Some(d) = from_date {
-            Some(date_to_timestamp(d, true)
-                .ok_or_else(|| format!("Invalid from date: {}. Use YYYY-MM-DD", d))?)
+            Some(
+                date_to_timestamp(d, true)
+                    .ok_or_else(|| format!("Invalid from date: {}. Use YYYY-MM-DD", d))?,
+            )
         } else {
             None
         };
         let end = if let Some(d) = to_date {
-            Some(date_to_timestamp(d, false)
-                .ok_or_else(|| format!("Invalid to date: {}. Use YYYY-MM-DD", d))?)
+            Some(
+                date_to_timestamp(d, false)
+                    .ok_or_else(|| format!("Invalid to date: {}. Use YYYY-MM-DD", d))?,
+            )
         } else {
             None
         };
@@ -427,7 +434,14 @@ async fn search_session_summaries(
 
     // 获取 session 到 project_id 的映射（用于过滤）
     let session_project_map = if !filter.is_empty() {
-        get_session_project_map(state, &results.iter().map(|s| s.session_id.clone()).collect::<Vec<_>>()).await
+        get_session_project_map(
+            state,
+            &results
+                .iter()
+                .map(|s| s.session_id.clone())
+                .collect::<Vec<_>>(),
+        )
+        .await
     } else {
         std::collections::HashMap::new()
     };
@@ -492,7 +506,14 @@ async fn search_talk_summaries(
 
     // 获取 session 到 project_id 的映射（用于过滤）
     let session_project_map = if !filter.is_empty() {
-        get_session_project_map(state, &results.iter().map(|t| t.session_id.clone()).collect::<Vec<_>>()).await
+        get_session_project_map(
+            state,
+            &results
+                .iter()
+                .map(|t| t.session_id.clone())
+                .collect::<Vec<_>>(),
+        )
+        .await
     } else {
         std::collections::HashMap::new()
     };
@@ -567,7 +588,9 @@ async fn search_raw_messages(
     // 计算每个 session 的匹配数
     let mut session_match_counts: HashMap<String, usize> = HashMap::new();
     for r in &results {
-        *session_match_counts.entry(r.session_id.clone()).or_insert(0) += 1;
+        *session_match_counts
+            .entry(r.session_id.clone())
+            .or_insert(0) += 1;
     }
 
     // 去重：每个 session 只保留最高分的一条
@@ -588,7 +611,10 @@ async fn search_raw_messages(
         })
         .take(limit)
         .map(|r| {
-            let session_matches = session_match_counts.get(&r.session_id).copied().unwrap_or(1);
+            let session_matches = session_match_counts
+                .get(&r.session_id)
+                .copied()
+                .unwrap_or(1);
             json!({
                 "session": &r.session_id,
                 "role": &r.r#type,
@@ -691,7 +717,10 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
 
     // range 使用 message_id
     let first_msg_id = all_messages.get(from_idx).map(|m| m.id).unwrap_or(0);
-    let last_msg_id = all_messages.get(to_idx.saturating_sub(1)).map(|m| m.id).unwrap_or(0);
+    let last_msg_id = all_messages
+        .get(to_idx.saturating_sub(1))
+        .map(|m| m.id)
+        .unwrap_or(0);
 
     let mut result = json!({
         "total": total,
@@ -739,10 +768,8 @@ async fn get_recent_sessions(state: &AppState, args: Value) -> Result<Value, Str
         .list_projects_with_stats(1000, 0)
         .await
         .unwrap_or_default();
-    let project_names: HashMap<i64, String> = projects
-        .into_iter()
-        .map(|p| (p.id, p.name))
-        .collect();
+    let project_names: HashMap<i64, String> =
+        projects.into_iter().map(|p| (p.id, p.name)).collect();
 
     let formatted: Vec<Value> = sessions
         .iter()
@@ -1357,13 +1384,12 @@ mod tests {
         use super::*;
         use crate::api::AppState;
         use crate::backup::BackupService;
-        use crate::collector::Collector;
         use crate::config::Config;
+        use crate::db_reader::DbReader;
         use crate::rag::RagService;
         use crate::search::HybridSearchService;
-        use crate::shared_adapter::SharedDbAdapter;
         use ai_cli_session_db::db::{MessageInput, SessionInput};
-        use ai_cli_session_db::MessageType;
+        use ai_cli_session_db::{DbConfig, MessageType, SessionDB};
         use std::sync::Arc;
         use tempfile::tempdir;
 
@@ -1374,25 +1400,24 @@ mod tests {
             let backup_dir = dir.path().join("backups");
             std::fs::create_dir_all(&backup_dir).unwrap();
 
-            let adapter = SharedDbAdapter::new(Some(db_path.clone())).unwrap();
-            adapter.register().await.unwrap();
+            // 使用 SessionDB 直接写入测试数据
+            let config = DbConfig::local(db_path.to_string_lossy().into_owned());
+            let session_db = SessionDB::connect(config).unwrap();
 
             // 创建测试项目
-            let project_id = adapter
+            let project_id = session_db
                 .get_or_create_project("TestProject", "/test/project", "test")
-                .await
                 .unwrap();
 
             // 创建测试会话
             let session_id = "test-session-12345678";
-            adapter
+            session_db
                 .upsert_session(&SessionInput {
                     session_id: session_id.to_string(),
                     project_id,
                     message_count: Some(10), // 必填字段
                     ..Default::default()
                 })
-                .await
                 .unwrap();
 
             // 插入测试消息
@@ -1420,13 +1445,18 @@ mod tests {
                     approval_resolved_at: None,
                 })
                 .collect();
-            adapter.insert_messages(session_id, &messages).await.unwrap();
+            session_db
+                .insert_messages(session_id, &messages)
+                .unwrap();
+
+            // 释放 SessionDB，使用 DbReader 读取
+            drop(session_db);
+
+            // 创建 DbReader
+            let db = Arc::new(DbReader::new(Some(db_path.clone())).unwrap());
 
             // 创建 AppState
             let config = Config::default();
-            let db = Arc::new(adapter);
-
-            let collector = Collector::new(config.clone(), db.clone());
             let backup = BackupService::new(db_path, backup_dir);
             let hybrid_search = HybridSearchService::new(db.clone(), None, None);
             let rag_service = RagService::new(db.clone(), None, None, None);
@@ -1434,7 +1464,6 @@ mod tests {
             let state = AppState {
                 config,
                 db,
-                collector,
                 backup,
                 embedding: None,
                 chat: None,
@@ -1491,9 +1520,7 @@ mod tests {
             assert!(!messages.is_empty(), "应该返回消息");
 
             // 关键验证: 返回的消息中应该包含 at_value 对应的消息
-            let found_target = messages
-                .iter()
-                .any(|m| m["at"].as_i64() == Some(at_value));
+            let found_target = messages.iter().any(|m| m["at"].as_i64() == Some(at_value));
             assert!(
                 found_target,
                 "round-trip: get_session 返回的消息应包含目标 at={} 的消息",

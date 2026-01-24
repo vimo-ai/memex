@@ -16,10 +16,12 @@ use tokio::sync::{Mutex, RwLock};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::compact::{CompactDB, CompactLevel, CompactVectorStore, Observation, SessionSummary, TalkSummary};
+use crate::compact::{
+    CompactDB, CompactLevel, CompactVectorStore, Observation, SessionSummary, TalkSummary,
+};
+use crate::db_reader::DbReader;
 use crate::domain::ms_to_local_iso;
 use crate::llm::EmbeddingProvider;
-use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::VectorStore;
 
 /// RRF 融合常数 (标准值为 60)
@@ -190,7 +192,7 @@ impl SearchLevel {
 
 /// 混合检索服务
 pub struct HybridSearchService {
-    db: Arc<SharedDbAdapter>,
+    db: Arc<DbReader>,
     embedding: Option<Arc<dyn EmbeddingProvider>>,
     /// L0 原文向量存储
     vector: Option<Arc<RwLock<VectorStore>>>,
@@ -203,7 +205,7 @@ pub struct HybridSearchService {
 impl HybridSearchService {
     /// 创建混合检索服务
     pub fn new(
-        db: Arc<SharedDbAdapter>,
+        db: Arc<DbReader>,
         embedding: Option<Arc<dyn EmbeddingProvider>>,
         vector: Option<Arc<RwLock<VectorStore>>>,
     ) -> Self {
@@ -248,7 +250,9 @@ impl HybridSearchService {
         // All 级别：并行搜索 Raw + Compact，合并结果
         if level == SearchLevel::All {
             return self
-                .search_all_levels(&query, mode, limit, project_id, order_by, start_date, end_date)
+                .search_all_levels(
+                    &query, mode, limit, project_id, order_by, start_date, end_date,
+                )
                 .await;
         }
 
@@ -260,7 +264,10 @@ impl HybridSearchService {
         }
 
         // Raw 级别搜索
-        self.search_raw(&query, mode, limit, project_id, order_by, start_date, end_date).await
+        self.search_raw(
+            &query, mode, limit, project_id, order_by, start_date, end_date,
+        )
+        .await
     }
 
     /// Raw (L0) 原文搜索
@@ -277,10 +284,7 @@ impl HybridSearchService {
     ) -> Result<Vec<HybridSearchResult>> {
         // 时间排序时自动降级为 FTS-only 模式
         let effective_mode = if order_by != SearchOrderBy::Score {
-            tracing::info!(
-                "[Raw Search] order_by={:?}, 降级为 FTS-only 模式",
-                order_by
-            );
+            tracing::info!("[Raw Search] order_by={:?}, 降级为 FTS-only 模式", order_by);
             SearchMode::Fts
         } else {
             mode
@@ -332,7 +336,10 @@ impl HybridSearchService {
         // Vector search (只在 Score 排序时执行)
         if effective_mode == SearchMode::Vector || effective_mode == SearchMode::Hybrid {
             if let (Some(embedding), Some(vector)) = (&self.embedding, &self.vector) {
-                match self.vector_search(embedding, vector, query, limit * 2).await {
+                match self
+                    .vector_search(embedding, vector, query, limit * 2)
+                    .await
+                {
                     Ok(results) => {
                         tracing::debug!("[Raw Vector] Returned {} results", results.len());
                         vector_results = results;
@@ -584,8 +591,24 @@ impl HybridSearchService {
 
         // 并行搜索 Raw 和 Compact
         let (raw_results, compact_results) = tokio::join!(
-            self.search_raw(query, mode, limit * 2, project_id, order_by, start_date.clone(), end_date.clone()),
-            self.search_compact(query, SearchLevel::All, mode, limit * 2, project_id, start_date.clone(), end_date.clone())
+            self.search_raw(
+                query,
+                mode,
+                limit * 2,
+                project_id,
+                order_by,
+                start_date.clone(),
+                end_date.clone()
+            ),
+            self.search_compact(
+                query,
+                SearchLevel::All,
+                mode,
+                limit * 2,
+                project_id,
+                start_date.clone(),
+                end_date.clone()
+            )
         );
 
         let raw_results = raw_results.unwrap_or_default();
@@ -645,7 +668,9 @@ impl HybridSearchService {
         if mode == SearchMode::Fts || mode == SearchMode::Hybrid {
             if let Some(compact_db) = &self.compact_db {
                 let db = compact_db.lock().await;
-                fts_results = self.compact_fts_search(&db, query, level, limit * 2).await?;
+                fts_results = self
+                    .compact_fts_search(&db, query, level, limit * 2)
+                    .await?;
                 tracing::debug!("[Compact FTS] Found {} results", fts_results.len());
             } else {
                 tracing::warn!("[Compact Search] CompactDB not available for FTS");
@@ -654,8 +679,11 @@ impl HybridSearchService {
 
         // Vector 搜索
         if mode == SearchMode::Vector || mode == SearchMode::Hybrid {
-            if let (Some(embedding), Some(compact_vector)) = (&self.embedding, &self.compact_vector) {
-                vector_results = self.compact_vector_search(embedding, compact_vector, query, level, limit * 2).await?;
+            if let (Some(embedding), Some(compact_vector)) = (&self.embedding, &self.compact_vector)
+            {
+                vector_results = self
+                    .compact_vector_search(embedding, compact_vector, query, level, limit * 2)
+                    .await?;
                 tracing::debug!("[Compact Vector] Found {} results", vector_results.len());
             } else {
                 tracing::warn!("[Compact Search] Embedding/CompactVector not available");
@@ -671,7 +699,9 @@ impl HybridSearchService {
         let fused = self.compact_rrf_fusion(&fts_results, &vector_results).await;
 
         // 应用过滤（project_id 和日期范围）
-        let filtered = self.filter_compact_results(fused, project_id, start_date, end_date).await;
+        let filtered = self
+            .filter_compact_results(fused, project_id, start_date, end_date)
+            .await;
 
         Ok(filtered.into_iter().take(limit).collect())
     }
@@ -764,17 +794,31 @@ impl HybridSearchService {
             }
             SearchLevel::Sessions => {
                 let sessions = compact_db.search_session_summaries(query, limit).await?;
-                results.extend(sessions.into_iter().map(CompactFtsItem::from_session_summary));
+                results.extend(
+                    sessions
+                        .into_iter()
+                        .map(CompactFtsItem::from_session_summary),
+                );
             }
             SearchLevel::All => {
                 // 搜索所有 compact 级别
                 let per_level_limit = limit / 3 + 1;
-                let obs = compact_db.search_observations(query, per_level_limit).await?;
-                let talks = compact_db.search_talk_summaries(query, per_level_limit).await?;
-                let sessions = compact_db.search_session_summaries(query, per_level_limit).await?;
+                let obs = compact_db
+                    .search_observations(query, per_level_limit)
+                    .await?;
+                let talks = compact_db
+                    .search_talk_summaries(query, per_level_limit)
+                    .await?;
+                let sessions = compact_db
+                    .search_session_summaries(query, per_level_limit)
+                    .await?;
                 results.extend(obs.into_iter().map(CompactFtsItem::from_observation));
                 results.extend(talks.into_iter().map(CompactFtsItem::from_talk_summary));
-                results.extend(sessions.into_iter().map(CompactFtsItem::from_session_summary));
+                results.extend(
+                    sessions
+                        .into_iter()
+                        .map(CompactFtsItem::from_session_summary),
+                );
             }
             SearchLevel::Raw => {
                 // 不应该到这里，Raw 级别不走 compact 搜索
@@ -800,14 +844,17 @@ impl HybridSearchService {
         let results = store.search(&query_embedding, compact_level, limit).await?;
         drop(store);
 
-        Ok(results.into_iter().map(|r| CompactVectorItem {
-            source_id: r.source_id,
-            session_id: r.session_id,
-            level: r.level,
-            text: r.text,
-            prompt_number: r.prompt_number,
-            distance: r.distance,
-        }).collect())
+        Ok(results
+            .into_iter()
+            .map(|r| CompactVectorItem {
+                source_id: r.source_id,
+                session_id: r.session_id,
+                level: r.level,
+                text: r.text,
+                prompt_number: r.prompt_number,
+                distance: r.distance,
+            })
+            .collect())
     }
 
     /// Compact RRF 融合
@@ -843,7 +890,10 @@ impl HybridSearchService {
                     snippet: Some(item.snippet.clone()),
                     score: rrf_score,
                     timestamp: Some(item.created_at.clone()),
-                    sources: SearchSources { fts: true, vector: false },
+                    sources: SearchSources {
+                        fts: true,
+                        vector: false,
+                    },
                     fts_rank: Some(rank),
                     vector_distance: None,
                     chunk_index: item.prompt_number.map(|n| n as i64),
@@ -864,7 +914,9 @@ impl HybridSearchService {
                 .and_modify(|existing| {
                     existing.score += rrf_score;
                     existing.sources.vector = true;
-                    if existing.vector_distance.is_none() || item.distance < existing.vector_distance.unwrap() {
+                    if existing.vector_distance.is_none()
+                        || item.distance < existing.vector_distance.unwrap()
+                    {
                         existing.vector_distance = Some(item.distance);
                     }
                 })
@@ -878,7 +930,10 @@ impl HybridSearchService {
                     snippet: Some(item.text.clone()),
                     score: rrf_score,
                     timestamp: None,
-                    sources: SearchSources { fts: false, vector: true },
+                    sources: SearchSources {
+                        fts: false,
+                        vector: true,
+                    },
                     fts_rank: None,
                     vector_distance: Some(item.distance),
                     chunk_index: item.prompt_number.map(|n| n as i64),
@@ -889,7 +944,11 @@ impl HybridSearchService {
 
         // 按分数排序
         let mut results: Vec<HybridSearchResult> = score_map.into_values().collect();
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results
     }
 
@@ -921,11 +980,7 @@ struct CompactFtsItem {
 
 impl CompactFtsItem {
     fn from_observation(obs: Observation) -> Self {
-        let content = format!(
-            "{}\n{}",
-            obs.title,
-            obs.narrative.as_deref().unwrap_or("")
-        );
+        let content = format!("{}\n{}", obs.title, obs.narrative.as_deref().unwrap_or(""));
         Self {
             source_id: obs.id,
             session_id: obs.session_id,

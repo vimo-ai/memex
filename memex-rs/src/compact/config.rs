@@ -142,9 +142,9 @@ impl SessionStartConfig {
     pub fn sources(&self) -> Vec<InjectSource> {
         let raw = self.sources.clone().unwrap_or_else(|| {
             vec![
-                InjectSource::Sessions,    // L3
-                InjectSource::Talks,       // L2
-                InjectSource::Messages,    // L0
+                InjectSource::Sessions, // L3
+                InjectSource::Talks,    // L2
+                InjectSource::Messages, // L0
             ]
         });
         InjectSource::expand(&raw)
@@ -349,7 +349,7 @@ impl InjectConfig {
         match self.mode {
             Some(InjectQuickMode::Full) => SessionStartConfig {
                 enabled: true,
-                sources: None,     // 使用默认 fallback: L3 → L2 → L0
+                sources: None, // 使用默认 fallback: L3 → L2 → L0
                 max_items: None,
                 max_tokens: None,
             },
@@ -423,7 +423,7 @@ impl Default for CompactConfig {
         Self {
             enabled: false,
             l1_observations: false,
-            l2_talk_summary: true,  // L3=true 时必须开启 L2
+            l2_talk_summary: true, // L3=true 时必须开启 L2
             l3_session_summary: true,
             l1: L1Options::default(),
             fts_tokenizer: default_fts_tokenizer(),
@@ -502,7 +502,10 @@ mod tests {
         assert!(!config.enabled, "Compact should be disabled by default");
         // Default 配置现在是一致的
         assert!(config.l3_session_summary);
-        assert!(config.l2_talk_summary, "L2 should be true when L3 is true in default config");
+        assert!(
+            config.l2_talk_summary,
+            "L2 should be true when L3 is true in default config"
+        );
     }
 
     /// 验证 validate 仍然可以修复手动构造的不一致配置
@@ -511,7 +514,7 @@ mod tests {
         let mut config = CompactConfig {
             enabled: true,
             l1_observations: false,
-            l2_talk_summary: false,  // 手动设置不一致
+            l2_talk_summary: false, // 手动设置不一致
             l3_session_summary: true,
             l1: L1Options::default(),
             fts_tokenizer: "trigram".to_string(),
@@ -521,7 +524,10 @@ mod tests {
 
         // validate 后，L2 应该被自动开启
         assert!(config.l3_session_summary);
-        assert!(config.l2_talk_summary, "L2 should be auto-enabled when L3 is true");
+        assert!(
+            config.l2_talk_summary,
+            "L2 should be auto-enabled when L3 is true"
+        );
     }
 
     /// 验证反序列化默认值是一致的
@@ -533,7 +539,10 @@ mod tests {
 
         // 反序列化后使用 Default 值，应该是一致的
         assert!(config.l3_session_summary);
-        assert!(config.l2_talk_summary, "Default L2 should be true when L3 is true");
+        assert!(
+            config.l2_talk_summary,
+            "Default L2 should be true when L3 is true"
+        );
     }
 
     /// 验证用户明确配置不一致时，validate 可以修复
@@ -545,11 +554,17 @@ mod tests {
 
         // 用户明确配置的值会覆盖 Default
         assert!(config.l3_session_summary);
-        assert!(!config.l2_talk_summary, "User explicit config should be respected before validate");
+        assert!(
+            !config.l2_talk_summary,
+            "User explicit config should be respected before validate"
+        );
 
         // 调用 validate 修复不一致
         config.validate();
-        assert!(config.l2_talk_summary, "L2 should be auto-enabled after validate");
+        assert!(
+            config.l2_talk_summary,
+            "L2 should be auto-enabled after validate"
+        );
     }
 
     /// 验证 needs_llm 检查 enabled 字段
@@ -564,7 +579,10 @@ mod tests {
             fts_tokenizer: "trigram".to_string(),
             inject: InjectConfig::default(),
         };
-        assert!(!config_disabled.needs_llm(), "needs_llm should return false when disabled");
+        assert!(
+            !config_disabled.needs_llm(),
+            "needs_llm should return false when disabled"
+        );
 
         let config_enabled = CompactConfig {
             enabled: true,
@@ -575,7 +593,10 @@ mod tests {
             fts_tokenizer: "trigram".to_string(),
             inject: InjectConfig::default(),
         };
-        assert!(config_enabled.needs_llm(), "needs_llm should return true when enabled");
+        assert!(
+            config_enabled.needs_llm(),
+            "needs_llm should return true when enabled"
+        );
     }
 
     /// 验证 InjectConfig 默认值
@@ -666,7 +687,10 @@ mod tests {
         let user_prompt = config.effective_user_prompt();
         assert!(user_prompt.enabled);
         assert_eq!(user_prompt.mode(), UserPromptSearchMode::Combine);
-        assert_eq!(user_prompt.sources, Some(vec![InjectSource::Messages, InjectSource::Summaries]));
+        assert_eq!(
+            user_prompt.sources,
+            Some(vec![InjectSource::Messages, InjectSource::Summaries])
+        );
         assert!((user_prompt.similarity_threshold() - 0.5).abs() < 0.01);
     }
 
@@ -685,7 +709,10 @@ mod tests {
         let user_prompt = config.effective_user_prompt();
         assert!(user_prompt.enabled);
         assert_eq!(user_prompt.mode(), UserPromptSearchMode::Fallback);
-        assert_eq!(user_prompt.sources, Some(vec![InjectSource::Sessions, InjectSource::Talks]));
+        assert_eq!(
+            user_prompt.sources,
+            Some(vec![InjectSource::Sessions, InjectSource::Talks])
+        );
     }
 
     /// 验证 distance_type 配置
@@ -694,17 +721,26 @@ mod tests {
         // 默认 cosine
         let json = r#"{"user_prompt": {"enabled": true, "sources": ["messages"]}}"#;
         let config: InjectConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.effective_user_prompt().distance_type(), VectorDistanceType::Cosine);
+        assert_eq!(
+            config.effective_user_prompt().distance_type(),
+            VectorDistanceType::Cosine
+        );
 
         // 显式 euclidean
         let json = r#"{"user_prompt": {"enabled": true, "sources": ["messages"], "distance_type": "euclidean"}}"#;
         let config: InjectConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.effective_user_prompt().distance_type(), VectorDistanceType::Euclidean);
+        assert_eq!(
+            config.effective_user_prompt().distance_type(),
+            VectorDistanceType::Euclidean
+        );
 
         // 显式 dot
         let json = r#"{"user_prompt": {"enabled": true, "sources": ["messages"], "distance_type": "dot"}}"#;
         let config: InjectConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.effective_user_prompt().distance_type(), VectorDistanceType::Dot);
+        assert_eq!(
+            config.effective_user_prompt().distance_type(),
+            VectorDistanceType::Dot
+        );
     }
 
     /// 验证 sources 展开
@@ -712,19 +748,25 @@ mod tests {
     fn test_inject_source_expand() {
         let sources = vec![InjectSource::Summaries, InjectSource::Messages];
         let expanded = InjectSource::expand(&sources);
-        assert_eq!(expanded, vec![
-            InjectSource::Sessions,
-            InjectSource::Talks,
-            InjectSource::Observations,
-            InjectSource::Messages,
-        ]);
+        assert_eq!(
+            expanded,
+            vec![
+                InjectSource::Sessions,
+                InjectSource::Talks,
+                InjectSource::Observations,
+                InjectSource::Messages,
+            ]
+        );
     }
 
     /// 验证 UserPromptConfig 校验
     #[test]
     fn test_user_prompt_config_validate() {
         // 禁用时不需要 sources
-        let config = UserPromptConfig { enabled: false, ..Default::default() };
+        let config = UserPromptConfig {
+            enabled: false,
+            ..Default::default()
+        };
         assert!(config.validate().is_ok());
 
         // 启用时 sources 为空则报错

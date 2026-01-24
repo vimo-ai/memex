@@ -13,21 +13,20 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use memex::agent_client::{run_agent_event_loop_with_reconnect, NewMessageEvent};
 use memex::api::{create_router, AppState};
 use memex::archive::ArchiveService;
 use memex::backup::BackupService;
-use memex::collector::Collector;
 use memex::compact::{
     run_compact_worker, CompactDB, CompactIndexer, CompactQueue, CompactVectorStore, CompactWorker,
 };
 use memex::config::Config;
+use memex::db_reader::DbReader;
 use memex::indexer::{IndexQueue, VectorIndexer};
 use memex::llm::{ChatProvider, EmbeddingProvider, OllamaProvider};
 use memex::rag::RagService;
 use memex::search::HybridSearchService;
-use memex::shared_adapter::SharedDbAdapter;
 use memex::vector::VectorStore;
-use memex::watcher::FileWatcher;
 
 /// 版本号（从 Cargo.toml 读取）
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -116,74 +115,27 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("⏱️ [HealthCheck] {}ms", phase_start.elapsed().as_millis());
     phase_start = std::time::Instant::now();
 
-    // Initialize shared database (must succeed)
-    let shared_db = {
-        use ai_cli_session_db::coordination::{Role, WriterHealth};
-
-        let adapter = SharedDbAdapter::new(None)?;
-        tracing::info!("[SharedDB] Connected to shared database");
-        let adapter = std::sync::Arc::new(adapter);
-
-        // Register Writer
-        match adapter.register().await {
-            Ok(role) => {
-                tracing::info!("[SharedDB] Registered as {:?}", role);
-
-                // If Reader, check if existing Writer has timed out
-                if role == Role::Reader {
-                    match adapter.check_writer_health().await {
-                        Ok(health) => {
-                            tracing::info!("[SharedDB] Current Writer status: {:?}", health);
-                            if matches!(health, WriterHealth::Timeout | WriterHealth::Released) {
-                                tracing::info!(
-                                    "[SharedDB] Writer timed out/released, trying takeover..."
-                                );
-                                match adapter.try_takeover().await {
-                                    Ok(true) => {
-                                        tracing::info!(
-                                            "[SharedDB] Takeover successful, now Writer"
-                                        );
-                                    }
-                                    Ok(false) => {
-                                        tracing::info!(
-                                            "[SharedDB] Takeover failed, another component took it"
-                                        );
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!("[SharedDB] Takeover error: {}", e);
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("[SharedDB] Failed to check Writer health: {}", e);
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("[SharedDB] Registration failed: {}", e);
-            }
-        }
-        adapter
+    // Initialize database reader (read-only, Agent handles writes)
+    let db = {
+        let reader = DbReader::new(Some(config.db_path()))?;
+        tracing::info!("[DbReader] Connected to database (read-only mode)");
+        tracing::info!("[DbReader] Note: File watching and writes are handled by vimo-agent");
+        Arc::new(reader)
     };
-    tracing::info!("⏱️ [SharedDB] {}ms", phase_start.elapsed().as_millis());
+    tracing::info!("⏱️ [DbReader] {}ms", phase_start.elapsed().as_millis());
     phase_start = std::time::Instant::now();
     tracing::info!("📁 Data directory: {:?}", config.data_dir);
     tracing::info!("📁 Web directory: {:?}", config.web_dir);
     tracing::info!("📁 Claude projects: {:?}", config.claude_projects_path);
 
     // Get statistics
-    let stats = shared_db.get_stats().await?;
+    let stats = db.get_stats().await?;
     tracing::info!(
         "📊 Database: {} projects, {} sessions, {} messages",
         stats.project_count,
         stats.session_count,
         stats.message_count
     );
-
-    // Create collector service (using SharedDbAdapter)
-    let collector = Collector::new(config.clone(), shared_db.clone());
 
     // Create backup service
     let backup = BackupService::new(config.db_path(), config.backup_dir())
@@ -336,13 +288,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Create indexer service (optional)
     let indexer = match (&embedding, &vector) {
-        (Some(e), Some(v)) => Some(VectorIndexer::new(shared_db.clone(), e.clone(), v.clone())),
+        (Some(e), Some(v)) => Some(VectorIndexer::new(db.clone(), e.clone(), v.clone())),
         _ => None,
     };
 
     // Sync LanceDB index status to SQLite (for first migration)
     if let Some(ref indexer) = indexer {
-        let unindexed = shared_db.count_unindexed_messages().await.unwrap_or(0);
+        let unindexed = db.count_unindexed_messages().await.unwrap_or(0);
         if unindexed > 1000 {
             // Only sync when many unindexed (likely first run after migration)
             tracing::info!(
@@ -411,16 +363,18 @@ async fn main() -> anyhow::Result<()> {
 
                     // 创建 CompactIndexer（可选，需要 embedding provider + vector store）
                     let compact_indexer = match (&embedding, &compact_vector_store) {
-                        (Some(emb), Some(store)) => {
-                            Some(CompactIndexer::new(compact_db.clone(), emb.clone(), store.clone()))
-                        }
+                        (Some(emb), Some(store)) => Some(CompactIndexer::new(
+                            compact_db.clone(),
+                            emb.clone(),
+                            store.clone(),
+                        )),
                         _ => None,
                     };
 
                     // 创建队列和 worker
                     let (queue, receiver) = CompactQueue::new();
                     let worker = CompactWorker::new(
-                        shared_db.clone(),
+                        db.clone(),
                         chat_provider.clone(),
                         compact_db.clone(), // Clone for worker
                         compact_config.clone(),
@@ -448,9 +402,10 @@ async fn main() -> anyhow::Result<()> {
         } else {
             tracing::warn!("⚠️ Compact enabled but chat model unavailable, worker disabled");
             // 连接 CompactDB（用于 MCP 搜索已有的摘要）
-            let compact_db = CompactDB::connect(config.db_path(), Some(&compact_config.fts_tokenizer))
-                .ok()
-                .map(Arc::new);
+            let compact_db =
+                CompactDB::connect(config.db_path(), Some(&compact_config.fts_tokenizer))
+                    .ok()
+                    .map(Arc::new);
             // 初始化 compact vector store（用于 inject，即使 worker 不启用）
             let compact_vector_store = if embedding.is_some() && compact_db.is_some() {
                 let compact_vector_path = config.lancedb_path().join("compact");
@@ -489,22 +444,25 @@ async fn main() -> anyhow::Result<()> {
 
     // Create hybrid search service
     let hybrid_search =
-        HybridSearchService::new(shared_db.clone(), embedding.clone(), vector.clone());
+        HybridSearchService::new(db.clone(), embedding.clone(), vector.clone());
 
     // Create RAG service
-    let rag_service =
-        RagService::new(shared_db.clone(), chat.clone(), embedding.clone(), vector.clone());
+    let rag_service = RagService::new(
+        db.clone(),
+        chat.clone(),
+        embedding.clone(),
+        vector.clone(),
+    );
 
     // 计算启动初始化耗时
     let startup_duration_ms = startup_start.elapsed().as_millis() as u64;
     tracing::info!("⏱️ Startup initialization took {}ms", startup_duration_ms);
 
     // Create app state
-    // 注意：compact_queue 需要 clone，因为后面还要传给 file_watcher
+    // 注意：compact_queue 需要 clone，因为后面还要传给 Agent 事件循环
     let state = Arc::new(AppState {
         config: config.clone(),
-        db: shared_db.clone(),
-        collector,
+        db: db.clone(),
         backup,
         embedding,
         chat,
@@ -518,52 +476,14 @@ async fn main() -> anyhow::Result<()> {
         startup_duration_ms,
     });
 
-    // Run initial collection in background (non-blocking HTTP startup)
-    // 如果从备份恢复了，立即执行采集补充增量数据
-    {
-        let collector = state.collector.clone();
-        let is_recovery = needs_recollect;
-        tokio::spawn(async move {
-            if is_recovery {
-                tracing::info!("🔄 Recovery mode: starting immediate collection to restore incremental data...");
-            } else {
-                // Normal startup: delay 2 seconds to let HTTP start first
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                tracing::info!("📥 Background initial collection starting...");
-            }
-
-            match collector.collect_all() {
-                Ok(result) => {
-                    if result.messages_inserted > 0 {
-                        if is_recovery {
-                            tracing::info!(
-                                "✅ Recovery collection done: {} projects, {} sessions, {} messages restored",
-                                result.projects_scanned,
-                                result.sessions_scanned,
-                                result.messages_inserted
-                            );
-                        } else {
-                            tracing::info!(
-                                "✅ Collection done: {} projects, {} sessions, {} new messages",
-                                result.projects_scanned,
-                                result.sessions_scanned,
-                                result.messages_inserted
-                            );
-                        }
-                    } else {
-                        tracing::info!("📥 Initial collection done, no new messages");
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("⚠️ Initial collection failed: {}", e);
-                }
-            }
-        });
+    // Note: Collection is now handled by vimo-agent
+    // memex-rs only receives NewMessage events and triggers compact/indexing
+    if needs_recollect {
+        tracing::info!("🔄 Recovery mode: vimo-agent will handle data collection");
     }
 
     // Start scheduled task scheduler
     let mut scheduler = setup_scheduler(
-        state.collector.clone(),
         state.backup.clone(),
         state.indexer.clone(),
     )
@@ -583,14 +503,38 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Start file watcher service (with optional real-time index queue and compact queue)
-    let mut file_watcher = FileWatcher::new(config.clone(), state.collector.clone(), index_queue);
-    if let Some(queue) = compact_queue {
-        // 传入 compact_queue 和 shared_db（用于 Talk 边界检测）
-        file_watcher = file_watcher.with_compact(queue, shared_db.clone());
+    // Start Agent event loop (receives NewMessage events from vimo-agent)
+    // This replaces the old FileWatcher - Agent now handles file watching
+    {
+        // Create channels for compact and index tasks
+        let (compact_tx, mut compact_rx) =
+            tokio::sync::mpsc::channel::<NewMessageEvent>(100);
+        let index_tx = index_queue.as_ref().map(|q| q.sender());
+
+        // Spawn Agent event loop (with auto-reconnect)
+        tokio::spawn(run_agent_event_loop_with_reconnect(
+            Some(compact_tx),
+            index_tx,
+        ));
+
+        // Spawn compact task handler (if compact is enabled)
+        if let Some(queue) = compact_queue {
+            tokio::spawn(async move {
+                while let Some(event) = compact_rx.recv().await {
+                    tracing::debug!(
+                        "[Compact] Received NewMessage event: session={}, count={}",
+                        event.session_id,
+                        event.count
+                    );
+
+                    // 提交到 compact 队列
+                    queue.enqueue_session(event.session_id.clone()).await;
+                }
+            });
+        }
+
+        tracing::info!("🔗 Agent event loop started (file watching delegated to vimo-agent)");
     }
-    let file_watcher = Arc::new(file_watcher);
-    file_watcher.start().await?;
 
     // Web 静态文件目录 (独立于 data_dir)
     let web_dir = &config.web_dir;
@@ -652,7 +596,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 优雅关闭：执行 WAL checkpoint
     tracing::info!("🛑 Shutting down, running WAL checkpoint...");
-    if let Err(e) = shared_db.checkpoint().await {
+    if let Err(e) = db.checkpoint().await {
         tracing::warn!("⚠️ Checkpoint failed: {}", e);
     } else {
         tracing::info!("✅ Checkpoint done");
@@ -760,7 +704,6 @@ async fn startup_health_check(config: &Config) -> anyhow::Result<bool> {
 
 /// Setup scheduled task scheduler
 async fn setup_scheduler(
-    collector: Collector,
     backup: BackupService,
     indexer: Option<VectorIndexer>,
 ) -> anyhow::Result<JobScheduler> {
@@ -791,30 +734,7 @@ async fn setup_scheduler(
         .await?;
     tracing::info!("📅 Scheduled task registered: backup (daily 02:00)");
 
-    // Daily collection at 02:30
-    let collector_clone = collector.clone();
-    scheduler
-        .add(Job::new_async("0 30 2 * * *", move |_uuid, _lock| {
-            let collector = collector_clone.clone();
-            Box::pin(async move {
-                tracing::info!("⏰ Scheduled task: starting daily collection...");
-                match collector.collect_all() {
-                    Ok(result) => {
-                        tracing::info!(
-                            "✅ Collection done: {} projects, {} sessions, {} new messages",
-                            result.projects_scanned,
-                            result.sessions_scanned,
-                            result.messages_inserted
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!("❌ Collection failed: {}", e);
-                    }
-                }
-            })
-        })?)
-        .await?;
-    tracing::info!("📅 Scheduled task registered: collection (daily 02:30)");
+    // Note: Collection is now handled by vimo-agent, no scheduled task needed
 
     // Hourly vector indexing (if RAG enabled)
     // Use index_pending to clear increments, max 3000 (prevent Ollama overload)

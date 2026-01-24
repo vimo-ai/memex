@@ -11,11 +11,13 @@ use tokio::sync::RwLock;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::llm::{ChatProvider, ChatProviderExt};
-use crate::search::{HybridSearchOptions, HybridSearchService, SearchLevel, SearchMode, SearchOrderBy};
-use crate::shared_adapter::SharedDbAdapter;
-use crate::vector::VectorStore;
+use crate::db_reader::DbReader;
 use crate::llm::EmbeddingProvider;
+use crate::llm::{ChatProvider, ChatProviderExt};
+use crate::search::{
+    HybridSearchOptions, HybridSearchService, SearchLevel, SearchMode, SearchOrderBy,
+};
+use crate::vector::VectorStore;
 
 /// RAG 响应结果
 #[derive(Debug, Clone, Serialize)]
@@ -83,7 +85,7 @@ struct SourceWithContext {
 
 /// RAG 服务
 pub struct RagService {
-    db: Arc<SharedDbAdapter>,
+    db: Arc<DbReader>,
     chat: Option<Arc<dyn ChatProvider>>,
     hybrid_search: HybridSearchService,
 }
@@ -91,7 +93,7 @@ pub struct RagService {
 impl RagService {
     /// 创建 RAG 服务
     pub fn new(
-        db: Arc<SharedDbAdapter>,
+        db: Arc<DbReader>,
         chat: Option<Arc<dyn ChatProvider>>,
         embedding: Option<Arc<dyn EmbeddingProvider>>,
         vector: Option<Arc<RwLock<VectorStore>>>,
@@ -298,10 +300,7 @@ User question: {}"#,
 
     /// 获取 chat 模型名称
     pub fn chat_model(&self) -> &str {
-        self.chat
-            .as_ref()
-            .map(|c| c.model())
-            .unwrap_or("none")
+        self.chat.as_ref().map(|c| c.model()).unwrap_or("none")
     }
 }
 

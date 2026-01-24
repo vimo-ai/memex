@@ -30,4 +30,6 @@ pub use source::{
     build_parsed_session, Message as SourceMessage, MessageRole, ParsedSession, Talk, ToolCall,
     ToolCategory,
 };
-pub use vector::{CompactLevel, CompactVectorRecord, CompactVectorSearchResult, CompactVectorStore};
+pub use vector::{
+    CompactLevel, CompactVectorRecord, CompactVectorSearchResult, CompactVectorStore,
+};

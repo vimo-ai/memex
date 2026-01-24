@@ -23,10 +23,10 @@ use crate::compact::{
     SessionStartConfig, SessionSummary, TalkSummary, UserPromptConfig, UserPromptSearchMode,
     VectorDistanceType,
 };
-use ai_cli_session_db::Message;
+use crate::db_reader::DbReader;
 use crate::llm::EmbeddingProvider;
-use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::VectorStore;
+use ai_cli_session_db::Message;
 
 /// Hook 输出格式（Claude Code 期望的 JSON 结构）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,7 +73,7 @@ impl InjectResult {
 
 /// 注入服务
 pub struct InjectService {
-    db: Arc<SharedDbAdapter>,
+    db: Arc<DbReader>,
     compact_db: Arc<CompactDB>,
     embedding: Option<Arc<dyn EmbeddingProvider>>,
     /// L0 原文向量存储
@@ -85,11 +85,7 @@ pub struct InjectService {
 
 impl InjectService {
     /// 创建注入服务
-    pub fn new(
-        db: Arc<SharedDbAdapter>,
-        compact_db: Arc<CompactDB>,
-        config: InjectConfig,
-    ) -> Self {
+    pub fn new(db: Arc<DbReader>, compact_db: Arc<CompactDB>, config: InjectConfig) -> Self {
         Self {
             db,
             compact_db,
@@ -166,7 +162,9 @@ impl InjectService {
         }
 
         match config.mode() {
-            UserPromptSearchMode::Combine => self.inject_combine(query, &config, project_path).await,
+            UserPromptSearchMode::Combine => {
+                self.inject_combine(query, &config, project_path).await
+            }
             UserPromptSearchMode::Fallback => {
                 self.inject_fallback(query, &config, project_path).await
             }
@@ -230,10 +228,8 @@ impl InjectService {
                     if talks.is_empty() {
                         continue;
                     }
-                    let items: Vec<ContextItem> = talks
-                        .into_iter()
-                        .map(ContextItem::TalkSummary)
-                        .collect();
+                    let items: Vec<ContextItem> =
+                        talks.into_iter().map(ContextItem::TalkSummary).collect();
                     (items, "talks")
                 }
                 InjectSource::Observations => {
@@ -244,10 +240,8 @@ impl InjectService {
                     if obs.is_empty() {
                         continue;
                     }
-                    let items: Vec<ContextItem> = obs
-                        .into_iter()
-                        .map(ContextItem::Observation)
-                        .collect();
+                    let items: Vec<ContextItem> =
+                        obs.into_iter().map(ContextItem::Observation).collect();
                     (items, "observations")
                 }
                 InjectSource::Messages => {
@@ -255,10 +249,8 @@ impl InjectService {
                     if messages.is_empty() {
                         continue;
                     }
-                    let items: Vec<ContextItem> = messages
-                        .into_iter()
-                        .map(ContextItem::Message)
-                        .collect();
+                    let items: Vec<ContextItem> =
+                        messages.into_iter().map(ContextItem::Message).collect();
                     (items, "messages")
                 }
                 InjectSource::Summaries => {
@@ -268,7 +260,9 @@ impl InjectService {
             };
 
             // 找到数据了，格式化输出
-            return self.format_context_items(items, source_name, max_tokens).await;
+            return self
+                .format_context_items(items, source_name, max_tokens)
+                .await;
         }
 
         // 所有 sources 都没有数据
@@ -420,7 +414,9 @@ impl InjectService {
 
             // 如果有结果，返回
             if !results.is_empty() {
-                return self.format_vector_results(results, config, "fallback").await;
+                return self
+                    .format_vector_results(results, config, "fallback")
+                    .await;
             }
         }
 
@@ -461,10 +457,8 @@ impl InjectService {
                 let messages = self.db.get_messages_by_ids(&message_ids).await?;
 
                 // 构建 message_id -> message 的映射
-                let msg_map: std::collections::HashMap<i64, _> = messages
-                    .into_iter()
-                    .map(|m| (m.id, m))
-                    .collect();
+                let msg_map: std::collections::HashMap<i64, _> =
+                    messages.into_iter().map(|m| (m.id, m)).collect();
 
                 // 组装结果
                 let scored_results: Vec<ScoredResult> = results

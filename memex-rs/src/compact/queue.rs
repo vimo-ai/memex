@@ -13,8 +13,8 @@ use super::config::CompactConfig;
 use super::db::CompactDB;
 use super::indexer::CompactIndexer;
 use super::service::CompactService;
+use crate::db_reader::DbReader;
 use crate::llm::ChatProvider;
-use crate::shared_adapter::SharedDbAdapter;
 
 /// 默认 idle 超时时间（5 分钟）
 const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -145,7 +145,7 @@ pub struct CompactWorker {
 impl CompactWorker {
     /// 创建 worker
     pub fn new(
-        shared_db: Arc<SharedDbAdapter>,
+        db: Arc<DbReader>,
         chat_provider: Arc<dyn ChatProvider>,
         compact_db: Arc<CompactDB>,
         config: CompactConfig,
@@ -153,7 +153,7 @@ impl CompactWorker {
         indexer: Option<CompactIndexer>,
     ) -> Self {
         let needs_l3 = config.l3_session_summary;
-        let mut service = CompactService::new(shared_db, chat_provider, compact_db.clone(), config);
+        let mut service = CompactService::new(db, chat_provider, compact_db.clone(), config);
 
         // 设置向量索引器（如果提供）
         if let Some(idx) = indexer {
@@ -228,7 +228,11 @@ impl CompactWorker {
 
         // 3. 释放锁（无论成功失败）
         if let Err(unlock_err) = self.compact_db.unlock(session_id).await {
-            tracing::error!("Compact 释放锁失败 (session={}): {}", session_id, unlock_err);
+            tracing::error!(
+                "Compact 释放锁失败 (session={}): {}",
+                session_id,
+                unlock_err
+            );
         }
 
         // 4. 处理结果

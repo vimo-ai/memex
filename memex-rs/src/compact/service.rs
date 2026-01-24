@@ -5,8 +5,8 @@
 use anyhow::Result;
 use std::sync::Arc;
 
+use crate::db_reader::DbReader;
 use crate::llm::{ChatMessage, ChatProvider, ChatRole};
-use crate::shared_adapter::SharedDbAdapter;
 
 use super::config::CompactConfig;
 use super::db::{CompactDB, Observation, ObservationType, SessionSummary, TalkSummary};
@@ -31,8 +31,8 @@ pub struct CompactResult {
 
 /// CompactService - 核心压缩服务
 pub struct CompactService {
-    /// 共享数据库（读取 messages）
-    shared_db: Arc<SharedDbAdapter>,
+    /// 只读数据库（读取 messages）
+    db: Arc<DbReader>,
     /// LLM Provider
     chat_provider: Arc<dyn ChatProvider>,
     /// Compact 数据库（存储压缩结果）
@@ -46,7 +46,7 @@ pub struct CompactService {
 impl CompactService {
     /// 创建 CompactService
     pub fn new(
-        shared_db: Arc<SharedDbAdapter>,
+        db: Arc<DbReader>,
         chat_provider: Arc<dyn ChatProvider>,
         compact_db: Arc<CompactDB>,
         config: CompactConfig,
@@ -56,7 +56,7 @@ impl CompactService {
         config.validate();
 
         Self {
-            shared_db,
+            db,
             chat_provider,
             compact_db,
             config,
@@ -76,7 +76,7 @@ impl CompactService {
         let progress = self.compact_db.get_progress(session_id).await?;
 
         // 从 messages 表读取数据
-        let db_messages = self.shared_db.get_messages(session_id).await?;
+        let db_messages = self.db.get_messages(session_id).await?;
 
         if db_messages.is_empty() {
             tracing::debug!("会话 {} 无数据", session_id);
@@ -94,7 +94,8 @@ impl CompactService {
         }
 
         // 构建 ParsedSession（使用上次处理的 prompt_number 作为起点）
-        let session = build_parsed_session(session_id, new_messages, progress.last_processed_prompt);
+        let session =
+            build_parsed_session(session_id, new_messages, progress.last_processed_prompt);
 
         let mut result = CompactResult::default();
 
@@ -217,7 +218,8 @@ impl CompactService {
             // 合并：连续同类操作（必须在同一个 prompt 内）
             if self.config.l1.merge_consecutive {
                 let same_prompt = last_prompt == Some(tc.prompt_number);
-                if Some(category) == last_category && category != ToolCategory::Other && same_prompt {
+                if Some(category) == last_category && category != ToolCategory::Other && same_prompt
+                {
                     consecutive_group.push(tc);
 
                     // 达到阈值，合并
@@ -544,7 +546,7 @@ impl CompactService {
         let progress = self.compact_db.get_progress(session_id).await?;
 
         // 获取最新消息序号
-        let messages = self.shared_db.get_messages(session_id).await?;
+        let messages = self.db.get_messages(session_id).await?;
         if let Some(last_msg) = messages.last() {
             return Ok(last_msg.sequence > progress.last_processed_offset);
         }

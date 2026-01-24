@@ -2,8 +2,8 @@
 //!
 //! 管理 observations / talk_summaries / session_summaries 三张表
 
-use anyhow::Result;
 use ai_cli_session_db::escape_fts5_query;
+use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -165,7 +165,6 @@ impl CompactDB {
 
     /// 同步执行 migration（在创建连接时调用）
     fn migrate_sync(conn: &Connection, tokenizer: &str) -> Result<()> {
-
         // L1: Observations
         conn.execute_batch(
             r#"
@@ -530,10 +529,16 @@ impl CompactDB {
                 obs.observation_type.as_str(),
                 obs.title,
                 obs.subtitle,
-                obs.facts.as_ref().and_then(|v| serde_json::to_string(v).ok()),
+                obs.facts
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok()),
                 obs.narrative,
-                obs.files_read.as_ref().and_then(|v| serde_json::to_string(v).ok()),
-                obs.files_modified.as_ref().and_then(|v| serde_json::to_string(v).ok()),
+                obs.files_read
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok()),
+                obs.files_modified
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok()),
                 obs.provider,
                 obs.model,
                 obs.created_at,
@@ -623,7 +628,10 @@ impl CompactDB {
                 summary.user_request,
                 summary.summary,
                 summary.completed,
-                summary.files_involved.as_ref().and_then(|v| serde_json::to_string(v).ok()),
+                summary
+                    .files_involved
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok()),
                 summary.provider,
                 summary.model,
                 summary.tokens_input,
@@ -718,9 +726,18 @@ impl CompactDB {
                 summary.id,
                 summary.session_id,
                 summary.summary,
-                summary.key_points.as_ref().and_then(|v| serde_json::to_string(v).ok()),
-                summary.files_involved.as_ref().and_then(|v| serde_json::to_string(v).ok()),
-                summary.technologies.as_ref().and_then(|v| serde_json::to_string(v).ok()),
+                summary
+                    .key_points
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok()),
+                summary
+                    .files_involved
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok()),
+                summary
+                    .technologies
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok()),
                 summary.provider,
                 summary.model,
                 summary.tokens_input,
@@ -1022,7 +1039,11 @@ impl CompactDB {
     }
 
     /// 更新处理进度
-    pub async fn update_progress(&self, session_id: &str, progress: &ProcessingProgress) -> Result<()> {
+    pub async fn update_progress(
+        &self,
+        session_id: &str,
+        progress: &ProcessingProgress,
+    ) -> Result<()> {
         let conn = self.conn.lock().await;
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
@@ -1194,7 +1215,11 @@ impl CompactDB {
     }
 
     /// 搜索 Talk Summaries
-    pub async fn search_talk_summaries(&self, query: &str, limit: usize) -> Result<Vec<TalkSummary>> {
+    pub async fn search_talk_summaries(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<TalkSummary>> {
         let conn = self.conn.lock().await;
         let escaped_query = escape_fts5_query(query);
         let mut stmt = conn.prepare(
@@ -1237,7 +1262,11 @@ impl CompactDB {
     }
 
     /// 搜索 Session Summaries
-    pub async fn search_session_summaries(&self, query: &str, limit: usize) -> Result<Vec<SessionSummary>> {
+    pub async fn search_session_summaries(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SessionSummary>> {
         let conn = self.conn.lock().await;
         let escaped_query = escape_fts5_query(query);
         let mut stmt = conn.prepare(
@@ -1453,7 +1482,12 @@ mod tests {
         // 搜索应该只返回一条结果
         let results = db.search_talk_summaries("summary", 10).await.unwrap();
         println!("FTS search results count: {}", results.len());
-        assert_eq!(results.len(), 1, "FTS should return exactly 1 result, but got {}", results.len());
+        assert_eq!(
+            results.len(),
+            1,
+            "FTS should return exactly 1 result, but got {}",
+            results.len()
+        );
     }
 
     /// 更精确地验证 FTS 数据膨胀问题
@@ -1501,14 +1535,19 @@ mod tests {
         // 直接查询 FTS 表记录数量
         let conn = db.conn.lock().await;
         let fts_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM talk_summaries_fts", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM talk_summaries_fts", [], |row| {
+                row.get(0)
+            })
             .unwrap();
 
         let main_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM talk_summaries", [], |row| row.get(0))
             .unwrap();
 
-        println!("Main table count: {}, FTS table count: {}", main_count, fts_count);
+        println!(
+            "Main table count: {}, FTS table count: {}",
+            main_count, fts_count
+        );
 
         // BUG: 如果 FTS 有数据膨胀，fts_count 会大于 main_count
         // 主表应该只有 1 条（ON CONFLICT 更新）
@@ -1547,7 +1586,7 @@ mod tests {
 
         // 用不同的 id 但相同的 session_id 调用 upsert
         let summary2 = SessionSummary {
-            id: "ss-new-id".to_string(), // 不同的 id
+            id: "ss-new-id".to_string(),         // 不同的 id
             session_id: "session-1".to_string(), // 相同的 unique key
             summary: "Updated session summary".to_string(),
             key_points: None,
@@ -1566,6 +1605,11 @@ mod tests {
         let results = db.search_session_summaries("summary", 10).await.unwrap();
 
         println!("FTS search results count: {}", results.len());
-        assert_eq!(results.len(), 1, "FTS should return exactly 1 result, but got {}", results.len());
+        assert_eq!(
+            results.len(),
+            1,
+            "FTS should return exactly 1 result, but got {}",
+            results.len()
+        );
     }
 }

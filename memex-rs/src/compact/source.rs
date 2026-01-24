@@ -306,7 +306,8 @@ pub fn build_parsed_session(
                 // 这是工具输出（tool 消息，没有 tool_name，但有 tool_call_id）
                 // 关联到对应的工具调用
                 if let Some(tc) = tool_call_map.get_mut(tool_call_id) {
-                    if tc.output.is_none() || tc.output.as_ref().map(|s| s.is_empty()).unwrap_or(true)
+                    if tc.output.is_none()
+                        || tc.output.as_ref().map(|s| s.is_empty()).unwrap_or(true)
                     {
                         tc.output = Some(msg.content_text.clone());
                     }

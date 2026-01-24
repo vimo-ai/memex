@@ -279,7 +279,10 @@ mod tests {
             observation_type: super::super::db::ObservationType::Bugfix,
             title: "Fix null pointer".to_string(),
             subtitle: Some("In user module".to_string()),
-            facts: Some(vec!["Fixed NPE".to_string(), "Added null check".to_string()]),
+            facts: Some(vec![
+                "Fixed NPE".to_string(),
+                "Added null check".to_string(),
+            ]),
             narrative: None,
             files_read: Some(vec!["src/user.rs".to_string()]),
             files_modified: Some(vec!["src/user.rs".to_string()]),
@@ -291,7 +294,15 @@ mod tests {
         // 简单验证 Observation 的字段
         assert_eq!(obs.title, "Fix null pointer");
         assert!(obs.subtitle.as_ref().unwrap().contains("user module"));
-        assert!(obs.facts.as_ref().unwrap().contains(&"Fixed NPE".to_string()));
-        assert!(obs.files_read.as_ref().unwrap().contains(&"src/user.rs".to_string()));
+        assert!(obs
+            .facts
+            .as_ref()
+            .unwrap()
+            .contains(&"Fixed NPE".to_string()));
+        assert!(obs
+            .files_read
+            .as_ref()
+            .unwrap()
+            .contains(&"src/user.rs".to_string()));
     }
 }

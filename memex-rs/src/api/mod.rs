@@ -12,24 +12,22 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::backup::BackupService;
-use crate::collector::Collector;
 use crate::compact::{CompactDB, CompactQueue, CompactVectorStore};
 use crate::config::Config;
+use crate::db_reader::DbReader;
 use crate::domain::{MessageListDto, ProjectListDto, SessionListDto, SessionSearchDto};
 use crate::indexer::VectorIndexer;
 use crate::inject::InjectService;
 use crate::llm::{ChatProvider, EmbeddingProvider};
 use crate::rag::{RagOptions, RagService};
 use crate::search::{HybridSearchOptions, HybridSearchResult, HybridSearchService};
-use crate::shared_adapter::SharedDbAdapter;
 use crate::vector::VectorStore;
 
 /// 应用状态
 pub struct AppState {
     pub config: Config,
-    /// 共享数据库适配器（异步）
-    pub db: Arc<SharedDbAdapter>,
-    pub collector: Collector,
+    /// 只读数据库
+    pub db: Arc<DbReader>,
     pub backup: BackupService,
     /// Embedding provider（用于语义搜索）
     pub embedding: Option<Arc<dyn EmbeddingProvider>>,
@@ -693,24 +691,19 @@ async fn ask_status(State(state): State<Arc<AppState>>) -> Result<impl IntoRespo
 }
 
 // ==================== 采集 ====================
+// 注意：采集功能已由 vimo-agent 统一负责，此端点仅返回提示信息
 
 #[derive(Serialize)]
 struct CollectResponse {
-    projects_scanned: usize,
-    sessions_scanned: usize,
-    messages_inserted: usize,
-    errors: Vec<String>,
+    message: String,
+    agent_managed: bool,
 }
 
-async fn collect(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
-    // TODO: Collector 迁移后改为 async
-    let result = state.collector.collect_all()?;
-
+async fn collect(State(_state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
+    // 采集功能已迁移到 Agent
     Ok(Json(CollectResponse {
-        projects_scanned: result.projects_scanned,
-        sessions_scanned: result.sessions_scanned,
-        messages_inserted: result.messages_inserted,
-        errors: result.errors,
+        message: "采集功能已由 vimo-agent 统一管理，无需手动触发".to_string(),
+        agent_managed: true,
     }))
 }
 
@@ -1092,63 +1085,25 @@ async fn embedding_compact(
 // ==================== 索引 ====================
 
 /// 精确索引请求（按路径）
+#[allow(dead_code)] // 用于 JSON 反序列化
 #[derive(Debug, Deserialize)]
 struct IndexByPathRequest {
     path: String,
 }
 
-/// 精确索引响应
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct IndexByPathResponse {
-    success: bool,
-    sessions_scanned: usize,
-    messages_inserted: usize,
-    new_message_ids: Vec<i64>,
-    errors: Vec<String>,
-}
-
-/// 按路径精确索引会话（替代 file watcher 轮询）
+/// 按路径精确索引会话
+///
+/// 注意：采集功能已由 vimo-agent 统一负责，此端点仅返回提示信息。
+/// Agent 会自动监听文件变化并触发索引。
 async fn index_session_by_path(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<IndexByPathRequest>,
+    State(_state): State<Arc<AppState>>,
+    Json(_req): Json<IndexByPathRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    if req.path.trim().is_empty() {
-        return Ok((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "path 参数不能为空"})),
-        )
-            .into_response());
-    }
-
-    // 调用采集服务解析并更新 FTS 索引
-    let collect_result = match state.collector.collect_by_path(&req.path) {
-        Ok(r) => r,
-        Err(e) => {
-            return Ok((
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response());
-        }
-    };
-
-    // 可选：更新向量索引（如果有新消息且 indexer 可用）
-    if !collect_result.new_message_ids.is_empty() {
-        if let Some(indexer) = &state.indexer {
-            if let Err(e) = indexer.index_by_ids(&collect_result.new_message_ids).await {
-                tracing::warn!("Vector indexing failed: {}", e);
-            }
-        }
-    }
-
-    Ok(Json(IndexByPathResponse {
-        success: collect_result.errors.is_empty(),
-        sessions_scanned: collect_result.sessions_scanned,
-        messages_inserted: collect_result.messages_inserted,
-        new_message_ids: collect_result.new_message_ids,
-        errors: collect_result.errors,
-    })
+    // 采集功能已迁移到 Agent
+    Ok(Json(serde_json::json!({
+        "message": "采集功能已由 vimo-agent 统一管理。Agent 会自动监听文件变化并触发索引。",
+        "agent_managed": true
+    }))
     .into_response())
 }
 
@@ -1228,24 +1183,17 @@ async fn index_batch(
 #[serde(rename_all = "camelCase")]
 struct FixMetadataResponse {
     sessions_without_cwd: i64,
-    collect_result: CollectResponse,
+    message: String,
 }
 
 async fn fix_metadata(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
     // 统计没有 cwd 的会话数量
     let sessions_without_cwd = state.db.count_sessions_without_cwd().await?;
 
-    // 触发采集 (TODO: Collector 迁移后改为 async)
-    let collect_result = state.collector.collect_all()?;
-
+    // 采集功能已迁移到 Agent
     Ok(Json(FixMetadataResponse {
         sessions_without_cwd,
-        collect_result: CollectResponse {
-            projects_scanned: collect_result.projects_scanned,
-            sessions_scanned: collect_result.sessions_scanned,
-            messages_inserted: collect_result.messages_inserted,
-            errors: collect_result.errors,
-        },
+        message: "采集功能已由 vimo-agent 统一管理，无需手动触发".to_string(),
     }))
 }
 
@@ -1390,7 +1338,8 @@ async fn compact_trigger(
         None => {
             return Ok(Json(CompactTriggerResponse {
                 queued: false,
-                message: "Compact service not available (COMPACT_ENABLED=false or no chat model)".to_string(),
+                message: "Compact service not available (COMPACT_ENABLED=false or no chat model)"
+                    .to_string(),
             })
             .into_response());
         }
