@@ -1388,7 +1388,7 @@ mod tests {
         use crate::db_reader::DbReader;
         use crate::rag::RagService;
         use crate::search::HybridSearchService;
-        use ai_cli_session_db::db::{MessageInput, SessionInput};
+        use ai_cli_session_db::db::MessageInput;
         use ai_cli_session_db::{DbConfig, MessageType, SessionDB};
         use std::sync::Arc;
         use tempfile::tempdir;
@@ -1412,12 +1412,7 @@ mod tests {
             // 创建测试会话
             let session_id = "test-session-12345678";
             session_db
-                .upsert_session(&SessionInput {
-                    session_id: session_id.to_string(),
-                    project_id,
-                    message_count: Some(10), // 必填字段
-                    ..Default::default()
-                })
+                .upsert_session(session_id, project_id)
                 .unwrap();
 
             // 插入测试消息
