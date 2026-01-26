@@ -506,21 +506,15 @@ async fn main() -> anyhow::Result<()> {
     // Start Agent event loop (receives NewMessage events from vimo-agent)
     // This replaces the old FileWatcher - Agent now handles file watching
     {
-        // Create channels for compact and index tasks
-        let (compact_tx, mut compact_rx) =
-            tokio::sync::mpsc::channel::<NewMessageEvent>(100);
         let index_tx = index_queue.as_ref().map(|q| q.sender());
 
-        // Spawn Agent event loop (with auto-reconnect)
-        tokio::spawn(run_agent_event_loop_with_reconnect(
-            Some(compact_tx),
-            index_tx,
-        ));
+        // 只有当 compact_queue 存在时才创建 channel（避免 channel closed 错误）
+        let compact_tx = if let Some(queue) = compact_queue {
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<NewMessageEvent>(100);
 
-        // Spawn compact task handler (if compact is enabled)
-        if let Some(queue) = compact_queue {
+            // Spawn compact task handler
             tokio::spawn(async move {
-                while let Some(event) = compact_rx.recv().await {
+                while let Some(event) = rx.recv().await {
                     tracing::debug!(
                         "[Compact] Received NewMessage event: session={}, count={}",
                         event.session_id,
@@ -531,7 +525,17 @@ async fn main() -> anyhow::Result<()> {
                     queue.enqueue_session(event.session_id.clone()).await;
                 }
             });
-        }
+
+            Some(tx)
+        } else {
+            None
+        };
+
+        // Spawn Agent event loop (with auto-reconnect)
+        tokio::spawn(run_agent_event_loop_with_reconnect(
+            compact_tx,
+            index_tx,
+        ));
 
         tracing::info!("🔗 Agent event loop started (file watching delegated to vimo-agent)");
     }
