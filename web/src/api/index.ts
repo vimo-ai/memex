@@ -158,17 +158,19 @@ export async function getSession(id: string): Promise<Session> {
  */
 export async function getSessionMessages(
   sessionId: string,
-  limit = 100,
-  offset = 0
-): Promise<PaginatedResponse<Message>> {
+  limit?: number,
+  order: 'asc' | 'desc' = 'asc'
+): Promise<{ messages: Message[]; total: number }> {
+  const params = new URLSearchParams()
+  if (limit) params.append('limit', String(limit))
+  if (order) params.append('order', order)
+
   const response = await request<MessagesResponse>(
-    `/sessions/${sessionId}/messages?limit=${limit}&offset=${offset}`
+    `/sessions/${sessionId}/messages?${params.toString()}`
   )
   return {
-    data: response.messages,
+    messages: response.messages,
     total: response.total,
-    limit,
-    offset,
   }
 }
 

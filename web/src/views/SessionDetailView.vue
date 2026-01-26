@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getSession, getSessionMessages, type Session, type Message } from '@/api'
 import TerminalBlock from '@/components/ui/TerminalBlock.vue'
@@ -11,11 +11,7 @@ const router = useRouter()
 const session = ref<Session | null>(null)
 const messages = ref<Message[]>([])
 const loading = ref(true)
-const loadingMore = ref(false)
 const error = ref<string | null>(null)
-const hasMore = ref(true)
-const offset = ref(0)
-const limit = 50
 const messagesContainer = ref<HTMLElement | null>(null)
 
 // 支持两种路由模式
@@ -32,11 +28,9 @@ async function loadData() {
 
   try {
     session.value = await getSession(sessionId)
-    const response = await getSessionMessages(sessionId, limit, 0)
-    messages.value = response.data
-    offset.value = response.data.length
-    hasMore.value = response.data.length < response.total
-    
+    const response = await getSessionMessages(sessionId)
+    messages.value = response.messages
+
     nextTick(() => {
       scrollToBottom()
     })
@@ -45,47 +39,6 @@ async function loadData() {
     error.value = 'CONNECTION REFUSED'
   } finally {
     loading.value = false
-  }
-}
-
-async function loadMore() {
-  if (loadingMore.value || !hasMore.value) return
-
-  loadingMore.value = true
-
-  try {
-    const response = await getSessionMessages(sessionId, limit, offset.value)
-    messages.value.push(...response.data)
-    offset.value += response.data.length
-    hasMore.value = offset.value < response.total
-  } catch (e) {
-    console.error('Failed to load more messages:', e)
-  } finally {
-    loadingMore.value = false
-  }
-}
-
-function handleScroll() {
-  if (!messagesContainer.value) return
-  const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
-  // Load more when scrolling UP (for chat history) or DOWN?
-  // Assuming standard chat: latest at bottom.
-  // If API returns latest first, we need to reverse?
-  // Let's stick to the previous logic: scrolling UP loads older messages?
-  // Actually, the previous logic was: if (scrollHeight - scrollTop - clientHeight < 200) loadMore()
-  // This means scrolling to BOTTOM loads more.
-  // This implies the API returns OLDEST first? Or we are appending to the end?
-  // If we append to end, and scroll to bottom, we are loading NEWER messages?
-  // But this is a history viewer.
-  // Let's assume we want to load everything.
-  
-  if (scrollTop < 200) {
-     // Maybe load more when scrolling up?
-     // For now, let's keep the "scroll to bottom to load more" logic if that's how the API works (pagination).
-  }
-  
-  if (scrollHeight - scrollTop - clientHeight < 200) {
-    loadMore()
   }
 }
 
@@ -107,13 +60,6 @@ function goBack() {
 
 onMounted(() => {
   loadData()
-  nextTick(() => {
-    messagesContainer.value?.addEventListener('scroll', handleScroll)
-  })
-})
-
-onUnmounted(() => {
-  messagesContainer.value?.removeEventListener('scroll', handleScroll)
 })
 </script>
 
@@ -171,15 +117,13 @@ onUnmounted(() => {
               :content="msg.content"
               :type="msg.type"
               :timestamp="msg.timestamp"
+              :tool-name="msg.toolName"
+              :tool-args="msg.toolArgs"
             />
           </div>
           
-          <!-- Loading More Indicator (Bottom) -->
-          <div v-if="loadingMore" class="py-4 text-center">
-            <div class="i-carbon-circle-dash animate-spin text-xl text-neon-cyan inline-block" />
-          </div>
         </div>
-        <div v-if="!hasMore" class="text-gray-500 mt-8 text-xs border-t border-white/10 pt-4">
+        <div class="text-gray-500 mt-8 text-xs border-t border-white/10 pt-4">
           > END OF TRANSMISSION
         </div>
       </template>

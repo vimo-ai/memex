@@ -84,3 +84,9 @@ Auto-inject relevant memory context into Claude Code sessions. See [Hook Documen
 ## Documentation
 
 https://vimoai.dev/docs/memex
+
+## Community
+
+[![Discord](https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white)](https://discord.gg/ZjznFAYSdE)
+
+Join our [Discord server](https://discord.gg/ZjznFAYSdE) for discussions, support, and updates.

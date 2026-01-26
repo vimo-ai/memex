@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 470 140">
+  <defs>
+    <clipPath id="clip-top">
+      <rect x="0" y="0" width="470" height="63"/>
+    </clipPath>
+    <clipPath id="clip-bottom">
+      <polygon points="0,91 470,49 470,140 0,140"/>
+    </clipPath>
+  </defs>
+
+  <!-- Red glitch layer (left offset small) -->
+  <g clip-path="url(#clip-top)" transform="translate(19.5, 0) skewX(-10)" fill="none" stroke="#ff003c" stroke-width="8">
+    <path transform="translate(10.00, 100) scale(0.1000, -0.1000)" d="M56 0L56 720L167 720L466 364L765 720L876 720L876 0L795 0L795 628L466 237L137 628L137 0Z"/>
+    <path transform="translate(102.80, 100) scale(0.1000, -0.1000)" d="M58 0L58 720L715 720L715 639L139 639L139 401L602 401L602 319L139 319L139 81L715 81L715 0Z"/>
+    <path transform="translate(179.40, 100) scale(0.1000, -0.1000)" d="M56 0L56 720L167 720L466 364L765 720L876 720L876 0L795 0L795 628L466 237L137 628L137 0Z"/>
+    <path transform="translate(272.20, 100) scale(0.1000, -0.1000)" d="M58 0L58 720L715 720L715 639L139 639L139 401L602 401L602 319L139 319L139 81L715 81L715 0Z"/>
+    <path transform="translate(348.80, 100) scale(0.1000, -0.1000)" d="M46 0L46 0L46 1L348 360L46 719L46 720L150 720L401 423L651 720L755 720L755 719L453 360L756 1L756 0L651 0L401 297L150 0Z"/>
+  </g>
+
+  <!-- Blue glitch layer (left offset more) -->
+  <g clip-path="url(#clip-bottom)" transform="translate(19.5, 0) skewX(-10)" fill="none" stroke="#00f0ff" stroke-width="8">
+    <path transform="translate(10.00, 100) scale(0.1000, -0.1000)" d="M56 0L56 720L167 720L466 364L765 720L876 720L876 0L795 0L795 628L466 237L137 628L137 0Z"/>
+    <path transform="translate(102.80, 100) scale(0.1000, -0.1000)" d="M58 0L58 720L715 720L715 639L139 639L139 401L602 401L602 319L139 319L139 81L715 81L715 0Z"/>
+    <path transform="translate(179.40, 100) scale(0.1000, -0.1000)" d="M56 0L56 720L167 720L466 364L765 720L876 720L876 0L795 0L795 628L466 237L137 628L137 0Z"/>
+    <path transform="translate(272.20, 100) scale(0.1000, -0.1000)" d="M58 0L58 720L715 720L715 639L139 639L139 401L602 401L602 319L139 319L139 81L715 81L715 0Z"/>
+    <path transform="translate(348.80, 100) scale(0.1000, -0.1000)" d="M46 0L46 0L46 1L348 360L46 719L46 720L150 720L401 423L651 720L755 720L755 719L453 360L756 1L756 0L651 0L401 297L150 0Z"/>
+  </g>
+
+  <!-- Main white text -->
+  <g transform="translate(20, 0) skewX(-10)" fill="white">
+    <path transform="translate(10.00, 100) scale(0.1000, -0.1000)" d="M56 0L56 720L167 720L466 364L765 720L876 720L876 0L795 0L795 628L466 237L137 628L137 0Z"/>
+    <path transform="translate(102.80, 100) scale(0.1000, -0.1000)" d="M58 0L58 720L715 720L715 639L139 639L139 401L602 401L602 319L139 319L139 81L715 81L715 0Z"/>
+    <path transform="translate(179.40, 100) scale(0.1000, -0.1000)" d="M56 0L56 720L167 720L466 364L765 720L876 720L876 0L795 0L795 628L466 237L137 628L137 0Z"/>
+    <path transform="translate(272.20, 100) scale(0.1000, -0.1000)" d="M58 0L58 720L715 720L715 639L139 639L139 401L602 401L602 319L139 319L139 81L715 81L715 0Z"/>
+    <path transform="translate(348.80, 100) scale(0.1000, -0.1000)" d="M46 0L46 0L46 1L348 360L46 719L46 720L150 720L401 423L651 720L755 720L755 719L453 360L756 1L756 0L651 0L401 297L150 0Z"/>
+  </g>
+</svg>

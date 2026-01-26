@@ -580,7 +580,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Start server
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
-    tracing::info!("🌐 Server listening: http://localhost:{}", config.port);
+    tracing::info!("🌐 Memex Web UI: http://localhost:{}", config.port);
+    tracing::info!("   Open this URL in your browser to view session history");
     tracing::info!("📝 API endpoints:");
     tracing::info!("   GET  /health              - Health check");
     tracing::info!("   GET  /api/stats           - Statistics");

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <rect width="100" height="100" fill="#0d0d0d"/>
+
+  <defs>
+    <clipPath id="clip-top">
+      <rect x="0" y="0" width="100" height="45"/>
+    </clipPath>
+    <clipPath id="clip-bottom">
+      <polygon points="0,55 100,45 100,100 0,100"/>
+    </clipPath>
+  </defs>
+
+  <!-- Red glitch layer -->
+  <g clip-path="url(#clip-top)" transform="translate(11, 12) skewX(-10)" fill="none" stroke="#ff003c" stroke-width="6">
+    <path transform="scale(0.085, -0.085) translate(0, -850)" d="M56 0L56 720L167 720L466 364L765 720L876 720L876 0L795 0L795 628L466 237L137 628L137 0Z"/>
+  </g>
+
+  <!-- Blue glitch layer -->
+  <g clip-path="url(#clip-bottom)" transform="translate(11, 12) skewX(-10)" fill="none" stroke="#00f0ff" stroke-width="6">
+    <path transform="scale(0.085, -0.085) translate(0, -850)" d="M56 0L56 720L167 720L466 364L765 720L876 720L876 0L795 0L795 628L466 237L137 628L137 0Z"/>
+  </g>
+
+  <!-- Main white M -->
+  <g transform="translate(12, 12) skewX(-10)" fill="white">
+    <path transform="scale(0.085, -0.085) translate(0, -850)" d="M56 0L56 720L167 720L466 364L765 720L876 720L876 0L795 0L795 628L466 237L137 628L137 0Z"/>
+  </g>
+</svg>

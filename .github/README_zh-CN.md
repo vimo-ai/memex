@@ -84,3 +84,9 @@ use memex search "able to search anything"
 ## 文档
 
 https://vimoai.dev/docs/memex
+
+## 社区
+
+[![Discord](https://img.shields.io/badge/Discord-加入我们-5865F2?logo=discord&logoColor=white)](https://discord.gg/ZjznFAYSdE)
+
+加入我们的 [Discord 服务器](https://discord.gg/ZjznFAYSdE)，参与讨论、获取支持和最新动态。
