@@ -1,6 +1,6 @@
 [package]
 name = "memex-rs"
-version = "0.0.1-beta.2"
+version = "0.0.1-beta.3"
 edition = "2021"
 description = "Memex - Claude Code session history manager (Rust backend)"
 
