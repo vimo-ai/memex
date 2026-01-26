@@ -101,9 +101,9 @@ jobs:
           body: |
             ## Memex v${{ steps.artifact.outputs.version }}
 
-            macOS arm64 - Claude Code 会话历史管理
+            macOS arm64 - Claude Code session history manager
 
-            ### 安装
+            ### Installation
 
             ```bash
             mkdir -p ~/.vimo/bin && curl -L -o ~/.vimo/bin/memex \
@@ -111,9 +111,9 @@ jobs:
               chmod +x ~/.vimo/bin/memex && ~/.vimo/bin/memex
             ```
 
-            vimo-agent 会在首次启动时自动下载。
+            vimo-agent will be auto-downloaded on first run.
 
-            ### 手动下载 vimo-agent（如自动下载失败）
+            ### Manual vimo-agent download (if auto-download fails)
 
             ```bash
             curl -L -o ~/.vimo/bin/vimo-agent \
@@ -123,7 +123,7 @@ jobs:
 
             ### SHA256
 
-            | 文件 | SHA256 |
+            | File | SHA256 |
             |------|--------|
             | `memex-darwin-arm64` | `${{ steps.artifact.outputs.sha256 }}` |
           draft: false
