@@ -136,10 +136,25 @@ impl Config {
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| vimo_root.join("db")),
 
-            // Web 静态文件目录：~/.vimo/memex/web (memex 独立)
+            // Web 静态文件目录
+            // 优先级：环境变量 > exe 同级 web/ > ~/.vimo/memex/web
             web_dir: std::env::var("MEMEX_WEB_DIR")
                 .map(PathBuf::from)
-                .unwrap_or_else(|_| vimo_root.join("memex/web")),
+                .unwrap_or_else(|_| {
+                    // 尝试 exe 同级 web/ 目录（支持 memex 自包含部署）
+                    if let Ok(exe_path) = std::env::current_exe() {
+                        if let Ok(exe_path) = exe_path.canonicalize() {
+                            if let Some(exe_dir) = exe_path.parent() {
+                                let sibling_web = exe_dir.join("web");
+                                if sibling_web.exists() && sibling_web.is_dir() {
+                                    return sibling_web;
+                                }
+                            }
+                        }
+                    }
+                    // 兜底：~/.vimo/memex/web
+                    vimo_root.join("memex/web")
+                }),
 
             claude_projects_path: std::env::var("CLAUDE_PROJECTS_PATH")
                 .map(PathBuf::from)

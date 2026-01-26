@@ -40,6 +40,8 @@ pub mod archive;
 #[cfg(feature = "cli")]
 pub mod backup;
 #[cfg(feature = "cli")]
+pub mod embedded;
+#[cfg(feature = "cli")]
 pub mod mcp;
 
 // Re-export 常用类型

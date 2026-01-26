@@ -52,6 +52,22 @@ jobs:
           echo '[patch."https://github.com/vimo-ai/ai-cli-session-collector"]' >> memex-rs/Cargo.toml
           echo 'ai-cli-session-collector = { path = "../deps/ai-cli-session-collector" }' >> memex-rs/Cargo.toml
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Build web frontend
+        working-directory: web
+        run: |
+          pnpm install
+          pnpm build
+
       - name: Install protobuf
         run: sudo apt-get install -y protobuf-compiler
 
@@ -141,6 +157,22 @@ jobs:
         run: |
           ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-db $GITHUB_WORKSPACE/../ai-cli-session-db
           ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-collector $GITHUB_WORKSPACE/../ai-cli-session-collector
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Build web frontend
+        working-directory: web
+        run: |
+          pnpm install
+          pnpm build
 
       - name: Install protobuf
         run: brew install protobuf

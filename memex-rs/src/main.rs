@@ -10,10 +10,11 @@ use tokio::signal;
 use tokio::sync::RwLock;
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use memex::agent_client::{run_agent_event_loop_with_reconnect, NewMessageEvent};
+use memex::embedded::{embedded_spa_handler, has_embedded_assets};
 use memex::api::{create_router, AppState};
 use memex::archive::ArchiveService;
 use memex::backup::BackupService;
@@ -540,23 +541,42 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("🔗 Agent event loop started (file watching delegated to vimo-agent)");
     }
 
-    // Web 静态文件目录 (独立于 data_dir)
-    let web_dir = &config.web_dir;
-    if !web_dir.exists() {
-        std::fs::create_dir_all(web_dir)?;
-        tracing::info!("📂 Created web directory: {:?}", web_dir);
-    }
+    // Web 静态文件服务
+    // 优先级：
+    // 1. MEMEX_WEB_DIR 环境变量（开发模式）
+    // 2. 嵌入的 web 资源（生产模式）
+    // 3. 默认 web_dir 目录（向后兼容）
+    let use_embedded = env::var("MEMEX_WEB_DIR").is_err() && has_embedded_assets();
 
-    // Create router
-    let app = create_router(state)
-        .fallback_service(ServeDir::new(web_dir))
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        );
-    tracing::info!("📂 Web files: {:?}", web_dir);
+    let app = if use_embedded {
+        tracing::info!("📦 Using embedded web assets");
+        create_router(state)
+            .fallback(embedded_spa_handler)
+            .layer(
+                CorsLayer::new()
+                    .allow_origin(Any)
+                    .allow_methods(Any)
+                    .allow_headers(Any),
+            )
+    } else {
+        // 使用外部 web 目录
+        let web_dir = &config.web_dir;
+        if !web_dir.exists() {
+            std::fs::create_dir_all(web_dir)?;
+            tracing::info!("📂 Created web directory: {:?}", web_dir);
+        }
+
+        let index_file = web_dir.join("index.html");
+        tracing::info!("📂 Using external web files: {:?}", web_dir);
+        create_router(state)
+            .fallback_service(ServeDir::new(web_dir).not_found_service(ServeFile::new(index_file)))
+            .layer(
+                CorsLayer::new()
+                    .allow_origin(Any)
+                    .allow_methods(Any)
+                    .allow_headers(Any),
+            )
+    };
 
     // Start server
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));

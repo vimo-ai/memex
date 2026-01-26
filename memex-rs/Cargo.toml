@@ -15,7 +15,7 @@ required-features = ["cli"]
 
 [features]
 default = ["cli"]
-cli = ["notify", "notify-debouncer-mini", "axum", "tower-http", "tokio-cron-scheduler"]
+cli = ["notify", "notify-debouncer-mini", "axum", "tower-http", "tokio-cron-scheduler", "rust-embed", "mime_guess"]
 
 [dependencies]
 # HTTP 框架 (CLI only)
@@ -47,6 +47,10 @@ notify-debouncer-mini = { version = "0.6", optional = true, default-features = f
 
 # 定时任务 (CLI only)
 tokio-cron-scheduler = { version = "0.13", optional = true }
+
+# 嵌入式 Web 资源 (CLI only)
+rust-embed = { version = "8", optional = true, features = ["include-exclude"] }
+mime_guess = { version = "2", optional = true }
 
 # 共享数据库（ETerm/Vlaude 数据统一层）
 # 同时 re-export ai-cli-session-collector 类型，避免重复依赖
