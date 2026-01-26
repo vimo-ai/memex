@@ -75,7 +75,7 @@ jobs:
             cross: false
           # macOS Intel
           - name: macOS x64
-            os: macos-13
+            os: macos-15-intel
             target: x86_64-apple-darwin
             artifact: memex-darwin-x64
             cross: false
