@@ -59,8 +59,8 @@ log_success "Built: $BINARY"
 
 # 部署
 if [ "$DEPLOY" = true ]; then
-    # 部署到 ~/.vimo/eterm/bin/
-    ETERM_BIN="$HOME/.vimo/eterm/bin"
+    # 部署到 ~/.vimo/bin/
+    ETERM_BIN="$HOME/.vimo/bin"
     log_info "Installing to $ETERM_BIN..."
     mkdir -p "$ETERM_BIN"
     cp "$BINARY" "$ETERM_BIN/"
