@@ -81,7 +81,7 @@ function formatTime(timestamp: string): string {
         
         <div v-if="node.project" class="text-xs text-gray-600 font-mono mt-1 flex items-center justify-between gap-4">
           <div class="flex gap-4">
-            <span>{{ node.project.sessionCount }} SESSIONS</span>
+            <span v-if="node.project.source" class="uppercase">{{ node.project.source }}</span>
             <span>UPDATED: {{ formatTime(node.project.updatedAt) }}</span>
           </div>
           

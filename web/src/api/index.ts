@@ -20,9 +20,10 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 // 项目相关类型
 export interface Project {
   id: number
+  name?: string
   path: string
+  encodedDirName?: string
   source?: string
-  sessionCount: number
   createdAt: string
   updatedAt: string
 }
@@ -85,7 +86,10 @@ export interface Stats {
   projectCount: number
   sessionCount: number
   messageCount: number
-  lastCollectedAt: string | null
+  semanticSearchEnabled: boolean
+  aiChatEnabled: boolean
+  dbSizeBytes: number
+  startupDurationMs: number
 }
 
 // 分页响应类型
