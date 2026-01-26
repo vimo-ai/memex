@@ -233,13 +233,12 @@ export interface SemanticSearchResponse {
 
 /** 索引状态 */
 export interface EmbeddingStats {
-  totalMessages: number
-  indexedMessages: number
-  pendingMessages: number
-  failedMessages?: number
-  isIndexing: boolean
-  ollamaAvailable: boolean
-  progress: number
+  pending: number
+  failed: number
+  indexed: number
+  embeddingAvailable: boolean
+  embeddingModel: string
+  isRunning: boolean
 }
 
 /**

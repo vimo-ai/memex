@@ -350,7 +350,7 @@ function clearFilters() {
           {{ mode === 'fts' ? 'KEYWORD' : mode === 'vector' ? 'SEMANTIC' : 'HYBRID' }}
         </button>
         <span v-if="embeddingStats" class="ml-4 text-gray-600">
-          [{{ embeddingStats.indexedMessages.toLocaleString() }} VECTORS]
+          [{{ embeddingStats.indexed.toLocaleString() }} VECTORS]
         </span>
       </div>
 
