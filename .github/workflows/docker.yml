@@ -17,53 +17,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # Build Rust binary for each architecture (parallel)
-  build-binary:
-    name: Build Binary (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: memex-rs
-          shared-key: ${{ matrix.arch }}
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config libssl-dev protobuf-compiler libprotobuf-dev
-
-      - name: Build release binary
-        working-directory: memex-rs
-        run: |
-          cargo build --release --features cli
-          strip target/release/memex
-
-      - name: Upload binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: memex-${{ matrix.arch }}
-          path: memex-rs/target/release/memex
-          retention-days: 1
-
-  # Build web frontend (architecture independent)
+  # Build web frontend first (required for rust-embed)
   build-web:
     name: Build Web
     runs-on: ubuntu-latest
@@ -97,6 +51,59 @@ jobs:
         with:
           name: web-dist
           path: web/dist
+          retention-days: 1
+
+  # Build Rust binary for each architecture (needs web-dist for rust-embed)
+  build-binary:
+    name: Build Binary (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: [build-web]
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download web dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: memex-rs
+          shared-key: ${{ matrix.arch }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libssl-dev protobuf-compiler libprotobuf-dev
+
+      - name: Build release binary
+        working-directory: memex-rs
+        run: |
+          cargo build --release --features cli
+          strip target/release/memex
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: memex-${{ matrix.arch }}
+          path: memex-rs/target/release/memex
           retention-days: 1
 
   # Package into multi-arch Docker image
