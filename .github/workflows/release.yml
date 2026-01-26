@@ -14,7 +14,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  AGENT_VERSION: v0.0.1-beta.3  # vimo-agent version from ai-cli-session-db
+  AGENT_VERSION: v0.0.1-beta.5  # vimo-agent version from ai-cli-session-db
 
 jobs:
   build-macos:
