@@ -40,7 +40,7 @@ impl DbReader {
             std::fs::create_dir_all(parent)?;
         }
 
-        info!("[DbReader] 连接数据库（只读模式）: {:?}", db_path);
+        info!("[DbReader] Connecting to database (read-only mode): {:?}", db_path);
         let config = DbConfig::local(db_path.to_string_lossy().into_owned());
         let db = SessionDB::connect(config)?;
 

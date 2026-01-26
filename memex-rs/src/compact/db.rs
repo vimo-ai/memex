@@ -279,7 +279,7 @@ impl CompactDB {
                 ALTER TABLE compact_progress ADD COLUMN processing_started_at INTEGER;
                 "#,
             )?;
-            tracing::info!("compact_progress 表已添加 processing 字段");
+            tracing::info!("Added processing field to compact_progress table");
         }
 
         // FTS5 全文搜索索引
@@ -287,7 +287,7 @@ impl CompactDB {
         // tokenizer 可配置：trigram（中英文）或 unicode61（纯英文）
         Self::create_fts_tables_if_needed(conn, tokenizer)?;
 
-        tracing::debug!("Compact migration 完成 (tokenizer={})", tokenizer);
+        tracing::debug!("Compact migration completed (tokenizer={})", tokenizer);
         Ok(())
     }
 
@@ -307,7 +307,7 @@ impl CompactDB {
             return Ok(());
         }
 
-        tracing::info!("创建 FTS 索引表 (tokenizer={})", tokenizer);
+        tracing::info!("Creating FTS index tables (tokenizer={})", tokenizer);
 
         // L1 Observations FTS (external content)
         conn.execute(
@@ -439,7 +439,7 @@ impl CompactDB {
             "#,
         )?;
 
-        tracing::debug!("FTS triggers 创建完成");
+        tracing::debug!("FTS triggers created");
         Ok(())
     }
 
@@ -451,7 +451,7 @@ impl CompactDB {
     pub async fn rebuild_fts(&self, tokenizer: &str) -> Result<()> {
         let conn = self.conn.lock().await;
 
-        tracing::info!("重建 FTS 索引 (tokenizer={})", tokenizer);
+        tracing::info!("Rebuilding FTS index (tokenizer={})", tokenizer);
 
         // 删除旧的 FTS 表
         conn.execute_batch(
@@ -475,7 +475,7 @@ impl CompactDB {
             "#,
         )?;
 
-        tracing::info!("FTS 索引重建完成");
+        tracing::info!("FTS index rebuild completed");
         Ok(())
     }
 
@@ -1155,7 +1155,7 @@ impl CompactDB {
         )?;
 
         if rows > 0 {
-            tracing::info!("清理了 {} 个超时的 compact 锁", rows);
+            tracing::info!("Cleaned up {} stale compact locks", rows);
         }
 
         Ok(rows)

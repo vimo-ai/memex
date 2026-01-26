@@ -79,7 +79,7 @@ impl CompactService {
         let db_messages = self.db.get_messages(session_id).await?;
 
         if db_messages.is_empty() {
-            tracing::debug!("会话 {} 无数据", session_id);
+            tracing::debug!("Session {} has no data", session_id);
             return Ok(CompactResult::default());
         }
 
@@ -175,7 +175,7 @@ impl CompactService {
                         // 向量索引（如果配置了 indexer）
                         if let Some(ref indexer) = self.indexer {
                             if let Err(e) = indexer.index_observation(&obs).await {
-                                tracing::warn!("向量索引 observation 失败: {}", e);
+                                tracing::warn!("Vector index observation failed: {}", e);
                             }
                         }
                     } else {
@@ -382,7 +382,7 @@ impl CompactService {
                     // 向量索引（如果配置了 indexer）
                     if let Some(ref indexer) = self.indexer {
                         if let Err(e) = indexer.index_talk_summary(&summary).await {
-                            tracing::warn!("向量索引 talk summary 失败: {}", e);
+                            tracing::warn!("Vector index talk summary failed: {}", e);
                         }
                     }
                 }
@@ -465,7 +465,7 @@ impl CompactService {
         let talk_summaries = self.compact_db.get_talk_summaries(session_id).await?;
 
         if talk_summaries.is_empty() {
-            tracing::debug!("会话 {} 没有 talk summaries，跳过 L3 生成", session_id);
+            tracing::debug!("Session {} has no talk summaries, skipping L3 generation", session_id);
             return Ok(false);
         }
 
@@ -534,7 +534,7 @@ impl CompactService {
         // 向量索引（如果配置了 indexer）
         if let Some(ref indexer) = self.indexer {
             if let Err(e) = indexer.index_session_summary(&session_summary).await {
-                tracing::warn!("向量索引 session summary 失败: {}", e);
+                tracing::warn!("Vector index session summary failed: {}", e);
             }
         }
 

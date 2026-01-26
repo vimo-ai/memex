@@ -40,7 +40,7 @@ impl MemexAgentClient {
         // 订阅 NewMessage 事件（用于触发 compact）
         client.subscribe(vec![EventType::NewMessage]).await?;
 
-        tracing::info!("[AgentClient] 已连接并订阅 NewMessage 事件");
+        tracing::info!("[AgentClient] Connected and subscribed to NewMessage event");
 
         Ok(Self { client })
     }
@@ -104,12 +104,12 @@ pub async fn run_agent_event_loop(
     compact_tx: Option<mpsc::Sender<NewMessageEvent>>,
     index_tx: Option<mpsc::Sender<Vec<i64>>>,
 ) {
-    tracing::info!("[AgentEventLoop] 启动事件循环");
+    tracing::info!("[AgentEventLoop] Starting event loop");
 
     loop {
         match client.recv_event().await {
             Some(push) => {
-                tracing::debug!("[AgentEventLoop] 收到事件: {:?}", push);
+                tracing::debug!("[AgentEventLoop] Received event: {:?}", push);
 
                 if let Some(event) = NewMessageEvent::from_push(&push) {
                     tracing::debug!(
@@ -122,7 +122,7 @@ pub async fn run_agent_event_loop(
                     if let Some(ref tx) = index_tx {
                         if !event.message_ids.is_empty() {
                             if let Err(e) = tx.send(event.message_ids.clone()).await {
-                                tracing::error!("[AgentEventLoop] 发送索引任务失败: {}", e);
+                                tracing::error!("[AgentEventLoop] Failed to send index task: {}", e);
                             }
                         }
                     }
@@ -130,19 +130,19 @@ pub async fn run_agent_event_loop(
                     // 触发 compact（如果配置了）
                     if let Some(ref tx) = compact_tx {
                         if let Err(e) = tx.send(event).await {
-                            tracing::error!("[AgentEventLoop] 发送 compact 任务失败: {}", e);
+                            tracing::error!("[AgentEventLoop] Failed to send compact task: {}", e);
                         }
                     }
                 }
             }
             None => {
-                tracing::warn!("[AgentEventLoop] Agent 连接断开");
+                tracing::warn!("[AgentEventLoop] Agent connection disconnected");
                 break;
             }
         }
     }
 
-    tracing::info!("[AgentEventLoop] 事件循环结束");
+    tracing::info!("[AgentEventLoop] Event loop ended");
 }
 
 /// 带重连的 Agent 事件循环
@@ -158,12 +158,12 @@ pub async fn run_agent_event_loop_with_reconnect(
                 run_agent_event_loop(client, compact_tx.clone(), index_tx.clone()).await;
             }
             Err(e) => {
-                tracing::error!("[AgentEventLoop] 连接 Agent 失败: {}", e);
+                tracing::error!("[AgentEventLoop] Failed to connect to Agent: {}", e);
             }
         }
 
         // 断开后等待 5 秒再重连
-        tracing::info!("[AgentEventLoop] 5 秒后重连...");
+        tracing::info!("[AgentEventLoop] Reconnecting in 5 seconds...");
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
     }
 }

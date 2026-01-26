@@ -448,7 +448,7 @@ impl CompactConfig {
     /// L3 依赖 L2，如果开启 L3 但未开启 L2，自动开启 L2
     pub fn validate(&mut self) {
         if self.l3_session_summary && !self.l2_talk_summary {
-            tracing::info!("L3 需要 L2，已自动开启 L2");
+            tracing::info!("L3 requires L2, auto-enabled L2");
             self.l2_talk_summary = true;
         }
     }

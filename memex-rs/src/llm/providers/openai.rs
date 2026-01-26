@@ -256,7 +256,7 @@ mod tests {
         let response = result.unwrap();
         let content = response.choices[0].message.content.clone();
         assert_eq!(content, None, "null content 应该解析为 None");
-        println!("✓ 修复验证: content 为 null 时正常反序列化为 None");
+        println!("✓ Fix verified: content null correctly deserialized to None");
     }
 
     /// 测试修复: content 为正常字符串时也能工作
@@ -275,7 +275,7 @@ mod tests {
         let response: OpenAIChatResponse = serde_json::from_str(json).unwrap();
         let content = response.choices[0].message.content.clone();
         assert_eq!(content, Some("Hello, world!".to_string()));
-        println!("✓ 修复验证: 正常 content 可以正常解析");
+        println!("✓ Fix verified: normal content correctly parsed");
     }
 
     /// 测试修复: choices 为空时反序列化成功但后续处理应返回错误
@@ -293,6 +293,6 @@ mod tests {
         // 但业务逻辑应该将其视为错误（在 chat 方法中处理）
         let choice = response.choices.into_iter().next();
         assert!(choice.is_none(), "空 choices 应该返回 None");
-        println!("✓ 修复验证: 空 choices 可检测，业务层应返回错误");
+        println!("✓ Fix verified: empty choices detected, business layer should return error");
     }
 }

@@ -284,7 +284,7 @@ impl HybridSearchService {
     ) -> Result<Vec<HybridSearchResult>> {
         // 时间排序时自动降级为 FTS-only 模式
         let effective_mode = if order_by != SearchOrderBy::Score {
-            tracing::info!("[Raw Search] order_by={:?}, 降级为 FTS-only 模式", order_by);
+            tracing::info!("[Raw Search] order_by={:?}, downgrading to FTS-only mode", order_by);
             SearchMode::Fts
         } else {
             mode

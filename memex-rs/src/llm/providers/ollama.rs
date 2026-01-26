@@ -233,11 +233,11 @@ mod tests {
             .collect()
             .await;
 
-        println!("输入顺序:    {:?}", inputs);
+        println!("Input order:    {:?}", inputs);
         println!("buffered:    {:?}", results);
 
         // buffered 应该保持顺序
         assert_eq!(results, inputs, "buffered 应该保持输入顺序");
-        println!("✓ 修复验证: buffered 保持输入顺序");
+        println!("✓ Fix verified: buffered preserves input order");
     }
 }

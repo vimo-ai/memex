@@ -107,7 +107,7 @@ impl CompactQueue {
             })
             .await
         {
-            tracing::error!("Compact 队列发送失败: {}", e);
+            tracing::error!("Compact queue send failed: {}", e);
         }
     }
 
@@ -118,7 +118,7 @@ impl CompactQueue {
             .send(CompactTask::GenerateL3 { session_id })
             .await
         {
-            tracing::error!("Compact 队列发送失败: {}", e);
+            tracing::error!("Compact queue send failed: {}", e);
         }
     }
 
@@ -214,11 +214,11 @@ impl CompactWorker {
             }
             Ok(false) => {
                 // 已有其他任务在处理，跳过
-                tracing::debug!("Compact 跳过 (已有任务在处理): {}", session_id);
+                tracing::debug!("Compact skipped (task already in progress): {}", session_id);
                 return;
             }
             Err(e) => {
-                tracing::error!("Compact 获取锁失败 (session={}): {}", session_id, e);
+                tracing::error!("Compact failed to acquire lock (session={}): {}", session_id, e);
                 return;
             }
         }
@@ -250,7 +250,7 @@ impl CompactWorker {
                 }
             }
             Err(e) => {
-                tracing::error!("Compact 处理失败 (session={}): {}", session_id, e);
+                tracing::error!("Compact processing failed (session={}): {}", session_id, e);
             }
         }
     }
@@ -262,10 +262,10 @@ impl CompactWorker {
                 tracing::info!("📋 L3 Session Summary generated: {}", session_id);
             }
             Ok(false) => {
-                tracing::debug!("L3 跳过 (无 L2 数据或已禁用): {}", session_id);
+                tracing::debug!("L3 skipped (no L2 data or disabled): {}", session_id);
             }
             Err(e) => {
-                tracing::error!("L3 生成失败 (session={}): {}", session_id, e);
+                tracing::error!("L3 generation failed (session={}): {}", session_id, e);
             }
         }
     }
