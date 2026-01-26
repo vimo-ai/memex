@@ -31,9 +31,19 @@ memex search "authentication"
 memex list -n 10
 ```
 
-### Full（推荐）
+### Full（macOS）
 
-**1. 启动 Docker**
+```bash
+mkdir -p ~/.vimo/bin && curl -L -o ~/.vimo/bin/memex \
+  https://github.com/vimo-ai/memex/releases/latest/download/memex-darwin-arm64 && \
+  chmod +x ~/.vimo/bin/memex && ~/.vimo/bin/memex
+```
+
+后台 agent (`vimo-agent`) 会在首次运行时自动下载。
+
+### Full（Docker）
+
+适用于 Linux 及其他平台：
 
 ```bash
 docker run -d -p 10013:10013 \
@@ -45,7 +55,7 @@ docker run -d -p 10013:10013 \
   ghcr.io/vimo-ai/memex:latest
 ```
 
-**2. 配置 MCP**
+### 配置 MCP
 
 ```bash
 # Claude Code
@@ -61,10 +71,10 @@ gemini mcp add --transport http memex http://localhost:10013/api/mcp
 # { "mcp": { "memex": { "type": "remote", "url": "http://localhost:10013/api/mcp" } } }
 ```
 
-**3. 在 AI CLI 中搜索**
+然后在 AI CLI 中搜索：
 
 ```
-use memex search "anything you want"
+use memex search "able to search anything"
 ```
 
 ### Hooks（可选）

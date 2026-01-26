@@ -2,8 +2,7 @@
 #
 # Triggered on tag push (v*)
 # Builds memex binary for macOS arm64
-# Downloads vimo-agent from ai-cli-session-db release
-# Uploads both to GitHub Release
+# vimo-agent is auto-downloaded on first run
 
 name: Release
 
@@ -14,7 +13,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  AGENT_VERSION: v0.0.1-beta.5  # vimo-agent version from ai-cli-session-db
 
 jobs:
   build-macos:
@@ -59,26 +57,6 @@ jobs:
         run: |
           cargo build --release --target aarch64-apple-darwin
 
-      - name: Download vimo-agent
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release download ${{ env.AGENT_VERSION }} \
-            --repo vimo-ai/ai-cli-session-db \
-            --pattern "vimo-agent" \
-            --dir .
-
-          chmod +x vimo-agent
-          codesign -f -s - vimo-agent
-
-          # Get agent info
-          AGENT_SHA256=$(shasum -a 256 vimo-agent | cut -d' ' -f1)
-          echo "AGENT_SHA256=$AGENT_SHA256" >> $GITHUB_ENV
-
-          echo "### vimo-agent" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: ${{ env.AGENT_VERSION }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **SHA256**: \`$AGENT_SHA256\`" >> $GITHUB_STEP_SUMMARY
-
       - name: Prepare artifact
         id: artifact
         run: |
@@ -120,38 +98,34 @@ jobs:
           files: |
             memex-darwin-arm64
             memex-darwin-arm64.sha256
-            vimo-agent
           body: |
             ## Memex v${{ steps.artifact.outputs.version }}
 
             macOS arm64 - Claude Code 会话历史管理
 
-            ### 产物
-
-            | 文件 | 说明 | SHA256 |
-            |------|------|--------|
-            | `memex-darwin-arm64` | Memex 主程序 | `${{ steps.artifact.outputs.sha256 }}` |
-            | `vimo-agent` | Agent 守护进程 | `${{ env.AGENT_SHA256 }}` |
-
             ### 安装
 
             ```bash
-            mkdir -p ~/.vimo/bin
+            mkdir -p ~/.vimo/bin && curl -L -o ~/.vimo/bin/memex \
+              https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memex-darwin-arm64 && \
+              chmod +x ~/.vimo/bin/memex && ~/.vimo/bin/memex
+            ```
 
-            # 下载 memex
-            curl -L -o ~/.vimo/bin/memex \
-              https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memex-darwin-arm64
-            chmod +x ~/.vimo/bin/memex
+            vimo-agent 会在首次启动时自动下载。
 
-            # 下载 vimo-agent
+            ### 手动下载 vimo-agent（如自动下载失败）
+
+            ```bash
             curl -L -o ~/.vimo/bin/vimo-agent \
-              https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/vimo-agent
+              https://github.com/vimo-ai/ai-cli-session-db/releases/latest/download/vimo-agent
             chmod +x ~/.vimo/bin/vimo-agent
             ```
 
-            ### 依赖
+            ### SHA256
 
-            - vimo-agent: ${{ env.AGENT_VERSION }} (from ai-cli-session-db)
+            | 文件 | SHA256 |
+            |------|--------|
+            | `memex-darwin-arm64` | `${{ steps.artifact.outputs.sha256 }}` |
           draft: false
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
         env:
