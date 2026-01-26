@@ -1,7 +1,7 @@
 # Memex Release CI
 #
-# Triggered on tag push (v*)
-# Builds memex binary for macOS arm64 with embedded web assets
+# Triggered on tag push (v*) or manual dispatch
+# Builds memex binary for multiple platforms with embedded web assets
 # vimo-agent is auto-downloaded on first run
 
 name: Release
@@ -10,22 +10,99 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      skip_release:
+        description: 'Skip creating GitHub Release (build only)'
+        required: false
+        default: true
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-macos:
-    name: Build macOS arm64
-    runs-on: macos-14  # Apple Silicon runner
-    permissions:
-      contents: write
+  # Build web frontend first (shared by all platforms)
+  build-web:
+    name: Build Web
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Checkout ai-cli-session-db (as ai-cli-session-db)
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: web
+        run: pnpm build
+
+      - name: Upload web dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 1
+
+  # Build binary for each platform
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    needs: [build-web]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Apple Silicon
+          - name: macOS arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+            artifact: memex-darwin-arm64
+            cross: false
+          # macOS Intel
+          - name: macOS x64
+            os: macos-13
+            target: x86_64-apple-darwin
+            artifact: memex-darwin-x64
+            cross: false
+          # Linux x64
+          - name: Linux x64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: memex-linux-x64
+            cross: false
+          # Linux arm64
+          - name: Linux arm64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: memex-linux-arm64
+            cross: false
+          # Windows x64
+          - name: Windows x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: memex-windows-x64.exe
+            cross: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout ai-cli-session-db
         uses: actions/checkout@v4
         with:
           repository: vimo-ai/ai-cli-session-db
@@ -37,113 +114,190 @@ jobs:
           repository: vimo-ai/ai-cli-session-collector
           path: deps/ai-cli-session-collector
 
-      - name: Create symlinks for dependencies
+      - name: Create symlinks for dependencies (Unix)
+        if: runner.os != 'Windows'
         run: |
-          # memex-rs/Cargo.toml uses path = "../../ai-cli-session-db"
-          # From memex-rs/, ../../ goes to parent of memex repo
           ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-db $GITHUB_WORKSPACE/../ai-cli-session-db
           ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-collector $GITHUB_WORKSPACE/../ai-cli-session-collector
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Build web frontend
-        working-directory: web
+      - name: Create symlinks for dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
         run: |
-          pnpm install
-          pnpm build
+          mklink /D "%GITHUB_WORKSPACE%\..\ai-cli-session-db" "%GITHUB_WORKSPACE%\deps\ai-cli-session-db"
+          mklink /D "%GITHUB_WORKSPACE%\..\ai-cli-session-collector" "%GITHUB_WORKSPACE%\deps\ai-cli-session-collector"
 
-      - name: Install protobuf
+      - name: Download web dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: Install protobuf (macOS)
+        if: runner.os == 'macOS'
         run: brew install protobuf
+
+      - name: Install protobuf (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libprotobuf-dev
+
+      - name: Install protobuf (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install protoc -y
+          echo "PROTOC=C:\ProgramData\chocolatey\bin\protoc.exe" >> $env:GITHUB_ENV
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: memex-rs
+          shared-key: ${{ matrix.target }}
 
       - name: Build
         working-directory: memex-rs
-        run: |
-          cargo build --release --target aarch64-apple-darwin
+        run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Prepare artifact
-        id: artifact
+      - name: Prepare artifact (Unix)
+        if: runner.os != 'Windows'
         run: |
-          BINARY="memex-rs/target/aarch64-apple-darwin/release/memex"
+          BINARY="memex-rs/target/${{ matrix.target }}/release/memex"
+          cp "$BINARY" ${{ matrix.artifact }}
+          chmod +x ${{ matrix.artifact }}
 
-          # Get size
-          SIZE=$(stat -f%z "$BINARY")
+          # Strip binary (reduce size)
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            strip ${{ matrix.artifact }}
+          fi
+
+          # Ad-hoc sign on macOS
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            codesign -f -s - ${{ matrix.artifact }}
+          fi
+
+          # Create checksum
+          shasum -a 256 ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
+
+          # Summary
+          SIZE=$(stat -f%z "${{ matrix.artifact }}" 2>/dev/null || stat -c%s "${{ matrix.artifact }}")
           SIZE_MB=$(echo "scale=2; $SIZE / 1048576" | bc)
-
-          # Get sha256
-          SHA256=$(shasum -a 256 "$BINARY" | cut -d' ' -f1)
-
-          # Get version from tag
-          VERSION=${GITHUB_REF#refs/tags/v}
-
-          # Copy to final location
-          cp "$BINARY" memex-darwin-arm64
-          chmod +x memex-darwin-arm64
-
-          # Create checksum file
-          shasum -a 256 memex-darwin-arm64 > memex-darwin-arm64.sha256
-
-          # Sign binary (ad-hoc)
-          codesign -f -s - memex-darwin-arm64
-
-          echo "size=$SIZE" >> $GITHUB_OUTPUT
-          echo "size_mb=$SIZE_MB" >> $GITHUB_OUTPUT
-          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-          echo "### Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
+          SHA256=$(cat ${{ matrix.artifact }}.sha256 | cut -d' ' -f1)
+          echo "### ${{ matrix.name }} Build" >> $GITHUB_STEP_SUMMARY
           echo "- **Size**: ${SIZE_MB}MB" >> $GITHUB_STEP_SUMMARY
           echo "- **SHA256**: \`$SHA256\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Prepare artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $binary = "memex-rs/target/${{ matrix.target }}/release/memex.exe"
+          Copy-Item $binary -Destination "${{ matrix.artifact }}"
+
+          # Create checksum
+          $hash = (Get-FileHash -Algorithm SHA256 "${{ matrix.artifact }}").Hash.ToLower()
+          "$hash  ${{ matrix.artifact }}" | Out-File -Encoding ASCII "${{ matrix.artifact }}.sha256"
+
+          # Summary
+          $size = (Get-Item "${{ matrix.artifact }}").Length
+          $sizeMB = [math]::Round($size / 1MB, 2)
+          echo "### ${{ matrix.name }} Build" >> $env:GITHUB_STEP_SUMMARY
+          echo "- **Size**: ${sizeMB}MB" >> $env:GITHUB_STEP_SUMMARY
+          echo "- **SHA256**: ``$hash``" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}
+            ${{ matrix.artifact }}.sha256
+          retention-days: 7
+
+  # Create GitHub Release (only on tag push, not manual dispatch with skip_release)
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: startsWith(github.ref, 'refs/tags/v') && (github.event.inputs.skip_release != 'true')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          for dir in artifacts/memex-*; do
+            if [ -d "$dir" ]; then
+              cp "$dir"/* release/
+            fi
+          done
+          ls -la release/
+
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            memex-darwin-arm64
-            memex-darwin-arm64.sha256
+          files: release/*
           body: |
-            ## Memex v${{ steps.artifact.outputs.version }}
+            ## Memex v${{ steps.version.outputs.version }}
 
-            macOS arm64 - Claude Code session history manager
+            Claude Code session history manager - Multi-platform release
 
-            ### Installation
+            ### Downloads
 
+            | Platform | Binary | Checksum |
+            |----------|--------|----------|
+            | macOS Apple Silicon | `memex-darwin-arm64` | [SHA256](memex-darwin-arm64.sha256) |
+            | macOS Intel | `memex-darwin-x64` | [SHA256](memex-darwin-x64.sha256) |
+            | Linux x64 | `memex-linux-x64` | [SHA256](memex-linux-x64.sha256) |
+            | Linux arm64 | `memex-linux-arm64` | [SHA256](memex-linux-arm64.sha256) |
+            | Windows x64 | `memex-windows-x64.exe` | [SHA256](memex-windows-x64.exe.sha256) |
+
+            ### Quick Install
+
+            **macOS / Linux:**
             ```bash
-            mkdir -p ~/.vimo/bin && curl -L -o ~/.vimo/bin/memex \
-              https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memex-darwin-arm64 && \
-              chmod +x ~/.vimo/bin/memex && ~/.vimo/bin/memex
+            # Detect platform and download
+            OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+            ARCH=$(uname -m)
+            case "$OS-$ARCH" in
+              darwin-arm64) FILE="memex-darwin-arm64" ;;
+              darwin-x86_64) FILE="memex-darwin-x64" ;;
+              linux-x86_64) FILE="memex-linux-x64" ;;
+              linux-aarch64) FILE="memex-linux-arm64" ;;
+              *) echo "Unsupported: $OS-$ARCH"; exit 1 ;;
+            esac
+
+            mkdir -p ~/.vimo/bin
+            curl -L -o ~/.vimo/bin/memex \
+              https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$FILE
+            chmod +x ~/.vimo/bin/memex
+            ~/.vimo/bin/memex
             ```
 
-            Web UI is now embedded in the binary - download and run, that's it!
-
-            vimo-agent will be auto-downloaded on first run.
-
-            ### Manual vimo-agent download (if auto-download fails)
-
-            ```bash
-            curl -L -o ~/.vimo/bin/vimo-agent \
-              https://github.com/vimo-ai/ai-cli-session-db/releases/latest/download/vimo-agent
-            chmod +x ~/.vimo/bin/vimo-agent
+            **Windows (PowerShell):**
+            ```powershell
+            New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.vimo\bin"
+            Invoke-WebRequest -Uri "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memex-windows-x64.exe" -OutFile "$env:USERPROFILE\.vimo\bin\memex.exe"
+            & "$env:USERPROFILE\.vimo\bin\memex.exe"
             ```
 
-            ### SHA256
-
-            | File | SHA256 |
-            |------|--------|
-            | `memex-darwin-arm64` | `${{ steps.artifact.outputs.sha256 }}` |
+            Web UI is embedded in the binary. vimo-agent will be auto-downloaded on first run.
           draft: false
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
         env:
