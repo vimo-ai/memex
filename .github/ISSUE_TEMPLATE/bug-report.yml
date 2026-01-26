@@ -1,0 +1,61 @@
+name: "🐞 Bug Report"
+description: "Something isn't working as expected"
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: version
+    attributes:
+      label: Version
+      options:
+        - memex-lite (CLI)
+        - memex (Full)
+        - Docker
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+        - Windows
+    validations:
+      required: false
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation Method
+      options:
+        - Homebrew
+        - Binary download
+        - Docker
+        - Build from source
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened? What did you expect?
+      placeholder: |
+        Steps to reproduce:
+        1. Run `memex search ...`
+        2. ...
+
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Error Message
+      render: shell
+    validations:
+      required: false

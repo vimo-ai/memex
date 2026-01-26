@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discord
+    url: https://discord.gg/ZjznFAYSdE
+    about: Chat with the community for quick questions
+  - name: Documentation
+    url: https://vimoai.dev/docs/memex
+    about: Read the docs before opening an issue
