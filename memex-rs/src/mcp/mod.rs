@@ -101,17 +101,26 @@ pub struct MCPGetQuery {
 #[derive(Debug, Deserialize)]
 pub struct MCPRequest {
     jsonrpc: String,
-    id: Value,
+    #[serde(default)]
+    id: Option<Value>,
     method: String,
     #[serde(default)]
     params: Option<Value>,
+}
+
+impl MCPRequest {
+    /// 判断是否为 notification（无 id 的请求，不需要响应）
+    fn is_notification(&self) -> bool {
+        self.id.is_none() || self.method.starts_with("notifications/")
+    }
 }
 
 /// JSON-RPC 响应
 #[derive(Debug, Serialize)]
 pub struct MCPResponse {
     jsonrpc: &'static str,
-    id: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -127,7 +136,7 @@ pub struct MCPError {
 }
 
 impl MCPResponse {
-    fn success(id: Value, result: Value) -> Self {
+    fn success(id: Option<Value>, result: Value) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
@@ -136,7 +145,7 @@ impl MCPResponse {
         }
     }
 
-    fn error(id: Value, code: i32, message: &str, data: Option<Value>) -> Self {
+    fn error(id: Option<Value>, code: i32, message: &str, data: Option<Value>) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
@@ -214,8 +223,12 @@ pub async fn handle_mcp(
     State(state): State<Arc<AppState>>,
     Json(request): Json<MCPRequest>,
 ) -> impl IntoResponse {
+    // Notifications 不需要响应
+    if request.is_notification() {
+        return Json(None);
+    }
     let response = process_mcp_request(&state, request).await;
-    Json(response)
+    Json(Some(response))
 }
 
 /// 处理 MCP GET 请求 (通过 query 参数)
@@ -225,7 +238,7 @@ pub async fn handle_mcp_get(
 ) -> impl IntoResponse {
     let request = MCPRequest {
         jsonrpc: "2.0".to_string(),
-        id: json!(query.id.unwrap_or_else(|| "1".to_string())),
+        id: Some(json!(query.id.unwrap_or_else(|| "1".to_string()))),
         method: query.method.unwrap_or_else(|| "tools/list".to_string()),
         params: None,
     };
