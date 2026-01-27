@@ -307,7 +307,7 @@ pub fn format_session_detail(
                 let role = match msg.message_type {
                     MessageType::User => "**User**",
                     MessageType::Assistant => "**Assistant**",
-                    MessageType::Tool => continue,
+                    MessageType::Tool | MessageType::System => continue,
                 };
 
                 output.push_str(&format!("## {}\n\n", role));
@@ -389,6 +389,7 @@ fn format_role(msg_type: MessageType) -> ColoredString {
         MessageType::User => "[User]".blue(),
         MessageType::Assistant => "[Assistant]".green(),
         MessageType::Tool => "[Tool]".yellow(),
+        MessageType::System => "[System]".dimmed(),
     }
 }
 
