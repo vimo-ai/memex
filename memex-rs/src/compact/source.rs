@@ -35,6 +35,7 @@ impl From<MessageType> for MessageRole {
             MessageType::User => Self::User,
             MessageType::Assistant => Self::Assistant,
             MessageType::Tool => Self::Tool,
+            MessageType::System => Self::System,
         }
     }
 }

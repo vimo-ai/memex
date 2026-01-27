@@ -23,7 +23,7 @@ Thumbs.db
 *.log
 logs/
 
-# 数据目录（可选，默认在 ~/memex-data/）
+# 数据目录（默认在 ~/.vimo/db/）
 data/
 
 # Vlaude 临时文件
