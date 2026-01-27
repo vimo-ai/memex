@@ -91,12 +91,12 @@ jobs:
             target: aarch64-unknown-linux-gnu
             artifact: memex-linux-arm64
             cross: false
-          # Windows x64
-          - name: Windows x64
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: memex-windows-x64.exe
-            cross: false
+          # Windows x64 - 暂时禁用，等 ai-cli-session-db 修复 Windows 兼容性
+          # - name: Windows x64
+          #   os: windows-latest
+          #   target: x86_64-pc-windows-msvc
+          #   artifact: memex-windows-x64.exe
+          #   cross: false
 
     steps:
       - name: Checkout
