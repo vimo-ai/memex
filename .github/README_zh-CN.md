@@ -20,40 +20,53 @@ AI 编程助手的会话历史管理工具。再也不会丢失你的对话记�
 
 ## 快速开始
 
-### Lite（快速搜索）
-
-直接读取本地会话数据，无需服务器：
+### Full
 
 ```bash
 brew install vimo-ai/tap/memex
 
-memex search "authentication"
+# 验证服务是否运行
+curl http://localhost:10013/health
+```
+
+### Lite
+
+零依赖 CLI，直接读取本地会话数据：
+
+```bash
+brew install vimo-ai/tap/memex-lite
+
+memex search "任何你想搜索的内容"
 memex list -n 10
 ```
 
-### Full（macOS）
+### Docker
 
-```bash
-mkdir -p ~/.vimo/bin && curl -L -o ~/.vimo/bin/memex \
-  https://github.com/vimo-ai/memex/releases/latest/download/memex-darwin-arm64 && \
-  chmod +x ~/.vimo/bin/memex && ~/.vimo/bin/memex
-```
-
-后台 agent (`vimo-agent`) 会在首次运行时自动下载。
-
-### Full（Docker）
-
-适用于 Linux 及其他平台：
-
+macOS / Linux:
 ```bash
 docker run -d -p 10013:10013 \
   -v ~/.vimo:/data \
   -v ~/.claude/projects:/claude:ro \
-  -v ~/.codex:/codex:ro \
-  -v ~/.local/share/opencode:/opencode:ro \
-  -v ~/.gemini/tmp:/gemini:ro \
+  -v ~/.codex:/codex:ro \                              # 可选: Codex
+  -v ~/.local/share/opencode:/opencode:ro \            # 可选: OpenCode
+  -v ~/.gemini/tmp:/gemini:ro \                        # 可选: Gemini
+  -e OLLAMA_HOST=http://host.docker.internal:11434 \   # 可选: 本机 Ollama (Docker Desktop)
   ghcr.io/vimo-ai/memex:latest
 ```
+
+Windows (PowerShell):
+```powershell
+docker run -d -p 10013:10013 `
+  -v "$env:USERPROFILE\.vimo:/data" `
+  -v "$env:USERPROFILE\.claude\projects:/claude:ro" `
+  -v "$env:USERPROFILE\.codex:/codex:ro" `             # 可选: Codex
+  -v "$env:LOCALAPPDATA\opencode:/opencode:ro" `       # 可选: OpenCode
+  -v "$env:USERPROFILE\.gemini\tmp:/gemini:ro" `       # 可选: Gemini
+  -e OLLAMA_HOST=http://host.docker.internal:11434 `   # 可选: 本机 Ollama (Docker Desktop)
+  ghcr.io/vimo-ai/memex:latest
+```
+
+二进制下载请访问 [Releases](https://github.com/vimo-ai/memex/releases)。
 
 ### 配置 MCP
 

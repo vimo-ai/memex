@@ -20,40 +20,53 @@ Session history management for AI coding assistants. Never lose your conversatio
 
 ## Quick Start
 
-### Lite (Quick Search)
-
-Reads local session data directly, no server needed:
+### Full
 
 ```bash
 brew install vimo-ai/tap/memex
 
-memex search "authentication"
+# Verify server is running
+curl http://localhost:10013/health
+```
+
+### Lite
+
+Zero-dependency CLI, reads local session data directly:
+
+```bash
+brew install vimo-ai/tap/memex-lite
+
+memex search "anything you want"
 memex list -n 10
 ```
 
-### Full (macOS)
+### Docker
 
-```bash
-mkdir -p ~/.vimo/bin && curl -L -o ~/.vimo/bin/memex \
-  https://github.com/vimo-ai/memex/releases/latest/download/memex-darwin-arm64 && \
-  chmod +x ~/.vimo/bin/memex && ~/.vimo/bin/memex
-```
-
-The background agent (`vimo-agent`) will be downloaded automatically on first run.
-
-### Full (Docker)
-
-For Linux and other platforms:
-
+macOS / Linux:
 ```bash
 docker run -d -p 10013:10013 \
   -v ~/.vimo:/data \
   -v ~/.claude/projects:/claude:ro \
-  -v ~/.codex:/codex:ro \
-  -v ~/.local/share/opencode:/opencode:ro \
-  -v ~/.gemini/tmp:/gemini:ro \
+  -v ~/.codex:/codex:ro \                              # 可选: Codex
+  -v ~/.local/share/opencode:/opencode:ro \            # 可选: OpenCode
+  -v ~/.gemini/tmp:/gemini:ro \                        # 可选: Gemini
+  -e OLLAMA_HOST=http://host.docker.internal:11434 \   # 可选: 本机 Ollama (Docker Desktop)
   ghcr.io/vimo-ai/memex:latest
 ```
+
+Windows (PowerShell):
+```powershell
+docker run -d -p 10013:10013 `
+  -v "$env:USERPROFILE\.vimo:/data" `
+  -v "$env:USERPROFILE\.claude\projects:/claude:ro" `
+  -v "$env:USERPROFILE\.codex:/codex:ro" `             # 可选: Codex
+  -v "$env:LOCALAPPDATA\opencode:/opencode:ro" `       # 可选: OpenCode
+  -v "$env:USERPROFILE\.gemini\tmp:/gemini:ro" `       # 可选: Gemini
+  -e OLLAMA_HOST=http://host.docker.internal:11434 `   # 可选: 本机 Ollama (Docker Desktop)
+  ghcr.io/vimo-ai/memex:latest
+```
+
+Binary downloads available at [Releases](https://github.com/vimo-ai/memex/releases).
 
 ### Configure MCP
 

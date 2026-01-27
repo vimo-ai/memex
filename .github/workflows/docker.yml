@@ -132,6 +132,11 @@ jobs:
           cp -r artifacts/web-dist/* build/web/
           chmod +x build/amd64/memex build/arm64/memex
 
+          # Download vimo-agent for each architecture
+          curl -L -o build/amd64/vimo-agent https://github.com/vimo-ai/ai-cli-session-db/releases/latest/download/vimo-agent-linux-x64
+          curl -L -o build/arm64/vimo-agent https://github.com/vimo-ai/ai-cli-session-db/releases/latest/download/vimo-agent-linux-arm64
+          chmod +x build/amd64/vimo-agent build/arm64/vimo-agent
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

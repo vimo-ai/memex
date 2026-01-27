@@ -28,11 +28,12 @@ impl DbReader {
     /// - `db_path`: 数据库路径（默认 ~/.vimo/db/ai-cli-session.db）
     pub fn new(db_path: Option<PathBuf>) -> Result<Self> {
         let db_path = db_path.unwrap_or_else(|| {
-            let vimo_root = std::env::var("VIMO_HOME").unwrap_or_else(|_| {
-                let home = std::env::var("HOME").unwrap_or_default();
-                format!("{}/.vimo", home)
-            });
-            PathBuf::from(format!("{}/db/ai-cli-session.db", vimo_root))
+            let vimo_root = std::env::var("VIMO_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| {
+                    dirs::home_dir().unwrap_or_default().join(".vimo")
+                });
+            vimo_root.join("db").join("ai-cli-session.db")
         });
 
         // 确保目录存在
