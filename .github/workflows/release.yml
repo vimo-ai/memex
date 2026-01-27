@@ -175,8 +175,9 @@ jobs:
         run: |
           $VERSION = "${{ github.ref_name }}" -replace '^v', ''
           $content = Get-Content memex-rs/Cargo.toml -Raw
-          $content = $content -replace 'version = ".*?"', "version = `"$VERSION`""
-          Set-Content memex-rs/Cargo.toml $content
+          # Only replace the first version line (package version, not dependencies)
+          $content = $content -replace '(\[package\][\s\S]*?version = )"[^"]*"', "`$1`"$VERSION`""
+          Set-Content memex-rs/Cargo.toml -NoNewline $content
           Write-Host "Set version to $VERSION"
 
       - name: Build
