@@ -161,6 +161,13 @@ jobs:
           workspaces: memex-rs
           shared-key: ${{ matrix.target }}
 
+      - name: Set version from tag
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          sed -i.bak "s/^version = .*/version = \"$VERSION\"/" memex-rs/Cargo.toml
+          rm -f memex-rs/Cargo.toml.bak
+          echo "Set version to $VERSION"
+
       - name: Build
         working-directory: memex-rs
         run: cargo build --release --target ${{ matrix.target }}
