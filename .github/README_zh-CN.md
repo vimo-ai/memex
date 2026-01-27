@@ -20,23 +20,21 @@ AI 编程助手的会话历史管理工具。再也不会丢失你的对话记�
 
 ## 快速开始
 
-### Lite（快速搜索）
-
-直接读取本地会话数据，无需服务器：
+### Full
 
 ```bash
 brew install vimo-ai/tap/memex
 
-memex search "authentication"
+memex search "任何你想搜索的内容"
 memex list -n 10
 ```
 
-### Full（macOS）
+### Lite
+
+零依赖版本，直接读取本地会话数据：
 
 ```bash
-mkdir -p ~/.vimo/bin && curl -L -o ~/.vimo/bin/memex \
-  https://github.com/vimo-ai/memex/releases/latest/download/memex-darwin-arm64 && \
-  chmod +x ~/.vimo/bin/memex && ~/.vimo/bin/memex
+brew install vimo-ai/tap/memex-lite
 ```
 
 后台 agent (`vimo-agent`) 会在首次运行时自动下载。

@@ -20,23 +20,21 @@ Session history management for AI coding assistants. Never lose your conversatio
 
 ## Quick Start
 
-### Lite (Quick Search)
-
-Reads local session data directly, no server needed:
+### Full
 
 ```bash
 brew install vimo-ai/tap/memex
 
-memex search "authentication"
+memex search "anything you want"
 memex list -n 10
 ```
 
-### Full (macOS)
+### Lite
+
+Zero-dependency version, reads local session data directly:
 
 ```bash
-mkdir -p ~/.vimo/bin && curl -L -o ~/.vimo/bin/memex \
-  https://github.com/vimo-ai/memex/releases/latest/download/memex-darwin-arm64 && \
-  chmod +x ~/.vimo/bin/memex && ~/.vimo/bin/memex
+brew install vimo-ai/tap/memex-lite
 ```
 
 The background agent (`vimo-agent`) will be downloaded automatically on first run.
