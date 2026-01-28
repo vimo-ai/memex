@@ -1284,7 +1284,7 @@ mod tests {
             "*/ETerm*",
             "/Users/higuaifan/Desktop/vimo/ETerm/memex"
         ));
-        assert!(matches_glob(
+        assert!(!matches_glob(
             "*memex*",
             "/Users/higuaifan/Desktop/hi/小工具/english"
         ));
