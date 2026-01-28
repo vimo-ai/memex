@@ -70,6 +70,7 @@ fn parse_time_shortcut(shortcut: &str) -> Option<i64> {
     let num: i64 = num_str.parse().ok()?;
 
     let duration = match unit {
+        "h" => Duration::hours(num),
         "d" => Duration::days(num),
         "w" => Duration::weeks(num),
         "m" => Duration::days(num * 30), // 近似月
@@ -172,7 +173,7 @@ fn get_tools() -> Vec<Value> {
                     "level": { "type": "string", "enum": ["sessions", "talks", "raw"], "description": "Detail level: sessions (L3 summary, recommended), talks (L2 per-prompt), raw (L0 original). Default: sessions" },
                     "cwd": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Filter to specific project(s). Supports: exact path, prefix, or glob patterns (e.g. '*/ETerm*')" },
                     "exclude_cwd": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Exclude specific project(s). Supports: exact path, prefix, or glob patterns (e.g. '*memex*')" },
-                    "time": { "type": "string", "description": "Time shortcut: 1d/3d/1w/1m (mutually exclusive with from/to)" },
+                    "time": { "type": "string", "description": "Time shortcut: 3h/1d/3d/1w/1m (mutually exclusive with from/to)" },
                     "from": { "type": "string", "description": "Start date YYYY-MM-DD (mutually exclusive with time)" },
                     "to": { "type": "string", "description": "End date YYYY-MM-DD (mutually exclusive with time)" },
                     "limit": { "type": "number", "description": "Max results, default 5" }
