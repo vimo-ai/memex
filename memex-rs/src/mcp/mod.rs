@@ -173,9 +173,9 @@ fn get_tools() -> Vec<Value> {
                     "level": { "type": "string", "enum": ["sessions", "talks", "raw"], "description": "Detail level: sessions (L3 summary, recommended), talks (L2 per-prompt), raw (L0 original). Default: sessions" },
                     "cwd": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Filter to specific project(s). Supports: exact path, prefix, or glob patterns (e.g. '*/ETerm*')" },
                     "exclude_cwd": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Exclude specific project(s). Supports: exact path, prefix, or glob patterns (e.g. '*memex*')" },
-                    "time": { "type": "string", "description": "Time shortcut: 3h/1d/3d/1w/1m (mutually exclusive with from/to)" },
-                    "from": { "type": "string", "description": "Start date YYYY-MM-DD (mutually exclusive with time)" },
-                    "to": { "type": "string", "description": "End date YYYY-MM-DD (mutually exclusive with time)" },
+                    "time": { "type": "string", "description": "Time shortcut: 3h/1d/3d/1w/1m (forces raw level for accuracy)" },
+                    "from": { "type": "string", "description": "Start date YYYY-MM-DD (forces raw level for accuracy)" },
+                    "to": { "type": "string", "description": "End date YYYY-MM-DD (forces raw level for accuracy)" },
                     "limit": { "type": "number", "description": "Max results, default 5" }
                 },
                 "required": ["query"]
@@ -413,8 +413,12 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
         (start, end)
     };
 
+    // 时间过滤只在消息层面精确，有时间参数时强制使用 raw 模式
+    let has_time_filter = _start_ts.is_some() || _end_ts.is_some();
+    let effective_level = if has_time_filter { "raw" } else { level };
+
     // 根据 level 选择搜索方式
-    match level {
+    match effective_level {
         "sessions" => search_session_summaries(state, query, limit, &filter).await,
         "talks" => search_talk_summaries(state, query, limit, &filter).await,
         "raw" => search_raw_messages(state, query, limit, &filter, _start_ts, _end_ts).await,
