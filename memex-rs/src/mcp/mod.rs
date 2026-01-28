@@ -171,7 +171,7 @@ fn get_tools() -> Vec<Value> {
                     "query": { "type": "string", "description": "Search keywords" },
                     "level": { "type": "string", "enum": ["sessions", "talks", "raw"], "description": "Detail level: sessions (L3 summary, recommended), talks (L2 per-prompt), raw (L0 original). Default: sessions" },
                     "cwd": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Filter to specific project(s). Supports: exact path, prefix, or glob patterns (e.g. '*/ETerm*')" },
-                    "exclude_cwd": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Exclude specific project(s). Supports: exact path, prefix, or glob patterns (e.g. '*english*')" },
+                    "exclude_cwd": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Exclude specific project(s). Supports: exact path, prefix, or glob patterns (e.g. '*memex*')" },
                     "time": { "type": "string", "description": "Time shortcut: 1d/3d/1w/1m (mutually exclusive with from/to)" },
                     "from": { "type": "string", "description": "Start date YYYY-MM-DD (mutually exclusive with time)" },
                     "to": { "type": "string", "description": "End date YYYY-MM-DD (mutually exclusive with time)" },
@@ -197,13 +197,14 @@ fn get_tools() -> Vec<Value> {
         }),
         json!({
             "name": "get_recent_sessions",
-            "description": "Get recent sessions. Returns: ref (session ID), project, messages (count), time",
+            "description": "Get recent sessions. Returns: ref (session ID), project, messages (count), time. Optionally include L3 summary.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "cwd": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Filter to specific project(s). Supports: exact path, prefix, or glob patterns (e.g. '*/ETerm*')" },
-                    "exclude_cwd": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Exclude specific project(s). Supports: exact path, prefix, or glob patterns (e.g. '*english*')" },
-                    "limit": { "type": "number", "description": "Max results, default 5" }
+                    "exclude_cwd": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Exclude specific project(s). Supports: exact path, prefix, or glob patterns (e.g. '*memex*')" },
+                    "limit": { "type": "number", "description": "Max results, default 5" },
+                    "include_summary": { "type": "boolean", "description": "Include L3 session summary if available. Default: false" }
                 }
             }
         }),
@@ -752,6 +753,10 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
 /// 获取最近会话
 async fn get_recent_sessions(state: &AppState, args: Value) -> Result<Value, String> {
     let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(5) as usize;
+    let include_summary = args
+        .get("include_summary")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     // 解析 cwd 参数（支持 string 或 array）
     let include_cwds = parse_cwd_param(args.get("cwd"));
@@ -784,7 +789,8 @@ async fn get_recent_sessions(state: &AppState, args: Value) -> Result<Value, Str
     let project_names: HashMap<i64, String> =
         projects.into_iter().map(|p| (p.id, p.name)).collect();
 
-    let formatted: Vec<Value> = sessions
+    // 过滤会话
+    let filtered_sessions: Vec<_> = sessions
         .iter()
         .filter(|s| {
             if need_memory_filter {
@@ -794,17 +800,74 @@ async fn get_recent_sessions(state: &AppState, args: Value) -> Result<Value, Str
             }
         })
         .take(limit)
+        .collect();
+
+    // 如果需要 summary，批量获取（L3 优先，fallback 到 L1）
+    let summaries: HashMap<String, Value> = if include_summary {
+        if let Some(compact_db) = &state.compact_db {
+            let mut map = HashMap::new();
+            for s in &filtered_sessions {
+                // 优先获取 L3 session summary
+                if let Ok(Some(summary)) = compact_db.get_session_summary(&s.session_id).await {
+                    map.insert(
+                        s.session_id.clone(),
+                        json!({
+                            "summary": summary.summary,
+                            "keyPoints": summary.key_points,
+                            "files": summary.files_involved,
+                            "technologies": summary.technologies
+                        }),
+                    );
+                } else {
+                    // Fallback: 获取最近的 observations
+                    if let Ok(observations) = compact_db.get_observations(&s.session_id).await {
+                        if !observations.is_empty() {
+                            // 取最后几个 observation（最近的操作）
+                            let recent: Vec<_> = observations.iter().rev().take(5).collect();
+                            let titles: Vec<&str> =
+                                recent.iter().map(|o| o.title.as_str()).collect();
+                            let files: Vec<String> = recent
+                                .iter()
+                                .filter_map(|o| o.files_modified.clone())
+                                .flatten()
+                                .collect();
+                            map.insert(
+                                s.session_id.clone(),
+                                json!({
+                                    "recentActions": titles,
+                                    "files": if files.is_empty() { None } else { Some(files) }
+                                }),
+                            );
+                        }
+                    }
+                }
+            }
+            map
+        } else {
+            HashMap::new()
+        }
+    } else {
+        HashMap::new()
+    };
+
+    let formatted: Vec<Value> = filtered_sessions
+        .iter()
         .map(|s| {
             let project_name = project_names
                 .get(&s.project_id)
                 .cloned()
                 .unwrap_or_else(|| "unknown".to_string());
-            json!({
+            let mut obj = json!({
                 "ref": &s.session_id,
                 "project": project_name,
                 "messages": s.message_count,
                 "time": ms_to_relative_time(s.last_message_at)
-            })
+            });
+            // 附加 summary（如果有）
+            if let Some(summary) = summaries.get(&s.session_id) {
+                obj["summary"] = summary.clone();
+            }
+            obj
         })
         .collect();
 
@@ -1217,11 +1280,11 @@ mod tests {
             "/Users/higuaifan/Desktop/vimo/ETerm/memex"
         ));
         assert!(matches_glob(
-            "*english*",
+            "*memex*",
             "/Users/higuaifan/Desktop/hi/小工具/english"
         ));
         assert!(!matches_glob(
-            "*english*",
+            "*memex*",
             "/Users/higuaifan/Desktop/vimo/ETerm"
         ));
     }
