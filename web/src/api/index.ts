@@ -47,7 +47,7 @@ export interface Message {
   id: number
   uuid: string
   sessionId: string
-  type: 'user' | 'assistant' | 'tool'
+  type: 'user' | 'assistant' | 'tool' | 'system'
   source?: string
   channel?: string
   model?: string
@@ -65,7 +65,7 @@ export interface SearchResult {
   messageId: number
   sessionId: string
   messageUuid: string
-  type: 'user' | 'assistant' | 'tool'
+  type: 'user' | 'assistant' | 'tool' | 'system'
   source?: string
   channel?: string
   content: string
@@ -212,7 +212,7 @@ export interface SemanticSearchResult {
   messageId: number
   uuid: string
   content: string
-  messageType: 'user' | 'assistant' | 'tool'
+  messageType: 'user' | 'assistant' | 'tool' | 'system'
   sessionId: string
   projectId: number
   projectName: string

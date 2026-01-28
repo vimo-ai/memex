@@ -195,7 +195,7 @@ jobs:
             ### Usage
 
             ```bash
-            memex search "authentication"
+            memex search "anything you want"
             memex list -n 10
             memex sources
             ```

@@ -106,6 +106,16 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("🚀 Memex Rust Backend starting...");
 
+    // 启动父进程监控（如果有 ETERM_PID 环境变量）
+    if let Ok(parent_pid_str) = env::var("ETERM_PID") {
+        if let Ok(parent_pid) = parent_pid_str.parse::<i32>() {
+            tokio::spawn(async move {
+                monitor_parent_process(parent_pid).await;
+            });
+            tracing::info!("👀 Parent process monitoring enabled (PID: {})", parent_pid);
+        }
+    }
+
     // Load config first (needed for backup path)
     let config = Config::load();
     tracing::info!("⏱️ [Config] {}ms", phase_start.elapsed().as_millis());
@@ -632,6 +642,27 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("👋 Memex shutdown complete");
     Ok(())
+}
+
+/// 监控父进程，如果父进程死亡则自行退出
+async fn monitor_parent_process(parent_pid: i32) {
+    use std::time::Duration;
+    use tokio::time::interval;
+
+    let mut check_interval = interval(Duration::from_secs(5));
+
+    loop {
+        check_interval.tick().await;
+
+        // 检查父进程是否存活（发送信号 0 不会杀死进程，只检查是否存在）
+        let alive = unsafe { libc::kill(parent_pid, 0) == 0 };
+
+        if !alive {
+            tracing::info!("👋 Parent process (PID: {}) exited, shutting down...", parent_pid);
+            // 触发优雅关闭
+            std::process::exit(0);
+        }
+    }
 }
 
 /// 优雅关闭信号处理

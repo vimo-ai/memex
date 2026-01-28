@@ -4,7 +4,7 @@ import { renderMarkdown } from '@/utils/markdown'
 
 const props = defineProps<{
   content: string
-  type: 'user' | 'assistant' | 'tool'
+  type: 'user' | 'assistant' | 'tool' | 'system'
   timestamp: string
   toolName?: string
   toolArgs?: string
@@ -175,8 +175,8 @@ const isEmpty = computed(() => !props.content && !props.toolName)
       class="flex items-center gap-2 mb-1 opacity-50 group-hover:opacity-100 transition-opacity select-none"
       :class="{ 'flex-row-reverse': type === 'user' }"
     >
-      <span :class="type === 'user' ? 'text-neon-cyan' : type === 'assistant' ? 'text-neon-violet' : 'text-orange-400'">
-        {{ type === 'user' ? 'root@user' : type === 'assistant' ? 'memex@ai' : 'tool@call' }}
+      <span :class="type === 'user' ? 'text-neon-cyan' : type === 'assistant' ? 'text-neon-violet' : type === 'system' ? 'text-gray-400' : 'text-orange-400'">
+        {{ type === 'user' ? 'root@user' : type === 'assistant' ? 'memex@ai' : type === 'system' ? 'sys@info' : 'tool@call' }}
       </span>
       <span class="text-gray-600">::</span>
       <span class="text-gray-500">[{{ formatTime(timestamp) }}]</span>
@@ -289,6 +289,8 @@ const isEmpty = computed(() => !props.content && !props.toolName)
       :class="[
         type === 'user'
           ? 'text-white border-r-2 border-neon-cyan/50 bg-neon-cyan/5 pr-4 pl-2 text-right'
+          : type === 'system'
+          ? 'text-gray-400 border-l-2 border-gray-500/50 bg-gray-500/5 pl-4 italic'
           : 'text-gray-300 border-l-2 border-neon-violet/50 pl-4'
       ]"
     >
