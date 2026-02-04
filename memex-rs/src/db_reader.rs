@@ -255,6 +255,7 @@ impl DbReader {
     }
 
     /// FTS 搜索（完整版，支持日期范围和 session 过滤）
+    #[allow(clippy::too_many_arguments)]
     pub async fn search_fts_full_with_sessions(
         &self,
         query: &str,
