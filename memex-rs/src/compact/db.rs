@@ -2,7 +2,7 @@
 //!
 //! 管理 observations / talk_summaries / session_summaries 三张表
 
-use ai_cli_session_db::escape_fts5_query;
+use ai_cli_session_db::{escape_fts5_query, escape_like_pattern};
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -1220,22 +1220,61 @@ impl CompactDB {
         query: &str,
         limit: usize,
     ) -> Result<Vec<TalkSummary>> {
+        self.search_talk_summaries_with_sessions(query, limit, &[])
+            .await
+    }
+
+    /// 搜索 Talk Summaries（支持 session 过滤）
+    pub async fn search_talk_summaries_with_sessions(
+        &self,
+        query: &str,
+        limit: usize,
+        session_ids: &[String],
+    ) -> Result<Vec<TalkSummary>> {
         let conn = self.conn.lock().await;
         let escaped_query = escape_fts5_query(query);
-        let mut stmt = conn.prepare(
+
+        // 动态构建 WHERE 子句
+        let mut where_clauses = vec!["talk_summaries_fts MATCH ?1".to_string()];
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> =
+            vec![Box::new(escaped_query) as Box<dyn rusqlite::ToSql>];
+        let mut param_idx = 2;
+
+        if !session_ids.is_empty() {
+            let session_likes: Vec<String> = session_ids
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("t.session_id LIKE ?{} ESCAPE '\\'", param_idx + i))
+                .collect();
+            where_clauses.push(format!("({})", session_likes.join(" OR ")));
+            for sid in session_ids {
+                params_vec.push(Box::new(format!("{}%", escape_like_pattern(sid))));
+            }
+            param_idx += session_ids.len();
+        }
+
+        params_vec.push(Box::new(limit as i64));
+
+        let sql = format!(
             r#"
             SELECT t.id, t.session_id, t.prompt_number,
                    t.user_request, t.summary, t.completed, t.files_involved,
                    t.provider, t.model, t.tokens_input, t.tokens_output, t.created_at
             FROM talk_summaries t
             JOIN talk_summaries_fts fts ON t.rowid = fts.rowid
-            WHERE talk_summaries_fts MATCH ?1
+            WHERE {}
             ORDER BY fts.rank
-            LIMIT ?2
+            LIMIT ?{}
             "#,
-        )?;
+            where_clauses.join(" AND "),
+            param_idx
+        );
 
-        let rows = stmt.query_map(params![escaped_query, limit as i64], |row| {
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
             Ok(TalkSummary {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
@@ -1267,9 +1306,42 @@ impl CompactDB {
         query: &str,
         limit: usize,
     ) -> Result<Vec<SessionSummary>> {
+        self.search_session_summaries_with_sessions(query, limit, &[])
+            .await
+    }
+
+    /// 搜索 Session Summaries（支持 session 过滤）
+    pub async fn search_session_summaries_with_sessions(
+        &self,
+        query: &str,
+        limit: usize,
+        session_ids: &[String],
+    ) -> Result<Vec<SessionSummary>> {
         let conn = self.conn.lock().await;
         let escaped_query = escape_fts5_query(query);
-        let mut stmt = conn.prepare(
+
+        // 动态构建 WHERE 子句
+        let mut where_clauses = vec!["session_summaries_fts MATCH ?1".to_string()];
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> =
+            vec![Box::new(escaped_query) as Box<dyn rusqlite::ToSql>];
+        let mut param_idx = 2;
+
+        if !session_ids.is_empty() {
+            let session_likes: Vec<String> = session_ids
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("s.session_id LIKE ?{} ESCAPE '\\'", param_idx + i))
+                .collect();
+            where_clauses.push(format!("({})", session_likes.join(" OR ")));
+            for sid in session_ids {
+                params_vec.push(Box::new(format!("{}%", escape_like_pattern(sid))));
+            }
+            param_idx += session_ids.len();
+        }
+
+        params_vec.push(Box::new(limit as i64));
+
+        let sql = format!(
             r#"
             SELECT s.id, s.session_id,
                    s.summary, s.key_points, s.files_involved, s.technologies,
@@ -1277,13 +1349,19 @@ impl CompactDB {
                    s.created_at, s.updated_at
             FROM session_summaries s
             JOIN session_summaries_fts fts ON s.rowid = fts.rowid
-            WHERE session_summaries_fts MATCH ?1
+            WHERE {}
             ORDER BY fts.rank
-            LIMIT ?2
+            LIMIT ?{}
             "#,
-        )?;
+            where_clauses.join(" AND "),
+            param_idx
+        );
 
-        let rows = stmt.query_map(params![escaped_query, limit as i64], |row| {
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
             Ok(SessionSummary {
                 id: row.get(0)?,
                 session_id: row.get(1)?,

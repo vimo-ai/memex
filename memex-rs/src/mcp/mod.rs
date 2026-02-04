@@ -176,22 +176,24 @@ fn get_tools() -> Vec<Value> {
                     "time": { "type": "string", "description": "Time shortcut: 3h/1d/3d/1w/1m (forces raw level for accuracy)" },
                     "from": { "type": "string", "description": "Start date YYYY-MM-DD (forces raw level for accuracy)" },
                     "to": { "type": "string", "description": "End date YYYY-MM-DD (forces raw level for accuracy)" },
-                    "limit": { "type": "number", "description": "Max results, default 5" }
+                    "limit": { "type": "number", "description": "Max results, default 5" },
+                    "sessionId": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Filter to specific session(s). Supports prefix matching (e.g. 'abc12' matches 'abc12345-...')" }
                 },
                 "required": ["query"]
             }
         }),
         json!({
             "name": "get_session",
-            "description": "Get session messages. Two modes: (1) around+context: get context around position, (2) limit+order: pagination. Content truncated when limit>5",
+            "description": "Get session messages. Three modes: (1) at: get single message with full content, (2) around+context: get context around position (truncated), (3) limit+order: pagination (truncated when limit>5)",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "sessionId": { "type": "string", "description": "Session ID (full or prefix)" },
-                    "around": { "type": "number", "description": "Get context around this position (from search_history 'at'). Ignores limit/order" },
+                    "at": { "type": "number", "description": "Get single message by position (from search_history 'at'). Returns full content, no truncation" },
+                    "around": { "type": "number", "description": "Get context around this position (from search_history 'at'). Content may be truncated" },
                     "context": { "type": "number", "description": "Messages before/after 'around', default 5, max 20" },
-                    "limit": { "type": "number", "description": "Messages to return, default 10 (ignored if around is set)" },
-                    "order": { "type": "string", "enum": ["asc", "desc"], "description": "asc (from start) / desc (from end), default asc (ignored if around is set)" }
+                    "limit": { "type": "number", "description": "Messages to return, default 10 (ignored if at/around is set)" },
+                    "order": { "type": "string", "enum": ["asc", "desc"], "description": "asc (from start) / desc (from end), default asc (ignored if at/around is set)" }
                 },
                 "required": ["sessionId"]
             }
@@ -368,6 +370,12 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
     let include_cwds = parse_cwd_param(args.get("cwd"));
     let exclude_cwds = parse_cwd_param(args.get("exclude_cwd"));
 
+    // 解析 sessionId 参数（支持 string 或 array，过滤空字符串）
+    let session_ids: Vec<String> = parse_cwd_param(args.get("sessionId"))
+        .into_iter()
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+
     // 时间参数：time 快捷方式 与 from/to 互斥
     let time_shortcut = args.get("time").and_then(|t| t.as_str());
     let from_date = args.get("from").and_then(|d| d.as_str());
@@ -419,9 +427,12 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
 
     // 根据 level 选择搜索方式
     match effective_level {
-        "sessions" => search_session_summaries(state, query, limit, &filter).await,
-        "talks" => search_talk_summaries(state, query, limit, &filter).await,
-        "raw" => search_raw_messages(state, query, limit, &filter, _start_ts, _end_ts).await,
+        "sessions" => search_session_summaries(state, query, limit, &filter, &session_ids).await,
+        "talks" => search_talk_summaries(state, query, limit, &filter, &session_ids).await,
+        "raw" => {
+            search_raw_messages(state, query, limit, &filter, _start_ts, _end_ts, &session_ids)
+                .await
+        }
         _ => Err(format!("Invalid level: {}. Use sessions/talks/raw", level)),
     }
 }
@@ -432,23 +443,24 @@ async fn search_session_summaries(
     query: &str,
     limit: usize,
     filter: &ProjectFilter,
+    session_ids: &[String],
 ) -> Result<Value, String> {
     // 如果 compact_db 不可用，fallback 到 talks
     let compact_db = match &state.compact_db {
         Some(db) => db,
-        None => return search_talk_summaries(state, query, limit, filter).await,
+        None => return search_talk_summaries(state, query, limit, filter, session_ids).await,
     };
 
     // 多取一些结果用于过滤
     let search_limit = if filter.is_empty() { limit } else { limit * 3 };
     let results = compact_db
-        .search_session_summaries(query, search_limit)
+        .search_session_summaries_with_sessions(query, search_limit, session_ids)
         .await
         .map_err(|e| e.to_string())?;
 
     // 如果没有结果，fallback 到 talks
     if results.is_empty() {
-        return search_talk_summaries(state, query, limit, filter).await;
+        return search_talk_summaries(state, query, limit, filter, session_ids).await;
     }
 
     // 获取 session 到 project_id 的映射（用于过滤）
@@ -504,23 +516,26 @@ async fn search_talk_summaries(
     query: &str,
     limit: usize,
     filter: &ProjectFilter,
+    session_ids: &[String],
 ) -> Result<Value, String> {
     // 如果 compact_db 不可用，fallback 到 raw
     let compact_db = match &state.compact_db {
         Some(db) => db,
-        None => return search_raw_messages(state, query, limit, filter, None, None).await,
+        None => {
+            return search_raw_messages(state, query, limit, filter, None, None, session_ids).await
+        }
     };
 
     // 多取一些结果用于过滤
     let search_limit = if filter.is_empty() { limit } else { limit * 3 };
     let results = compact_db
-        .search_talk_summaries(query, search_limit)
+        .search_talk_summaries_with_sessions(query, search_limit, session_ids)
         .await
         .map_err(|e| e.to_string())?;
 
     // 如果没有结果，fallback 到 raw
     if results.is_empty() {
-        return search_raw_messages(state, query, limit, filter, None, None).await;
+        return search_raw_messages(state, query, limit, filter, None, None, session_ids).await;
     }
 
     // 获取 session 到 project_id 的映射（用于过滤）
@@ -579,6 +594,7 @@ async fn search_raw_messages(
     filter: &ProjectFilter,
     start_ts: Option<i64>,
     end_ts: Option<i64>,
+    session_ids: &[String],
 ) -> Result<Value, String> {
     // 对于单个 include 项目，使用 SQL 层过滤（向后兼容，更高效）
     // 对于复杂过滤（多 include 或 exclude），使用内存过滤
@@ -593,13 +609,14 @@ async fn search_raw_messages(
     };
     let results = state
         .db
-        .search_fts_full(
+        .search_fts_full_with_sessions(
             query,
             search_limit,
             sql_project_id,
             ai_cli_session_db::SearchOrderBy::Score,
             start_ts,
             end_ts,
+            session_ids,
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -660,6 +677,9 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
         .and_then(|s| s.as_str())
         .ok_or("sessionId is required")?;
 
+    // at 模式：获取单条消息完整内容
+    let at = args.get("at").and_then(|a| a.as_i64());
+
     // around 模式参数
     let around = args.get("around").and_then(|a| a.as_i64());
     let context = args
@@ -668,7 +688,7 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
         .unwrap_or(5)
         .min(20) as usize; // 最大 20
 
-    // 传统分页参数（around 模式下忽略）
+    // 传统分页参数（at/around 模式下忽略）
     let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10) as usize;
     let order = args.get("order").and_then(|o| o.as_str()).unwrap_or("asc");
 
@@ -690,6 +710,23 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
     let total = all_messages.len();
     if total == 0 {
         return Err(format!("Session not found: {}", session_id));
+    }
+
+    // at 模式：返回单条消息完整内容
+    if let Some(target_message_id) = at {
+        let message = all_messages
+            .iter()
+            .find(|m| m.id == target_message_id)
+            .ok_or_else(|| format!("Message not found: {}", target_message_id))?;
+
+        return Ok(json!({
+            "total": total,
+            "message": {
+                "role": format!("{:?}", message.r#type).to_lowercase(),
+                "text": message.content_full,  // 完整内容，不截断
+                "at": message.id
+            }
+        }));
     }
 
     // 确定消息范围
@@ -1348,6 +1385,7 @@ mod tests {
         assert!(props.get("from").is_some());
         assert!(props.get("to").is_some());
         assert!(props.get("cwd").is_some());
+        assert!(props.get("sessionId").is_some());
 
         // get_session
         let session = &tools[1];
@@ -1713,6 +1751,297 @@ mod tests {
                 "错误信息应包含 'Invalid time shortcut': {}",
                 err
             );
+        }
+
+        /// at 模式：获取单条消息完整内容
+        #[tokio::test]
+        async fn test_at_mode_single_message() {
+            let (state, _dir) = create_test_state().await;
+
+            // 先搜索获取一个 at 值
+            let search_result = call_tool(
+                &state,
+                "search_history",
+                json!({ "query": "searchable_keyword_5", "limit": 1 }),
+            )
+            .await
+            .unwrap();
+
+            let at_value = search_result["results"][0]["at"].as_i64().unwrap();
+
+            // 使用 at 模式获取单条消息
+            let result = call_tool(
+                &state,
+                "get_session",
+                json!({
+                    "sessionId": "test-session-12345678",
+                    "at": at_value
+                }),
+            )
+            .await
+            .unwrap();
+
+            // 应该返回 message 而不是 messages
+            assert!(result.get("message").is_some(), "at 模式应返回 message 字段");
+            assert!(result.get("messages").is_none(), "at 模式不应返回 messages 字段");
+
+            let message = &result["message"];
+            assert_eq!(message["at"].as_i64(), Some(at_value));
+
+            // 验证内容完整，包含 searchable_keyword_5
+            let text = message["text"].as_str().unwrap();
+            assert!(
+                text.contains("searchable_keyword_5"),
+                "at 模式应返回完整内容: {}",
+                text
+            );
+            assert!(
+                !text.ends_with("..."),
+                "at 模式不应截断内容"
+            );
+        }
+
+        /// at 模式：消息不存在时报错
+        #[tokio::test]
+        async fn test_at_mode_message_not_found() {
+            let (state, _dir) = create_test_state().await;
+
+            let result = call_tool(
+                &state,
+                "get_session",
+                json!({
+                    "sessionId": "test-session-12345678",
+                    "at": 999999
+                }),
+            )
+            .await;
+
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(err.contains("Message not found"));
+        }
+
+        /// 创建包含两个 session 的测试 AppState（用于 sessionId 过滤测试）
+        async fn create_test_state_two_sessions() -> (Arc<AppState>, tempfile::TempDir) {
+            let dir = tempdir().unwrap();
+            let db_path = dir.path().join("test.db");
+            let backup_dir = dir.path().join("backups");
+            std::fs::create_dir_all(&backup_dir).unwrap();
+
+            let config = DbConfig::local(db_path.to_string_lossy().into_owned());
+            let session_db = SessionDB::connect(config).unwrap();
+
+            let project_id = session_db
+                .get_or_create_project("TestProject", "/test/project", "test")
+                .unwrap();
+
+            let now = chrono::Local::now().timestamp_millis();
+
+            // Session A: 包含 "alpha" 关键字
+            let session_a = "aaaa-1111-session-alpha";
+            session_db.upsert_session(session_a, project_id).unwrap();
+            let messages_a: Vec<MessageInput> = (0..5)
+                .map(|i| MessageInput {
+                    uuid: format!("msg-a-{}", i),
+                    r#type: if i % 2 == 0 {
+                        MessageType::User
+                    } else {
+                        MessageType::Assistant
+                    },
+                    content_text: format!("alpha message {}", i),
+                    content_full: format!(
+                        "alpha unique_content_{} shared_keyword session_a_only",
+                        i
+                    ),
+                    timestamp: now + i * 1000,
+                    sequence: i,
+                    source: None,
+                    channel: None,
+                    model: None,
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_args: None,
+                    raw: None,
+                    approval_status: None,
+                    approval_resolved_at: None,
+                })
+                .collect();
+            session_db.insert_messages(session_a, &messages_a).unwrap();
+
+            // Session B: 包含 "beta" 关键字
+            let session_b = "bbbb-2222-session-beta";
+            session_db.upsert_session(session_b, project_id).unwrap();
+            let messages_b: Vec<MessageInput> = (0..5)
+                .map(|i| MessageInput {
+                    uuid: format!("msg-b-{}", i),
+                    r#type: if i % 2 == 0 {
+                        MessageType::User
+                    } else {
+                        MessageType::Assistant
+                    },
+                    content_text: format!("beta message {}", i),
+                    content_full: format!(
+                        "beta unique_content_{} shared_keyword session_b_only",
+                        i
+                    ),
+                    timestamp: now + (i + 10) * 1000,
+                    sequence: i,
+                    source: None,
+                    channel: None,
+                    model: None,
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_args: None,
+                    raw: None,
+                    approval_status: None,
+                    approval_resolved_at: None,
+                })
+                .collect();
+            session_db.insert_messages(session_b, &messages_b).unwrap();
+
+            drop(session_db);
+
+            let db = Arc::new(DbReader::new(Some(db_path.clone())).unwrap());
+            let config = Config::default();
+            let backup = BackupService::new(db_path, backup_dir);
+            let hybrid_search = HybridSearchService::new(db.clone(), None, None);
+            let rag_service = RagService::new(db.clone(), None, None, None);
+
+            let state = AppState {
+                config,
+                db,
+                backup,
+                embedding: None,
+                chat: None,
+                vector: None,
+                indexer: None,
+                hybrid_search,
+                rag_service,
+                compact_db: None,
+                compact_queue: None,
+                compact_vector: None,
+                startup_duration_ms: 0,
+            };
+
+            (Arc::new(state), dir)
+        }
+
+        /// sessionId 过滤：只返回指定 session 的结果
+        #[tokio::test]
+        async fn test_session_id_filter() {
+            let (state, _dir) = create_test_state_two_sessions().await;
+
+            // 无 sessionId 过滤：搜索 shared_keyword 应返回两个 session 的结果
+            let all_results = call_tool(
+                &state,
+                "search_history",
+                json!({ "query": "shared_keyword", "limit": 10 }),
+            )
+            .await
+            .unwrap();
+            let all_sessions: Vec<&str> = all_results["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|r| r["session"].as_str())
+                .collect();
+            assert!(
+                all_sessions.len() >= 2,
+                "无过滤时应返回至少 2 个 session 的结果"
+            );
+
+            // 用 sessionId 过滤：只返回 session A 的结果
+            let filtered = call_tool(
+                &state,
+                "search_history",
+                json!({
+                    "query": "shared_keyword",
+                    "sessionId": "aaaa-1111-session-alpha",
+                    "limit": 10
+                }),
+            )
+            .await
+            .unwrap();
+            let filtered_sessions: Vec<&str> = filtered["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|r| r["session"].as_str())
+                .collect();
+            assert_eq!(filtered_sessions.len(), 1, "过滤后应只有 1 个 session");
+            assert!(
+                filtered_sessions[0].starts_with("aaaa"),
+                "应该是 session A"
+            );
+        }
+
+        /// sessionId 前缀匹配
+        #[tokio::test]
+        async fn test_session_id_prefix_filter() {
+            let (state, _dir) = create_test_state_two_sessions().await;
+
+            // 用前缀 "bbbb" 过滤
+            let filtered = call_tool(
+                &state,
+                "search_history",
+                json!({
+                    "query": "shared_keyword",
+                    "sessionId": "bbbb",
+                    "limit": 10
+                }),
+            )
+            .await
+            .unwrap();
+            let results = filtered["results"].as_array().unwrap();
+            assert_eq!(results.len(), 1, "前缀过滤后应只有 1 个结果");
+            assert!(
+                results[0]["session"].as_str().unwrap().starts_with("bbbb"),
+                "应该是 session B"
+            );
+        }
+
+        /// sessionId 数组过滤多个 session
+        #[tokio::test]
+        async fn test_session_id_array_filter() {
+            let (state, _dir) = create_test_state_two_sessions().await;
+
+            // 用数组过滤两个 session
+            let filtered = call_tool(
+                &state,
+                "search_history",
+                json!({
+                    "query": "shared_keyword",
+                    "sessionId": ["aaaa", "bbbb"],
+                    "limit": 10
+                }),
+            )
+            .await
+            .unwrap();
+            let results = filtered["results"].as_array().unwrap();
+            assert!(
+                results.len() >= 2,
+                "数组过滤两个 session 应返回至少 2 个结果"
+            );
+        }
+
+        /// sessionId 过滤不匹配时返回空结果
+        #[tokio::test]
+        async fn test_session_id_no_match() {
+            let (state, _dir) = create_test_state_two_sessions().await;
+
+            let filtered = call_tool(
+                &state,
+                "search_history",
+                json!({
+                    "query": "shared_keyword",
+                    "sessionId": "nonexistent-session",
+                    "limit": 10
+                }),
+            )
+            .await
+            .unwrap();
+            let results = filtered["results"].as_array().unwrap();
+            assert_eq!(results.len(), 0, "不匹配的 sessionId 应返回空结果");
         }
 
         /// 验证 at 字段类型一致性

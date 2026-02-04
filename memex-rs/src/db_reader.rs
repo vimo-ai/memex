@@ -242,14 +242,38 @@ impl DbReader {
         start_timestamp: Option<i64>,
         end_timestamp: Option<i64>,
     ) -> Result<Vec<SearchResult>> {
-        let db = self.db.read().await;
-        Ok(db.search_fts_full(
+        self.search_fts_full_with_sessions(
             query,
             limit,
             project_id,
             order_by,
             start_timestamp,
             end_timestamp,
+            &[],
+        )
+        .await
+    }
+
+    /// FTS 搜索（完整版，支持日期范围和 session 过滤）
+    pub async fn search_fts_full_with_sessions(
+        &self,
+        query: &str,
+        limit: usize,
+        project_id: Option<i64>,
+        order_by: ai_cli_session_db::SearchOrderBy,
+        start_timestamp: Option<i64>,
+        end_timestamp: Option<i64>,
+        session_ids: &[String],
+    ) -> Result<Vec<SearchResult>> {
+        let db = self.db.read().await;
+        Ok(db.search_fts_full_with_sessions(
+            query,
+            limit,
+            project_id,
+            order_by,
+            start_timestamp,
+            end_timestamp,
+            session_ids,
         )?)
     }
 
