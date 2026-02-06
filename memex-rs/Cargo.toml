@@ -55,8 +55,8 @@ mime_guess = { version = "2", optional = true }
 # 共享数据库（ETerm/Vlaude 数据统一层）
 # 同时 re-export ai-cli-session-collector 类型，避免重复依赖
 # 使用 git 依赖，支持独立编译；在 ETerm 主仓库中通过 [patch] 覆盖成本地路径
-# 注意：memex-rs 只需要 reader + search + client，不需要 writer/coordination（由 Agent 负责）
-ai-cli-session-db = { git = "https://github.com/vimo-ai/ai-cli-session-db", features = ["reader", "search", "client"] }
+# [V2] memex-rs 只需要 reader + search，不再需要 client（事件订阅已移除）
+ai-cli-session-db = { git = "https://github.com/vimo-ai/ai-cli-session-db", features = ["reader", "search"] }
 
 # 工具
 anyhow = "1"
@@ -77,6 +77,7 @@ libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
+filetime = "0.2"
 
 [profile.release]
 lto = "thin"          # thin LTO 比 full LTO 内存占用低很多

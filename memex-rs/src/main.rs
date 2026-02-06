@@ -13,7 +13,6 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use memex::agent_client::{run_agent_event_loop_with_reconnect, NewMessageEvent};
 use memex::embedded::{embedded_spa_handler, has_embedded_assets};
 use memex::api::{create_router, AppState};
 use memex::archive::ArchiveService;
@@ -23,7 +22,7 @@ use memex::compact::{
 };
 use memex::config::Config;
 use memex::db_reader::DbReader;
-use memex::indexer::{IndexQueue, VectorIndexer};
+use memex::indexer::VectorIndexer;
 use memex::llm::{ChatProvider, EmbeddingProvider, OllamaProvider};
 use memex::rag::RagService;
 use memex::search::HybridSearchService;
@@ -325,8 +324,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Create index queue (optional, for real-time indexing)
-    let index_queue = indexer.clone().map(IndexQueue::new);
+    // [V2] index_queue 已移除，向量索引通过 HTTP API 触发
 
     // Initialize Compact service (optional, requires enabled + chat provider)
     // 通过配置文件 ~/.vimo/memex/config.json 控制
@@ -470,7 +468,6 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("⏱️ Startup initialization took {}ms", startup_duration_ms);
 
     // Create app state
-    // 注意：compact_queue 需要 clone，因为后面还要传给 Agent 事件循环
     let state = Arc::new(AppState {
         config: config.clone(),
         db: db.clone(),
@@ -482,13 +479,12 @@ async fn main() -> anyhow::Result<()> {
         hybrid_search,
         rag_service,
         compact_db,
-        compact_queue: compact_queue.clone(),
+        compact_queue,
         compact_vector,
         startup_duration_ms,
     });
 
-    // Note: Collection is now handled by vimo-agent
-    // memex-rs only receives NewMessage events and triggers compact/indexing
+    // Note: Collection is handled by vimo-agent, compact/indexing via HTTP API
     if needs_recollect {
         tracing::info!("🔄 Recovery mode: vimo-agent will handle data collection");
     }
@@ -514,42 +510,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Start Agent event loop (receives NewMessage events from vimo-agent)
-    // This replaces the old FileWatcher - Agent now handles file watching
-    {
-        let index_tx = index_queue.as_ref().map(|q| q.sender());
-
-        // 只有当 compact_queue 存在时才创建 channel（避免 channel closed 错误）
-        let compact_tx = if let Some(queue) = compact_queue {
-            let (tx, mut rx) = tokio::sync::mpsc::channel::<NewMessageEvent>(100);
-
-            // Spawn compact task handler
-            tokio::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    tracing::debug!(
-                        "[Compact] Received NewMessage event: session={}, count={}",
-                        event.session_id,
-                        event.count
-                    );
-
-                    // 提交到 compact 队列
-                    queue.enqueue_session(event.session_id.clone()).await;
-                }
-            });
-
-            Some(tx)
-        } else {
-            None
-        };
-
-        // Spawn Agent event loop (with auto-reconnect)
-        tokio::spawn(run_agent_event_loop_with_reconnect(
-            compact_tx,
-            index_tx,
-        ));
-
-        tracing::info!("🔗 Agent event loop started (file watching delegated to vimo-agent)");
-    }
+    // [V2] Agent 事件循环已移除。compact/indexing 通过 HTTP API 被动触发。
 
     // Web 静态文件服务
     // 优先级：

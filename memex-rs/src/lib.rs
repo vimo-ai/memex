@@ -3,16 +3,11 @@
 //! Claude Code 会话历史管理系统 - 可作为库使用
 //! 支持多种 CLI 数据源 (Claude Code, Codex CLI)
 //!
-//! # Agent Client 架构
+//! # V2 读写分离架构
 //!
-//! memex-rs 使用 Agent Client 模式：
 //! - 文件监听和写入由 vimo-agent 统一负责
-//! - memex-rs 通过 Agent Client 订阅事件
-//! - 收到 NewMessage 事件后触发 compact 和向量索引
-//!
-//! ```text
-//! vimo-agent ──(NewMessage)──> memex-rs ──> compact/indexer
-//! ```
+//! - memex-rs 通过 HTTP API 被动触发 compact 和向量索引
+//! - 不再主动订阅 agent 事件
 
 // 核心模块
 pub mod compact;
@@ -28,9 +23,6 @@ pub mod vector;
 
 // 只读数据库（替代 SharedDbAdapter）
 pub mod db_reader;
-
-// Agent Client（事件驱动）
-pub mod agent_client;
 
 // CLI 专用模块
 #[cfg(feature = "cli")]
