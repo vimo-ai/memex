@@ -91,6 +91,16 @@ fn truncate_str(s: &str, max_chars: usize) -> String {
     }
 }
 
+/// 判断是否为 system 噪声消息
+///
+/// 噪声消息定义：type 为 system 且 content_text 为空
+/// 这类消息包括 stop_hook_summary、turn_duration 等运行时元数据，对 AI 消费无价值
+///
+/// 注意：`[Summary]` 类型的 system 消息 content_text 非空，不会被过滤
+fn is_system_noise(m: &ai_cli_session_db::Message) -> bool {
+    m.r#type == ai_cli_session_db::MessageType::System && m.content_text.is_empty()
+}
+
 /// MCP GET 请求参数
 #[derive(Debug, Deserialize)]
 pub struct MCPGetQuery {
@@ -634,6 +644,11 @@ async fn search_raw_messages(
     let formatted: Vec<Value> = results
         .iter()
         .filter(|r| {
+            // 过滤 system 噪声消息（type=system 且 content_full 以 [system: 开头）
+            // 这类消息是运行时元数据，对 AI 消费无价值
+            if r.r#type == "system" && r.content_full.starts_with("[system:") {
+                return false;
+            }
             // 去重
             if seen_sessions.contains_key(&r.session_id) {
                 return false;
@@ -707,20 +722,22 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    let total = all_messages.len();
-    if total == 0 {
+    if all_messages.is_empty() {
         return Err(format!("Session not found: {}", session_id));
     }
 
-    // at 模式：返回单条消息完整内容
+    // at 模式：返回单条消息完整内容（不过滤，用户明确要查看这条消息）
     if let Some(target_message_id) = at {
         let message = all_messages
             .iter()
             .find(|m| m.id == target_message_id)
             .ok_or_else(|| format!("Message not found: {}", target_message_id))?;
 
+        // 过滤后的总数（用于显示）
+        let filtered_total = all_messages.iter().filter(|m| !is_system_noise(m)).count();
+
         return Ok(json!({
-            "total": total,
+            "total": filtered_total,
             "message": {
                 "role": format!("{:?}", message.r#type).to_lowercase(),
                 "text": message.content_full,  // 完整内容，不截断
@@ -729,33 +746,74 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
         }));
     }
 
-    // 确定消息范围
-    let (from_idx, to_idx, target_msg_id) = if let Some(target_message_id) = around {
-        // around 模式：找到目标消息的位置，返回前后 context 条
+    // around 模式：基于 message_id 定位，但过滤上下文中的 system 噪声
+    if let Some(target_message_id) = around {
         let target_pos = all_messages
             .iter()
             .position(|m| m.id == target_message_id)
             .ok_or_else(|| format!("Message not found: {}", target_message_id))?;
 
+        // 取原始切片，然后过滤（保留目标消息即使它是 system）
         let from = target_pos.saturating_sub(context);
-        let to = (target_pos + context + 1).min(total);
-        (from, to, Some(target_message_id))
+        let to = (target_pos + context + 1).min(all_messages.len());
+
+        let messages: Vec<Value> = all_messages[from..to]
+            .iter()
+            .filter(|m| m.id == target_message_id || !is_system_noise(m))
+            .map(|m| {
+                let content = if to - from > 5 {
+                    truncate_str(&m.content_full, 500)
+                } else {
+                    m.content_full.clone()
+                };
+                json!({
+                    "role": format!("{:?}", m.r#type).to_lowercase(),
+                    "text": content,
+                    "at": m.id
+                })
+            })
+            .collect();
+
+        // 过滤后的总数
+        let filtered_total = all_messages.iter().filter(|m| !is_system_noise(m)).count();
+
+        // range 使用实际返回的消息的 ID
+        let first_msg_id = messages.first().and_then(|m| m["at"].as_i64()).unwrap_or(0);
+        let last_msg_id = messages.last().and_then(|m| m["at"].as_i64()).unwrap_or(0);
+
+        return Ok(json!({
+            "total": filtered_total,
+            "messages": messages,
+            "range": { "from": first_msg_id, "to": last_msg_id, "target": target_message_id }
+        }));
+    }
+
+    // 传统分页模式：先过滤 system 噪声，再切片
+    let filtered_messages: Vec<_> = all_messages
+        .iter()
+        .filter(|m| !is_system_noise(m))
+        .collect();
+
+    let filtered_total = filtered_messages.len();
+    if filtered_total == 0 {
+        return Ok(json!({
+            "total": 0,
+            "messages": [],
+            "range": { "from": 0, "to": 0 }
+        }));
+    }
+
+    let desc = order == "desc";
+    let (from_idx, to_idx) = if desc {
+        let from = filtered_total.saturating_sub(limit);
+        (from, filtered_total)
     } else {
-        // 传统分页模式
-        let desc = order == "desc";
-        if desc {
-            let from = total.saturating_sub(limit);
-            (from, total, None)
-        } else {
-            let to = limit.min(total);
-            (0, to, None)
-        }
+        let to = limit.min(filtered_total);
+        (0, to)
     };
 
-    // 提取消息并格式化
-    // at 统一使用 message_id（与 search_history 一致，支持 round-trip）
     let effective_limit = to_idx - from_idx;
-    let messages: Vec<Value> = all_messages[from_idx..to_idx]
+    let messages: Vec<Value> = filtered_messages[from_idx..to_idx]
         .iter()
         .map(|m| {
             let content = if effective_limit > 5 {
@@ -766,30 +824,23 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
             json!({
                 "role": format!("{:?}", m.r#type).to_lowercase(),
                 "text": content,
-                "at": m.id  // 使用 message_id，与 search_history 一致
+                "at": m.id
             })
         })
         .collect();
 
-    // range 使用 message_id
-    let first_msg_id = all_messages.get(from_idx).map(|m| m.id).unwrap_or(0);
-    let last_msg_id = all_messages
+    // range 使用实际返回的消息的 ID
+    let first_msg_id = filtered_messages.get(from_idx).map(|m| m.id).unwrap_or(0);
+    let last_msg_id = filtered_messages
         .get(to_idx.saturating_sub(1))
         .map(|m| m.id)
         .unwrap_or(0);
 
-    let mut result = json!({
-        "total": total,
+    Ok(json!({
+        "total": filtered_total,
         "messages": messages,
         "range": { "from": first_msg_id, "to": last_msg_id }
-    });
-
-    // around 模式额外返回 target
-    if let Some(target_id) = target_msg_id {
-        result["range"]["target"] = json!(target_id);
-    }
-
-    Ok(result)
+    }))
 }
 
 /// 获取最近会话
