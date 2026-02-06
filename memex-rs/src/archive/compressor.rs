@@ -70,18 +70,9 @@ impl Compressor {
         // 正确处理 .tar.xz 双扩展名：08.tar.xz → 08.tar
         let tar_path = strip_tar_xz_extension(output).with_extension("tar");
 
-        // 使用 tar 打包
         let mut tar_cmd = Command::new("tar");
-        tar_cmd.arg("-cf").arg(&tar_path);
-
-        for file in files {
-            tar_cmd.arg(file.as_ref().file_name().unwrap());
-            tar_cmd.current_dir(file.as_ref().parent().unwrap());
-        }
-
-        // 如果文件来自不同目录，需要特殊处理
-        // 这里简化处理：使用绝对路径
-        let mut tar_cmd = Command::new("tar");
+        // macOS bsdtar 默认打包 ._ 资源分叉文件，禁用之
+        tar_cmd.env("COPYFILE_DISABLE", "1");
         tar_cmd.arg("-cf").arg(&tar_path);
 
         // 添加所有文件（使用 -C 切换目录）
@@ -136,12 +127,95 @@ impl Compressor {
         Ok(())
     }
 
+    /// 压缩文件列表到 tar.xz，保留目录结构
+    ///
+    /// 所有路径相对于 base_dir，tar 内部保留完整相对路径结构。
+    /// 使用 `--` 防止以 `-` 开头的路径被解析为选项。
+    pub fn compress_with_structure(
+        &self,
+        base_dir: &Path,
+        relative_paths: &[PathBuf],
+        output: &Path,
+    ) -> Result<()> {
+        // 前置校验：拒绝绝对路径、路径逃逸、不存在的文件
+        for rel_path in relative_paths {
+            if rel_path.is_absolute() {
+                anyhow::bail!("拒绝绝对路径: {:?}", rel_path);
+            }
+            if rel_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                anyhow::bail!("拒绝含 .. 的路径: {:?}", rel_path);
+            }
+            let abs = base_dir.join(rel_path);
+            if !abs.exists() {
+                anyhow::bail!("文件不存在: {:?}", abs);
+            }
+        }
+
+        let tar_path = strip_tar_xz_extension(output).with_extension("tar");
+
+        let mut tar_cmd = Command::new("tar");
+        // macOS bsdtar 默认打包 ._ 资源分叉文件，禁用之
+        tar_cmd.env("COPYFILE_DISABLE", "1");
+        tar_cmd.arg("-cf").arg(&tar_path);
+        tar_cmd.arg("-C").arg(base_dir);
+        // `--` 防止 `-Users-...` 开头的路径被 tar 误解为选项
+        tar_cmd.arg("--");
+
+        for rel_path in relative_paths {
+            tar_cmd.arg(rel_path);
+        }
+
+        let output_tar = tar_cmd.output().context("执行 tar 失败")?;
+        if !output_tar.status.success() {
+            anyhow::bail!(
+                "tar 打包失败: {}",
+                String::from_utf8_lossy(&output_tar.stderr)
+            );
+        }
+
+        // xz 压缩（复用现有逻辑）
+        let mut xz_args = vec![format!("-{}", self.level), "-e".to_string()];
+        if self.threads {
+            xz_args.push("-T0".to_string());
+        }
+        xz_args.push(tar_path.to_string_lossy().to_string());
+
+        let xz_output = if self.nice {
+            Command::new("nice")
+                .args(["-n", "19", "xz"])
+                .args(&xz_args)
+                .output()
+                .context("执行 nice xz 失败")?
+        } else {
+            Command::new("xz")
+                .args(&xz_args)
+                .output()
+                .context("执行 xz 失败")?
+        };
+
+        if !xz_output.status.success() {
+            anyhow::bail!(
+                "xz 压缩失败: {}",
+                String::from_utf8_lossy(&xz_output.stderr)
+            );
+        }
+
+        // xz 会自动添加 .xz 后缀
+        let xz_result = PathBuf::from(format!("{}.xz", tar_path.display()));
+        if xz_result != output {
+            std::fs::rename(&xz_result, output)?;
+        }
+
+        Ok(())
+    }
+
     /// 解压 tar.xz 到目录
     pub fn decompress(&self, archive: &Path, output_dir: &Path) -> Result<()> {
         std::fs::create_dir_all(output_dir)?;
 
-        // 使用 tar 解压
+        // 使用 tar 解压（COPYFILE_DISABLE 防止 macOS 生成 ._ 文件）
         let output = Command::new("tar")
+            .env("COPYFILE_DISABLE", "1")
             .args(["-xJf"])
             .arg(archive)
             .arg("-C")
