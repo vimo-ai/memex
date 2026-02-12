@@ -715,6 +715,11 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Session not found: {}", session_id_input))?;
 
+    // 获取会话信息（type, source, 关系）
+    let session_info = state.db.get_session(&session_id).await.map_err(|e| e.to_string())?;
+    let parent_relation = state.db.get_parent_session(&session_id).await.unwrap_or(None);
+    let children = state.db.get_children_sessions(&session_id).await.unwrap_or_default();
+
     // 获取所有消息（需要完整列表来计算位置）
     let all_messages = state
         .db
@@ -724,6 +729,23 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
 
     if all_messages.is_empty() {
         return Err(format!("Session not found: {}", session_id));
+    }
+
+    // 构建 session 元信息
+    let mut session_meta = json!({});
+    if let Some(ref info) = session_info {
+        if let Some(ref t) = info.session_type {
+            session_meta["type"] = json!(t);
+        }
+        if let Some(ref src) = info.source {
+            session_meta["source"] = json!(src);
+        }
+    }
+    if let Some(ref parent) = parent_relation {
+        session_meta["parent"] = json!(parent.parent_session_id);
+    }
+    if !children.is_empty() {
+        session_meta["children"] = json!(children.len());
     }
 
     // at 模式：返回单条消息完整内容（不过滤，用户明确要查看这条消息）
@@ -736,14 +758,18 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
         // 过滤后的总数（用于显示）
         let filtered_total = all_messages.iter().filter(|m| !is_system_noise(m)).count();
 
-        return Ok(json!({
+        let mut result = json!({
             "total": filtered_total,
             "message": {
                 "role": format!("{:?}", message.r#type).to_lowercase(),
                 "text": message.content_full,  // 完整内容，不截断
                 "at": message.id
             }
-        }));
+        });
+        if !session_meta.as_object().unwrap().is_empty() {
+            result["session"] = session_meta;
+        }
+        return Ok(result);
     }
 
     // around 模式：基于 message_id 定位，但过滤上下文中的 system 噪声
@@ -781,11 +807,15 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
         let first_msg_id = messages.first().and_then(|m| m["at"].as_i64()).unwrap_or(0);
         let last_msg_id = messages.last().and_then(|m| m["at"].as_i64()).unwrap_or(0);
 
-        return Ok(json!({
+        let mut result = json!({
             "total": filtered_total,
             "messages": messages,
             "range": { "from": first_msg_id, "to": last_msg_id, "target": target_message_id }
-        }));
+        });
+        if !session_meta.as_object().unwrap().is_empty() {
+            result["session"] = session_meta;
+        }
+        return Ok(result);
     }
 
     // 传统分页模式：先过滤 system 噪声，再切片
@@ -836,11 +866,15 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
         .map(|m| m.id)
         .unwrap_or(0);
 
-    Ok(json!({
+    let mut result = json!({
         "total": filtered_total,
         "messages": messages,
         "range": { "from": first_msg_id, "to": last_msg_id }
-    }))
+    });
+    if !session_meta.as_object().unwrap().is_empty() {
+        result["session"] = session_meta;
+    }
+    Ok(result)
 }
 
 /// 获取最近会话
@@ -956,6 +990,13 @@ async fn get_recent_sessions(state: &AppState, args: Value) -> Result<Value, Str
                 "messages": s.message_count,
                 "time": ms_to_relative_time(s.last_message_at)
             });
+            // 附加 session_type 和 source（如果有）
+            if let Some(ref t) = s.session_type {
+                obj["type"] = json!(t);
+            }
+            if let Some(ref src) = s.source {
+                obj["source"] = json!(src);
+            }
             // 附加 summary（如果有）
             if let Some(summary) = summaries.get(&s.session_id) {
                 obj["summary"] = summary.clone();

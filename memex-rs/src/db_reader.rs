@@ -4,7 +4,7 @@
 //! 写入由 Agent 统一负责，memex-rs 只需要读取数据用于搜索、RAG、compact 等。
 
 use ai_cli_session_db::{
-    DbConfig, Message, Project, SearchResult, Session, SessionDB,
+    DbConfig, Message, Project, SearchResult, Session, SessionDB, SessionRelation,
 };
 use anyhow::Result;
 use std::path::PathBuf;
@@ -144,6 +144,26 @@ impl DbReader {
     pub async fn count_sessions_without_cwd(&self) -> Result<i64> {
         let db = self.db.read().await;
         Ok(db.count_sessions_without_cwd()?)
+    }
+
+    // ==================== 会话关系操作 ====================
+
+    /// 获取子会话列表
+    pub async fn get_children_sessions(
+        &self,
+        parent_session_id: &str,
+    ) -> Result<Vec<SessionRelation>> {
+        let db = self.db.read().await;
+        Ok(db.get_children_sessions(parent_session_id)?)
+    }
+
+    /// 获取父会话
+    pub async fn get_parent_session(
+        &self,
+        child_session_id: &str,
+    ) -> Result<Option<SessionRelation>> {
+        let db = self.db.read().await;
+        Ok(db.get_parent_session(child_session_id)?)
     }
 
     // ==================== 消息操作 ====================
