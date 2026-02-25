@@ -389,6 +389,7 @@ async fn main() -> anyhow::Result<()> {
                         compact_config.clone(),
                         queue.tracker().clone(),
                         compact_indexer,
+                        indexer.clone(),
                     );
 
                     // 启动 worker（后台任务）

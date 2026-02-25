@@ -14,6 +14,7 @@ use super::db::CompactDB;
 use super::indexer::CompactIndexer;
 use super::service::CompactService;
 use crate::db_reader::DbReader;
+use crate::indexer::VectorIndexer;
 use crate::llm::ChatProvider;
 
 /// 默认 idle 超时时间（5 分钟）
@@ -140,6 +141,8 @@ pub struct CompactWorker {
     compact_db: Arc<CompactDB>,
     tracker: SessionTracker,
     needs_l3: bool,
+    /// 向量索引器（compact 完成后自动触发 L0 向量索引）
+    vector_indexer: Option<VectorIndexer>,
 }
 
 impl CompactWorker {
@@ -151,6 +154,7 @@ impl CompactWorker {
         config: CompactConfig,
         tracker: SessionTracker,
         indexer: Option<CompactIndexer>,
+        vector_indexer: Option<VectorIndexer>,
     ) -> Self {
         let needs_l3 = config.l3_session_summary;
         let mut service = CompactService::new(db, chat_provider, compact_db.clone(), config);
@@ -165,6 +169,7 @@ impl CompactWorker {
             compact_db,
             tracker,
             needs_l3,
+            vector_indexer,
         }
     }
 
@@ -236,9 +241,10 @@ impl CompactWorker {
         }
 
         // 4. 处理结果
-        match result {
+        let compact_had_content = match result {
             Ok(result) => {
-                if result.observations_count > 0 || result.talk_summaries_count > 0 {
+                let had_content = result.observations_count > 0 || result.talk_summaries_count > 0;
+                if had_content {
                     tracing::debug!(
                         "📝 Compact: session={} L1={} L2={} (pruned={}, merged={})",
                         session_id,
@@ -248,9 +254,30 @@ impl CompactWorker {
                         result.tool_calls_merged,
                     );
                 }
+                had_content
             }
             Err(e) => {
                 tracing::error!("Compact processing failed (session={}): {}", session_id, e);
+                false
+            }
+        };
+
+        // 5. Compact 有新内容时，顺带触发向量索引（处理新入库的未索引消息）
+        if compact_had_content {
+            if let Some(ref indexer) = self.vector_indexer {
+                match indexer.index_batch(200).await {
+                    Ok(result) if result.indexed_messages > 0 => {
+                        tracing::debug!(
+                            "🔍 Post-compact indexing: {} messages, {} chunks",
+                            result.indexed_messages,
+                            result.indexed_chunks,
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Post-compact indexing failed: {}", e);
+                    }
+                    _ => {}
+                }
             }
         }
     }
