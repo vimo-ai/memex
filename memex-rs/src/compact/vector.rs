@@ -434,6 +434,38 @@ impl CompactVectorStore {
         Ok(table.count_rows(None).await?)
     }
 
+    /// 压缩数据库（合并小文件、清理旧版本）
+    pub async fn compact(&self) -> Result<()> {
+        let table = match &self.table {
+            Some(t) => t,
+            None => return Ok(()),
+        };
+
+        use lancedb::table::OptimizeAction;
+
+        tracing::info!("🔧 Starting compact_vectors compaction...");
+        table
+            .optimize(OptimizeAction::Compact {
+                options: Default::default(),
+                remap_options: None,
+            })
+            .await
+            .context("compact_vectors compact_files failed")?;
+
+        tracing::info!("🧹 Cleaning up compact_vectors old versions...");
+        table
+            .optimize(OptimizeAction::Prune {
+                older_than: Some(chrono::TimeDelta::zero()),
+                delete_unverified: Some(true),
+                error_if_tagged_old_versions: None,
+            })
+            .await
+            .context("compact_vectors cleanup failed")?;
+
+        tracing::info!("✅ compact_vectors compaction done");
+        Ok(())
+    }
+
     /// 按层级统计数量
     pub async fn count_by_level(&self, level: CompactLevel) -> Result<usize> {
         let table = match &self.table {

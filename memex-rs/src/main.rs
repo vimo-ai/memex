@@ -494,6 +494,7 @@ async fn main() -> anyhow::Result<()> {
     let mut scheduler = setup_scheduler(
         state.backup.clone(),
         state.indexer.clone(),
+        state.compact_vector.clone(),
     )
     .await?;
 
@@ -724,6 +725,7 @@ async fn startup_health_check(config: &Config) -> anyhow::Result<bool> {
 async fn setup_scheduler(
     backup: BackupService,
     indexer: Option<VectorIndexer>,
+    compact_vector: Option<Arc<RwLock<CompactVectorStore>>>,
 ) -> anyhow::Result<JobScheduler> {
     let scheduler = JobScheduler::new().await?;
     let config = memex::config::Config::load();
@@ -840,18 +842,36 @@ async fn setup_scheduler(
     tracing::info!("📅 Scheduled task registered: archive check (daily 03:00)");
 
     // Daily vector store compaction at 03:30 (merge files, cleanup old versions)
-    if let Some(indexer) = indexer_for_compact {
+    if indexer_for_compact.is_some() || compact_vector.is_some() {
+        let indexer_clone = indexer_for_compact;
+        let compact_vector_clone = compact_vector;
         scheduler
             .add(Job::new_async("0 30 3 * * *", move |_uuid, _lock| {
-                let indexer = indexer.clone();
+                let indexer = indexer_clone.clone();
+                let compact_vector = compact_vector_clone.clone();
                 Box::pin(async move {
                     tracing::info!("⏰ Scheduled task: starting vector store compaction...");
-                    match indexer.compact().await {
-                        Ok(()) => {
-                            tracing::info!("✅ Vector store compaction done");
+                    // L0: embeddings table
+                    if let Some(indexer) = indexer {
+                        match indexer.compact().await {
+                            Ok(()) => {
+                                tracing::info!("✅ Embeddings compaction done");
+                            }
+                            Err(e) => {
+                                tracing::error!("❌ Embeddings compaction failed: {}", e);
+                            }
                         }
-                        Err(e) => {
-                            tracing::error!("❌ Vector store compaction failed: {}", e);
+                    }
+                    // Compact: compact_vectors table
+                    if let Some(cv) = compact_vector {
+                        let store = cv.read().await;
+                        match store.compact().await {
+                            Ok(()) => {
+                                tracing::info!("✅ Compact vectors compaction done");
+                            }
+                            Err(e) => {
+                                tracing::error!("❌ Compact vectors compaction failed: {}", e);
+                            }
                         }
                     }
                 })
