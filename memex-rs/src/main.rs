@@ -617,15 +617,32 @@ async fn monitor_parent_process(parent_pid: i32) {
     loop {
         check_interval.tick().await;
 
-        // 检查父进程是否存活（发送信号 0 不会杀死进程，只检查是否存在）
-        let alive = unsafe { libc::kill(parent_pid, 0) == 0 };
+        let alive = is_parent_alive(parent_pid);
 
         if !alive {
             tracing::info!("👋 Parent process (PID: {}) exited, shutting down...", parent_pid);
-            // 触发优雅关闭
             std::process::exit(0);
         }
     }
+}
+
+#[cfg(unix)]
+fn is_parent_alive(pid: i32) -> bool {
+    // 发送信号 0 不会杀死进程，只检查是否存在
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+#[cfg(windows)]
+fn is_parent_alive(pid: i32) -> bool {
+    // tasklist 查询指定 PID 的进程是否存在
+    std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+        .output()
+        .map(|o| {
+            let out = String::from_utf8_lossy(&o.stdout);
+            !out.contains("No tasks") && out.contains(&pid.to_string())
+        })
+        .unwrap_or(false)
 }
 
 /// 优雅关闭信号处理
