@@ -153,6 +153,16 @@ impl CompactDB {
         let conn = Connection::open(db_path)?;
         let tokenizer = fts_tokenizer.unwrap_or("trigram");
 
+        // 与 SessionDB 保持一致的 PRAGMA 设置，防止多进程写入导致数据库损坏
+        // - WAL: 必须与其他连接使用相同的 journal mode，混用会导致损坏
+        // - synchronous=NORMAL: WAL 模式下平衡性能和安全
+        // - busy_timeout: 多进程写入时等待锁而不是立即失败
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             PRAGMA busy_timeout=5000;",
+        )?;
+
         // 同步执行 migration
         Self::migrate_sync(&conn, tokenizer)?;
 
