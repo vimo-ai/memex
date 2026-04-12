@@ -290,6 +290,7 @@ impl VectorIndexer {
 
         let mut all_chunks: Vec<ChunkInfo> = Vec::new();
         let mut assistant_ids: Vec<i64> = Vec::new();
+        let mut empty_ids: Vec<i64> = Vec::new();
 
         for message in &messages {
             // 只处理 assistant 类型的消息
@@ -298,14 +299,26 @@ impl VectorIndexer {
                 continue;
             }
 
-            assistant_ids.push(message.id);
             let chunks = self.chunker.chunk(&message.content_text);
+            if chunks.is_empty() {
+                empty_ids.push(message.id);
+                result.skipped += 1;
+                continue;
+            }
+            assistant_ids.push(message.id);
             for chunk in chunks {
                 all_chunks.push(ChunkInfo {
                     message_id: message.id,
                     chunk_index: chunk.index as i64,
                     content: chunk.content,
                 });
+            }
+        }
+
+        // 空内容消息直接标记 indexed
+        if !empty_ids.is_empty() {
+            if let Err(e) = self.db.mark_messages_indexed(&empty_ids).await {
+                tracing::error!("Failed to mark empty messages as indexed: {}", e);
             }
         }
 
@@ -407,9 +420,16 @@ impl VectorIndexer {
         let mut all_chunks: Vec<ChunkInfo> = Vec::new();
         let mut message_chunk_counts: std::collections::HashMap<i64, usize> =
             std::collections::HashMap::new();
+        let mut empty_ids: Vec<i64> = Vec::new();
 
         for message in &messages {
             let chunks = self.chunker.chunk(&message.content_text);
+            if chunks.is_empty() {
+                // 空内容消息直接标记为已索引，不浪费 embedding
+                empty_ids.push(message.id);
+                result.skipped += 1;
+                continue;
+            }
             message_chunk_counts.insert(message.id, chunks.len());
             for chunk in chunks {
                 all_chunks.push(ChunkInfo {
@@ -417,6 +437,13 @@ impl VectorIndexer {
                     chunk_index: chunk.index as i64,
                     content: chunk.content,
                 });
+            }
+        }
+
+        // 空内容消息直接标记 indexed，避免反复进入待索引队列
+        if !empty_ids.is_empty() {
+            if let Err(e) = self.db.mark_messages_indexed(&empty_ids).await {
+                tracing::error!("Failed to mark empty messages as indexed: {}", e);
             }
         }
 

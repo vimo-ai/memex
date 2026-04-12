@@ -27,13 +27,9 @@ impl Default for Chunker {
 impl Chunker {
     /// 对文本进行分片
     pub fn chunk(&self, content: &str) -> Vec<Chunk> {
-        // 空内容处理
+        // 空内容直接返回空 vec，由上层跳过索引
         if content.trim().is_empty() {
-            return vec![Chunk {
-                index: 0,
-                content: "empty".to_string(),
-                chunk_type: ChunkType::Text,
-            }];
+            return vec![];
         }
 
         // 短文本不分片
