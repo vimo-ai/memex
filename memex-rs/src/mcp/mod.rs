@@ -203,6 +203,7 @@ fn get_tools() -> Vec<Value> {
                     "around": { "type": "number", "description": "Get context around this position (from search_history 'at'). Content may be truncated" },
                     "context": { "type": "number", "description": "Messages before/after 'around', default 5, max 20" },
                     "limit": { "type": "number", "description": "Messages to return, default 10 (ignored if at/around is set)" },
+                    "offset": { "type": "number", "description": "Skip N messages before applying limit. For asc: skip from start; for desc: skip from end. Default 0 (ignored if at/around is set)" },
                     "order": { "type": "string", "enum": ["asc", "desc"], "description": "asc (from start) / desc (from end), default asc (ignored if at/around is set)" }
                 },
                 "required": ["sessionId"]
@@ -705,6 +706,7 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
 
     // 传统分页参数（at/around 模式下忽略）
     let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(10) as usize;
+    let offset = args.get("offset").and_then(|o| o.as_u64()).unwrap_or(0) as usize;
     let order = args.get("order").and_then(|o| o.as_str()).unwrap_or("asc");
 
     // 解析 session ID（支持前缀匹配）
@@ -835,11 +837,15 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
 
     let desc = order == "desc";
     let (from_idx, to_idx) = if desc {
-        let from = filtered_total.saturating_sub(limit);
-        (from, filtered_total)
+        // desc: 从尾部倒数，offset 表示从尾部跳过的条数
+        let end = filtered_total.saturating_sub(offset);
+        let from = end.saturating_sub(limit);
+        (from, end)
     } else {
-        let to = limit.min(filtered_total);
-        (0, to)
+        // asc: offset 表示从头部跳过的条数
+        let from = offset.min(filtered_total);
+        let to = (from + limit).min(filtered_total);
+        (from, to)
     };
 
     let effective_limit = to_idx - from_idx;
@@ -869,7 +875,8 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
     let mut result = json!({
         "total": filtered_total,
         "messages": messages,
-        "range": { "from": first_msg_id, "to": last_msg_id }
+        "range": { "from": first_msg_id, "to": last_msg_id },
+        "pagination": { "offset": from_idx, "limit": effective_limit, "has_more": to_idx < filtered_total }
     });
     if !session_meta.as_object().unwrap().is_empty() {
         result["session"] = session_meta;
