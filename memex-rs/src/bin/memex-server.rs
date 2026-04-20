@@ -1,8 +1,10 @@
 use std::env;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::middleware;
+use serde::Deserialize;
 use tokio::signal;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -12,11 +14,23 @@ use memex::server::{create_sync_router, IngestState};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[derive(Debug, Deserialize, Clone)]
+struct UserConfig {
+    name: String,
+    api_key: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct FileConfig {
+    users: Vec<UserConfig>,
+}
+
 #[derive(Debug)]
 struct ServerConfig {
     port: u16,
     db_path: String,
-    api_keys: Vec<String>,
+    users: Vec<(String, String)>, // (name, api_key)
     tls_cert: Option<String>,
     tls_key: Option<String>,
 }
@@ -25,7 +39,7 @@ impl ServerConfig {
     fn load() -> Self {
         let home = dirs::home_dir().unwrap_or_default();
         let vimo_root = env::var("VIMO_HOME")
-            .map(std::path::PathBuf::from)
+            .map(PathBuf::from)
             .unwrap_or_else(|_| home.join(".vimo"));
 
         let db_path = env::var("MEMEX_DB_PATH").unwrap_or_else(|_| {
@@ -40,25 +54,50 @@ impl ServerConfig {
             .and_then(|p| p.parse().ok())
             .unwrap_or(10013);
 
-        let api_keys: Vec<String> = env::var("MEMEX_API_KEYS")
-            .unwrap_or_default()
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
         let tls_cert = env::var("TLS_CERT").ok();
         let tls_key = env::var("TLS_KEY").ok();
+
+        let file_config = Self::load_config_file(&vimo_root);
+
+        let users = if !file_config.users.is_empty() {
+            file_config
+                .users
+                .into_iter()
+                .map(|u| (u.name, u.api_key))
+                .collect()
+        } else if let Ok(keys) = env::var("MEMEX_API_KEYS") {
+            keys.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .enumerate()
+                .map(|(i, key)| (format!("user_{i}"), key))
+                .collect()
+        } else {
+            vec![]
+        };
 
         Self {
             port,
             db_path,
-            api_keys,
+            users,
             tls_cert,
             tls_key,
         }
     }
 
+    fn load_config_file(vimo_root: &PathBuf) -> FileConfig {
+        let path = vimo_root.join("memex/config.json");
+        if !path.exists() {
+            return FileConfig::default();
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(content) => serde_json::from_str(&content).unwrap_or_else(|e| {
+                tracing::warn!("config.json 解析失败: {e}");
+                FileConfig::default()
+            }),
+            Err(_) => FileConfig::default(),
+        }
+    }
 }
 
 #[tokio::main]
@@ -76,10 +115,14 @@ async fn main() -> anyhow::Result<()> {
                 println!("Receives push data from clients, provides search API.");
                 println!("No local collection, no LLM, no embedding.");
                 println!();
+                println!("Config file: $VIMO_HOME/memex/config.json");
+                println!("  {{\"users\": [{{\"name\": \"alice\", \"api_key\": \"mk_xxx\"}}]}}");
+                println!();
                 println!("Environment:");
                 println!("  PORT              Server port (default: 10013)");
-                println!("  MEMEX_DB_PATH     Database path (default: ~/.vimo/db/server.db)");
-                println!("  MEMEX_API_KEYS    Comma-separated API keys for auth");
+                println!("  VIMO_HOME         Data root (default: ~/.vimo)");
+                println!("  MEMEX_DB_PATH     Database path (default: $VIMO_HOME/db/server.db)");
+                println!("  MEMEX_API_KEYS    Fallback: comma-separated keys (if no config file)");
                 println!("  TLS_CERT          Path to TLS certificate (PEM)");
                 println!("  TLS_KEY           Path to TLS private key (PEM)");
                 println!("  RUST_LOG          Log level (default: memex=info)");
@@ -132,12 +175,13 @@ async fn main() -> anyhow::Result<()> {
         }),
     );
 
-    let app = if config.api_keys.is_empty() {
-        tracing::warn!("MEMEX_API_KEYS not set, running without auth");
+    let app = if config.users.is_empty() {
+        tracing::warn!("No users configured, running without auth");
         health_route.merge(sync_router)
     } else {
-        tracing::info!("Auth enabled ({} keys)", config.api_keys.len());
-        let auth_state = Arc::new(AuthState::new(&config.api_keys));
+        let user_names: Vec<&str> = config.users.iter().map(|(n, _)| n.as_str()).collect();
+        tracing::info!("Auth enabled: {:?}", user_names);
+        let auth_state = Arc::new(AuthState::from_users(&config.users));
         let authed = sync_router
             .layer(middleware::from_fn(auth_layer))
             .layer(axum::Extension(auth_state));
@@ -157,15 +201,14 @@ async fn main() -> anyhow::Result<()> {
         (Some(cert_path), Some(key_path)) => {
             tracing::info!("TLS enabled: cert={cert_path}");
             tracing::info!("Listening on https://0.0.0.0:{}", config.port);
+            tracing::info!("Endpoints:");
+            tracing::info!("  POST /api/sync/push    - Receive client push");
+            tracing::info!("  GET  /api/sync/health  - Health check");
 
             let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
                 cert_path, key_path,
             )
             .await?;
-
-            tracing::info!("Endpoints:");
-            tracing::info!("  POST /api/sync/push    - Receive client push");
-            tracing::info!("  GET  /api/sync/health  - Health check");
 
             axum_server::bind_rustls(addr, tls_config)
                 .serve(app.into_make_service())

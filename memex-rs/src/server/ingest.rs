@@ -1,23 +1,26 @@
 //! Ingest - 接收客户端 push 数据，写入 server 端 DB
 //!
-//! Server 端维护独立的 ai-cli-session.db，接收所有客户端推送的数据。
-//! 使用自然键去重（uuid for messages, session_id for sessions, path for projects）。
+//! 复用 ai-cli-session-db 的标准 schema，server 只额外加 pushed_by 字段。
+//! 去重依赖自然键：uuid (messages), session_id (sessions), path (projects)。
 
 use axum::{
     extract::State,
     http::StatusCode,
     response::IntoResponse,
     routing::post,
-    Json, Router,
+    Extension, Json, Router,
 };
 use rusqlite::{params, Connection};
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
+use ai_cli_session_db::schema;
 use ai_cli_session_db::sync::{
     SyncBatch, SyncChainNode, SyncContinuationChain, SyncMessage, SyncProject,
     SyncPushRequest, SyncPushResponse, SyncSession, SyncSessionRelation, SyncTalk,
 };
+
+use crate::auth::AuthenticatedUser;
 
 use parking_lot::Mutex;
 
@@ -35,9 +38,13 @@ impl IngestState {
              PRAGMA busy_timeout=10000;",
         )?;
 
-        Self::ensure_schema(&conn)?;
+        conn.execute_batch(schema::TABLES_SQL)?;
+        conn.execute_batch(schema::INDEXES_SQL)?;
+        conn.execute_batch(schema::FTS_SCHEMA_SQL)?;
 
-        info!("server ingest DB 已初始化: {db_path}");
+        Self::server_migrations(&conn)?;
+
+        info!("server DB 已初始化: {db_path}");
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -49,143 +56,27 @@ impl IngestState {
         Ok(())
     }
 
-    fn ensure_schema(conn: &Connection) -> anyhow::Result<()> {
-        conn.execute_batch(
-            r#"
-            CREATE TABLE IF NOT EXISTS projects (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                path TEXT NOT NULL,
-                name TEXT NOT NULL,
-                source TEXT NOT NULL DEFAULT 'claude',
-                repo_url TEXT,
-                device_id TEXT,
-                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000),
-                updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000),
-                UNIQUE(path, device_id)
-            );
+    fn server_migrations(conn: &Connection) -> anyhow::Result<()> {
+        let has_pushed_by: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name='pushed_by'")?
+            .exists([])?;
 
-            CREATE TABLE IF NOT EXISTS sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                project_id INTEGER NOT NULL REFERENCES projects(id),
-                device_id TEXT,
-                cwd TEXT,
-                model TEXT,
-                channel TEXT,
-                message_count INTEGER NOT NULL DEFAULT 0,
-                last_message_at INTEGER,
-                session_type TEXT,
-                source TEXT,
-                meta TEXT,
-                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000),
-                updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000),
-                UNIQUE(session_id, device_id)
-            );
+        if !has_pushed_by {
+            conn.execute_batch("ALTER TABLE sessions ADD COLUMN pushed_by TEXT;")?;
+        }
 
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                uuid TEXT NOT NULL UNIQUE,
-                type TEXT NOT NULL,
-                content_text TEXT NOT NULL,
-                content_full TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                sequence INTEGER NOT NULL,
-                source TEXT,
-                channel TEXT,
-                model TEXT,
-                tool_call_id TEXT,
-                tool_name TEXT,
-                tool_args TEXT,
-                raw TEXT,
-                approval_status TEXT,
-                approval_resolved_at INTEGER,
-                device_id TEXT
-            );
+        let has_repo_url: bool = conn
+            .prepare("SELECT 1 FROM pragma_table_info('projects') WHERE name='repo_url'")?
+            .exists([])?;
 
-            CREATE TABLE IF NOT EXISTS talks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                talk_id TEXT NOT NULL,
-                summary_l2 TEXT NOT NULL,
-                summary_l3 TEXT,
-                device_id TEXT,
-                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000),
-                updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000),
-                UNIQUE(session_id, talk_id, device_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS session_relations (
-                parent_session_id TEXT NOT NULL,
-                child_session_id TEXT NOT NULL,
-                relation_type TEXT NOT NULL,
-                source TEXT NOT NULL,
-                device_id TEXT,
-                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000),
-                PRIMARY KEY (parent_session_id, child_session_id, relation_type)
-            );
-
-            CREATE TABLE IF NOT EXISTS continuation_chains (
-                chain_id TEXT PRIMARY KEY,
-                root_session_id TEXT NOT NULL,
-                device_id TEXT,
-                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000)
-            );
-
-            CREATE TABLE IF NOT EXISTS continuation_chain_nodes (
-                session_id TEXT PRIMARY KEY,
-                chain_id TEXT NOT NULL,
-                prev_session_id TEXT,
-                depth INTEGER NOT NULL DEFAULT 0,
-                device_id TEXT,
-                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000)
-            );
-
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                api_key_hash TEXT NOT NULL,
-                display_name TEXT,
-                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000),
-                updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000)
-            );
-
-            CREATE TABLE IF NOT EXISTS project_access (
-                user_id INTEGER NOT NULL REFERENCES users(id),
-                project_id INTEGER NOT NULL REFERENCES projects(id),
-                role TEXT NOT NULL DEFAULT 'member',
-                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000),
-                PRIMARY KEY (user_id, project_id)
-            );
-
-            -- indexes
-            CREATE INDEX IF NOT EXISTS idx_srv_messages_uuid ON messages(uuid);
-            CREATE INDEX IF NOT EXISTS idx_srv_messages_session ON messages(session_id);
-            CREATE INDEX IF NOT EXISTS idx_srv_sessions_session_id ON sessions(session_id);
-            CREATE INDEX IF NOT EXISTS idx_srv_projects_repo_url ON projects(repo_url);
-            "#,
-        )?;
-
-        // FTS for server-side search
-        conn.execute_batch(
-            r#"
-            CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-                content_full,
-                content='messages',
-                content_rowid='id',
-                tokenize='unicode61'
-            );
-
-            CREATE TRIGGER IF NOT EXISTS srv_messages_ai AFTER INSERT ON messages BEGIN
-                INSERT INTO messages_fts(rowid, content_full) VALUES (new.id, new.content_full);
-            END;
-            "#,
-        )?;
+        if !has_repo_url {
+            conn.execute_batch("ALTER TABLE projects ADD COLUMN repo_url TEXT;")?;
+        }
 
         Ok(())
     }
 
-    fn ingest_batch(&self, device_id: &str, batch: &SyncBatch) -> IngestResult {
+    fn ingest_batch(&self, pushed_by: &str, batch: &SyncBatch) -> IngestResult {
         let conn = self.conn.lock();
         let mut result = IngestResult::default();
 
@@ -198,19 +89,19 @@ impl IngestState {
         };
 
         for project in &batch.projects {
-            if let Err(e) = Self::upsert_project(&tx, device_id, project) {
+            if let Err(e) = Self::upsert_project(&tx, project) {
                 debug!("upsert project 失败: {e}");
             }
         }
 
         for session in &batch.sessions {
-            if let Err(e) = Self::upsert_session(&tx, device_id, session) {
+            if let Err(e) = Self::upsert_session(&tx, pushed_by, session) {
                 debug!("upsert session 失败: {e}");
             }
         }
 
         for msg in &batch.messages {
-            match Self::insert_message(&tx, device_id, msg) {
+            match Self::insert_message(&tx, msg) {
                 Ok(true) => result.accepted += 1,
                 Ok(false) => result.skipped += 1,
                 Err(e) => {
@@ -221,19 +112,19 @@ impl IngestState {
         }
 
         for talk in &batch.talks {
-            let _ = Self::upsert_talk(&tx, device_id, talk);
+            let _ = Self::upsert_talk(&tx, talk);
         }
 
         for rel in &batch.session_relations {
-            let _ = Self::insert_relation(&tx, device_id, rel);
+            let _ = Self::insert_relation(&tx, rel);
         }
 
         for chain in &batch.continuation_chains {
-            let _ = Self::insert_chain(&tx, device_id, chain);
+            let _ = Self::insert_chain(&tx, chain);
         }
 
         for node in &batch.chain_nodes {
-            let _ = Self::insert_chain_node(&tx, device_id, node);
+            let _ = Self::insert_chain_node(&tx, node);
         }
 
         if let Err(e) = tx.commit() {
@@ -244,24 +135,24 @@ impl IngestState {
         result
     }
 
-    fn upsert_project(conn: &Connection, device_id: &str, p: &SyncProject) -> rusqlite::Result<()> {
+    fn upsert_project(conn: &Connection, p: &SyncProject) -> rusqlite::Result<()> {
         conn.execute(
-            r#"INSERT INTO projects (path, name, source, repo_url, device_id)
-               VALUES (?1, ?2, ?3, ?4, ?5)
-               ON CONFLICT(path, device_id) DO UPDATE SET
+            r#"INSERT INTO projects (path, name, source, repo_url)
+               VALUES (?1, ?2, ?3, ?4)
+               ON CONFLICT(path) DO UPDATE SET
                    name = excluded.name,
                    repo_url = COALESCE(excluded.repo_url, projects.repo_url),
                    updated_at = (strftime('%s','now')*1000)"#,
-            params![p.path, p.name, p.source, p.repo_url, device_id],
+            params![p.path, p.name, p.source, p.repo_url],
         )?;
         Ok(())
     }
 
-    fn upsert_session(conn: &Connection, device_id: &str, s: &SyncSession) -> rusqlite::Result<()> {
+    fn upsert_session(conn: &Connection, pushed_by: &str, s: &SyncSession) -> rusqlite::Result<()> {
         let project_id: Option<i64> = conn
             .query_row(
-                "SELECT id FROM projects WHERE path = ?1 AND device_id = ?2",
-                params![s.project_path, device_id],
+                "SELECT id FROM projects WHERE path = ?1",
+                params![s.project_path],
                 |row| row.get(0),
             )
             .ok();
@@ -271,80 +162,81 @@ impl IngestState {
         };
 
         conn.execute(
-            r#"INSERT INTO sessions (session_id, project_id, device_id, cwd, model, channel,
-                   message_count, last_message_at, session_type, source, meta, created_at, updated_at)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-               ON CONFLICT(session_id, device_id) DO UPDATE SET
+            r#"INSERT INTO sessions (session_id, project_id, cwd, model, channel,
+                   message_count, last_message_at, meta, pushed_by, created_at, updated_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+               ON CONFLICT(session_id) DO UPDATE SET
                    message_count = excluded.message_count,
                    last_message_at = COALESCE(excluded.last_message_at, sessions.last_message_at),
+                   pushed_by = excluded.pushed_by,
                    updated_at = excluded.updated_at"#,
             params![
-                s.session_id, project_id, device_id,
+                s.session_id, project_id,
                 s.cwd, s.model, s.channel,
                 s.message_count, s.last_message_at,
-                s.session_type, s.source, s.meta,
+                s.meta, pushed_by,
                 s.created_at, s.updated_at
             ],
         )?;
         Ok(())
     }
 
-    fn insert_message(conn: &Connection, device_id: &str, m: &SyncMessage) -> rusqlite::Result<bool> {
+    fn insert_message(conn: &Connection, m: &SyncMessage) -> rusqlite::Result<bool> {
         let result = conn.execute(
             r#"INSERT OR IGNORE INTO messages
                (session_id, uuid, type, content_text, content_full, timestamp, sequence,
                 source, channel, model, tool_call_id, tool_name, tool_args, raw,
-                approval_status, approval_resolved_at, device_id)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)"#,
+                approval_status, approval_resolved_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"#,
             params![
                 m.session_id, m.uuid, m.msg_type,
                 m.content_text, m.content_full, m.timestamp, m.sequence,
                 m.source, m.channel, m.model,
                 m.tool_call_id, m.tool_name, m.tool_args, m.raw,
-                m.approval_status, m.approval_resolved_at, device_id
+                m.approval_status, m.approval_resolved_at
             ],
         )?;
         Ok(result > 0)
     }
 
-    fn upsert_talk(conn: &Connection, device_id: &str, t: &SyncTalk) -> rusqlite::Result<()> {
+    fn upsert_talk(conn: &Connection, t: &SyncTalk) -> rusqlite::Result<()> {
         conn.execute(
-            r#"INSERT INTO talks (session_id, talk_id, summary_l2, summary_l3, device_id)
-               VALUES (?1, ?2, ?3, ?4, ?5)
-               ON CONFLICT(session_id, talk_id, device_id) DO UPDATE SET
+            r#"INSERT INTO talks (session_id, talk_id, summary_l2, summary_l3)
+               VALUES (?1, ?2, ?3, ?4)
+               ON CONFLICT(session_id, talk_id) DO UPDATE SET
                    summary_l2 = excluded.summary_l2,
                    summary_l3 = COALESCE(excluded.summary_l3, talks.summary_l3),
                    updated_at = (strftime('%s','now')*1000)"#,
-            params![t.session_id, t.talk_id, t.summary_l2, t.summary_l3, device_id],
+            params![t.session_id, t.talk_id, t.summary_l2, t.summary_l3],
         )?;
         Ok(())
     }
 
-    fn insert_relation(conn: &Connection, device_id: &str, r: &SyncSessionRelation) -> rusqlite::Result<()> {
+    fn insert_relation(conn: &Connection, r: &SyncSessionRelation) -> rusqlite::Result<()> {
         conn.execute(
             r#"INSERT OR IGNORE INTO session_relations
-               (parent_session_id, child_session_id, relation_type, source, device_id)
-               VALUES (?1, ?2, ?3, ?4, ?5)"#,
-            params![r.parent_session_id, r.child_session_id, r.relation_type, r.source, device_id],
+               (parent_session_id, child_session_id, relation_type, source)
+               VALUES (?1, ?2, ?3, ?4)"#,
+            params![r.parent_session_id, r.child_session_id, r.relation_type, r.source],
         )?;
         Ok(())
     }
 
-    fn insert_chain(conn: &Connection, device_id: &str, c: &SyncContinuationChain) -> rusqlite::Result<()> {
+    fn insert_chain(conn: &Connection, c: &SyncContinuationChain) -> rusqlite::Result<()> {
         conn.execute(
-            r#"INSERT OR IGNORE INTO continuation_chains (chain_id, root_session_id, device_id)
-               VALUES (?1, ?2, ?3)"#,
-            params![c.chain_id, c.root_session_id, device_id],
+            r#"INSERT OR IGNORE INTO continuation_chains (chain_id, root_session_id)
+               VALUES (?1, ?2)"#,
+            params![c.chain_id, c.root_session_id],
         )?;
         Ok(())
     }
 
-    fn insert_chain_node(conn: &Connection, device_id: &str, n: &SyncChainNode) -> rusqlite::Result<()> {
+    fn insert_chain_node(conn: &Connection, n: &SyncChainNode) -> rusqlite::Result<()> {
         conn.execute(
             r#"INSERT OR IGNORE INTO continuation_chain_nodes
-               (session_id, chain_id, prev_session_id, depth, device_id)
-               VALUES (?1, ?2, ?3, ?4, ?5)"#,
-            params![n.session_id, n.chain_id, n.prev_session_id, n.depth, device_id],
+               (session_id, chain_id, prev_session_id, depth)
+               VALUES (?1, ?2, ?3, ?4)"#,
+            params![n.session_id, n.chain_id, n.prev_session_id, n.depth],
         )?;
         Ok(())
     }
@@ -360,16 +252,13 @@ struct IngestResult {
 
 async fn handle_push(
     State(state): State<Arc<IngestState>>,
+    Extension(user): Extension<AuthenticatedUser>,
     Json(request): Json<SyncPushRequest>,
 ) -> impl IntoResponse {
     let msg_count = request.batch.messages.len();
-    info!(
-        "收到 push: device={}, messages={}",
-        &request.device_id[..8.min(request.device_id.len())],
-        msg_count
-    );
+    info!("收到 push: user={}, messages={}", user.0, msg_count);
 
-    let result = state.ingest_batch(&request.device_id, &request.batch);
+    let result = state.ingest_batch(&user.0, &request.batch);
 
     info!("ingest 完成: accepted={}, skipped={}", result.accepted, result.skipped);
 
@@ -382,10 +271,6 @@ async fn handle_push(
     (StatusCode::OK, Json(response))
 }
 
-async fn health() -> impl IntoResponse {
-    (StatusCode::OK, Json(serde_json::json!({"status": "ok", "mode": "server"})))
-}
-
 pub fn create_sync_router(state: Arc<IngestState>) -> Router {
     Router::new()
         .route("/api/sync/push", post(handle_push))
@@ -395,7 +280,6 @@ pub fn create_sync_router(state: Arc<IngestState>) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ai_cli_session_db::sync::SyncCursor;
     use tempfile::TempDir;
 
     fn setup_server() -> (TempDir, Arc<IngestState>) {
@@ -471,7 +355,7 @@ mod tests {
     fn test_ingest_batch() {
         let (_dir, state) = setup_server();
         let batch = make_batch();
-        let result = state.ingest_batch("device-alice", &batch);
+        let result = state.ingest_batch("alice", &batch);
 
         assert_eq!(result.accepted, 2);
         assert_eq!(result.skipped, 0);
@@ -482,47 +366,49 @@ mod tests {
         let (_dir, state) = setup_server();
         let batch = make_batch();
 
-        let r1 = state.ingest_batch("device-alice", &batch);
+        let r1 = state.ingest_batch("alice", &batch);
         assert_eq!(r1.accepted, 2);
 
-        let r2 = state.ingest_batch("device-alice", &batch);
-        assert_eq!(r2.accepted, 0, "重复推送应全部跳过");
+        let r2 = state.ingest_batch("alice", &batch);
+        assert_eq!(r2.accepted, 0);
         assert_eq!(r2.skipped, 2);
     }
 
     #[test]
-    fn test_ingest_multi_device() {
+    fn test_ingest_multi_user() {
         let (_dir, state) = setup_server();
         let batch = make_batch();
-
-        state.ingest_batch("device-alice", &batch);
+        state.ingest_batch("alice", &batch);
 
         let mut batch2 = make_batch();
         batch2.messages[0].uuid = "uuid-3".to_string();
         batch2.messages[1].uuid = "uuid-4".to_string();
+        batch2.sessions[0].session_id = "sess-2".to_string();
+        batch2.messages[0].session_id = "sess-2".to_string();
+        batch2.messages[1].session_id = "sess-2".to_string();
 
-        let r2 = state.ingest_batch("device-bob", &batch2);
-        assert_eq!(r2.accepted, 2, "不同设备的不同 uuid 应该都写入");
+        let r2 = state.ingest_batch("bob", &batch2);
+        assert_eq!(r2.accepted, 2);
     }
 
     #[test]
-    fn test_ingest_talks() {
+    fn test_pushed_by() {
         let (_dir, state) = setup_server();
         let batch = make_batch();
-        state.ingest_batch("device-alice", &batch);
+        state.ingest_batch("alice", &batch);
 
         let conn = state.conn.lock();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM talks", [], |row| row.get(0))
+        let pushed_by: String = conn
+            .query_row("SELECT pushed_by FROM sessions LIMIT 1", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(pushed_by, "alice");
     }
 
     #[test]
     fn test_fts_indexed() {
         let (_dir, state) = setup_server();
         let batch = make_batch();
-        state.ingest_batch("device-alice", &batch);
+        state.ingest_batch("alice", &batch);
 
         let conn = state.conn.lock();
         let count: i64 = conn
@@ -532,14 +418,14 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 1, "FTS 应自动索引插入的消息");
+        assert_eq!(count, 1);
     }
 
     #[test]
     fn test_repo_url_preserved() {
         let (_dir, state) = setup_server();
         let batch = make_batch();
-        state.ingest_batch("device-alice", &batch);
+        state.ingest_batch("alice", &batch);
 
         let conn = state.conn.lock();
         let url: String = conn

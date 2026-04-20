@@ -7,24 +7,29 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::sync::Arc;
+
+#[derive(Clone, Debug)]
+pub struct AuthenticatedUser(pub String);
 
 #[derive(Clone)]
 pub struct AuthState {
-    api_key_hashes: Vec<String>,
+    keys: HashMap<String, String>, // key_hash → username
 }
 
 impl AuthState {
-    pub fn new(api_keys: &[String]) -> Self {
-        let hashes = api_keys.iter().map(|k| hash_key(k)).collect();
-        Self {
-            api_key_hashes: hashes,
-        }
+    pub fn from_users(users: &[(String, String)]) -> Self {
+        let keys = users
+            .iter()
+            .map(|(name, key)| (hash_key(key), name.clone()))
+            .collect();
+        Self { keys }
     }
 
-    fn verify(&self, key: &str) -> bool {
+    pub fn verify(&self, key: &str) -> Option<&str> {
         let h = hash_key(key);
-        self.api_key_hashes.iter().any(|stored| stored == &h)
+        self.keys.get(&h).map(|s| s.as_str())
     }
 }
 
@@ -35,7 +40,7 @@ fn hash_key(key: &str) -> String {
 }
 
 pub async fn auth_layer(
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     let auth_state = request
@@ -58,11 +63,13 @@ pub async fn auth_layer(
 
     let key = header.strip_prefix("Bearer ").unwrap_or(header);
 
-    if !state.verify(key) {
-        return (StatusCode::UNAUTHORIZED, "Invalid API key").into_response();
+    match state.verify(key) {
+        Some(username) => {
+            request.extensions_mut().insert(AuthenticatedUser(username.to_string()));
+            next.run(request).await
+        }
+        None => (StatusCode::UNAUTHORIZED, "Invalid API key").into_response(),
     }
-
-    next.run(request).await
 }
 
 #[cfg(test)]
@@ -71,19 +78,21 @@ mod tests {
 
     #[test]
     fn test_verify_key() {
-        let state = AuthState::new(&["mk_test_key_123".to_string()]);
-        assert!(state.verify("mk_test_key_123"));
-        assert!(!state.verify("wrong_key"));
+        let state = AuthState::from_users(&[
+            ("alice".to_string(), "mk_test_key_123".to_string()),
+        ]);
+        assert_eq!(state.verify("mk_test_key_123"), Some("alice"));
+        assert_eq!(state.verify("wrong_key"), None);
     }
 
     #[test]
-    fn test_multiple_keys() {
-        let state = AuthState::new(&[
-            "key_alice".to_string(),
-            "key_bob".to_string(),
+    fn test_multiple_users() {
+        let state = AuthState::from_users(&[
+            ("alice".to_string(), "key_alice".to_string()),
+            ("bob".to_string(), "key_bob".to_string()),
         ]);
-        assert!(state.verify("key_alice"));
-        assert!(state.verify("key_bob"));
-        assert!(!state.verify("key_eve"));
+        assert_eq!(state.verify("key_alice"), Some("alice"));
+        assert_eq!(state.verify("key_bob"), Some("bob"));
+        assert_eq!(state.verify("key_eve"), None);
     }
 }
