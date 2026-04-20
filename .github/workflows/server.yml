@@ -113,8 +113,10 @@ jobs:
           name: memex-server-linux-arm64
           path: docker/build/arm64
 
-      - name: Fix permissions
+      - name: Prepare binaries
         run: |
+          mv docker/build/amd64/memex-server-linux-x64 docker/build/amd64/memex-server
+          mv docker/build/arm64/memex-server-linux-arm64 docker/build/arm64/memex-server
           chmod +x docker/build/amd64/memex-server
           chmod +x docker/build/arm64/memex-server
 
