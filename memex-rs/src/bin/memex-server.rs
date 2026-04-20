@@ -17,6 +17,8 @@ struct ServerConfig {
     port: u16,
     db_path: String,
     api_keys: Vec<String>,
+    tls_cert: Option<String>,
+    tls_key: Option<String>,
 }
 
 impl ServerConfig {
@@ -45,12 +47,18 @@ impl ServerConfig {
             .filter(|s| !s.is_empty())
             .collect();
 
+        let tls_cert = env::var("TLS_CERT").ok();
+        let tls_key = env::var("TLS_KEY").ok();
+
         Self {
             port,
             db_path,
             api_keys,
+            tls_cert,
+            tls_key,
         }
     }
+
 }
 
 #[tokio::main]
@@ -72,6 +80,8 @@ async fn main() -> anyhow::Result<()> {
                 println!("  PORT              Server port (default: 10013)");
                 println!("  MEMEX_DB_PATH     Database path (default: ~/.vimo/db/server.db)");
                 println!("  MEMEX_API_KEYS    Comma-separated API keys for auth");
+                println!("  TLS_CERT          Path to TLS certificate (PEM)");
+                println!("  TLS_KEY           Path to TLS private key (PEM)");
                 println!("  RUST_LOG          Log level (default: memex=info)");
                 return Ok(());
             }
@@ -96,6 +106,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .with(tracing_subscriber::fmt::layer().with_timer(timer))
         .init();
+
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls crypto provider");
 
     let config = ServerConfig::load();
 
@@ -130,15 +144,37 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
-    tracing::info!("Listening on http://0.0.0.0:{}", config.port);
-    tracing::info!("Endpoints:");
-    tracing::info!("  POST /api/sync/push    - Receive client push");
-    tracing::info!("  GET  /api/sync/health  - Health check");
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    match (&config.tls_cert, &config.tls_key) {
+        (Some(cert_path), Some(key_path)) => {
+            tracing::info!("TLS enabled: cert={cert_path}");
+            tracing::info!("Listening on https://0.0.0.0:{}", config.port);
+
+            let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
+                cert_path, key_path,
+            )
+            .await?;
+
+            tracing::info!("Endpoints:");
+            tracing::info!("  POST /api/sync/push    - Receive client push");
+            tracing::info!("  GET  /api/sync/health  - Health check");
+
+            axum_server::bind_rustls(addr, tls_config)
+                .serve(app.into_make_service())
+                .await?;
+        }
+        _ => {
+            tracing::info!("Listening on http://0.0.0.0:{}", config.port);
+            tracing::info!("Endpoints:");
+            tracing::info!("  POST /api/sync/push    - Receive client push");
+            tracing::info!("  GET  /api/sync/health  - Health check");
+
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal())
+                .await?;
+        }
+    }
 
     tracing::info!("Running WAL checkpoint...");
     if let Err(e) = ingest_for_shutdown.checkpoint() {

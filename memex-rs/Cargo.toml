@@ -21,12 +21,17 @@ required-features = ["server-mode"]
 [features]
 default = ["cli"]
 cli = ["notify", "notify-debouncer-mini", "axum", "tower-http", "tokio-cron-scheduler", "rust-embed", "mime_guess"]
-server-mode = ["axum", "tower-http"]
+server-mode = ["axum", "tower-http", "dep:axum-server", "dep:rustls", "dep:rustls-pemfile"]
 
 [dependencies]
 # HTTP 框架 (CLI only)
 axum = { version = "0.8", optional = true }
 tower-http = { version = "0.6", features = ["cors", "fs"], optional = true }
+
+# TLS (server-mode only)
+axum-server = { version = "0.7", features = ["tls-rustls"], optional = true }
+rustls = { version = "0.23", features = ["ring"], optional = true }
+rustls-pemfile = { version = "2", optional = true }
 
 # 异步运行时
 tokio = { version = "1", features = ["full", "sync"] }
