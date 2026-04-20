@@ -1,0 +1,29 @@
+ARG TARGETARCH=amd64
+
+FROM debian:trixie-slim
+
+ARG TARGETARCH
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -r -u 1000 -m memex \
+    && mkdir -p /data/db \
+    && chown -R memex:memex /data
+
+WORKDIR /app
+
+COPY --chown=memex:memex build/${TARGETARCH}/memex-server ./memex-server
+
+USER memex
+
+ENV RUST_LOG=memex=info \
+    PORT=10013 \
+    MEMEX_DB_PATH=/data/db/server.db
+
+EXPOSE 10013
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:10013/api/sync/health || exit 1
+
+ENTRYPOINT ["/app/memex-server"]

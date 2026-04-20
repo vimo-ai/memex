@@ -36,6 +36,12 @@ pub mod embedded;
 #[cfg(feature = "cli")]
 pub mod mcp;
 
+// Server 模式
+#[cfg(any(feature = "server-mode", feature = "cli"))]
+pub mod auth;
+#[cfg(any(feature = "server-mode", feature = "cli"))]
+pub mod server;
+
 // Re-export 常用类型
 pub use ai_cli_session_db::ParsedMessage;
 pub use config::Config;

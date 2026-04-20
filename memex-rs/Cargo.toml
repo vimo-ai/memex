@@ -13,9 +13,15 @@ name = "memex"
 path = "src/main.rs"
 required-features = ["cli"]
 
+[[bin]]
+name = "memex-server"
+path = "src/bin/memex-server.rs"
+required-features = ["server-mode"]
+
 [features]
 default = ["cli"]
 cli = ["notify", "notify-debouncer-mini", "axum", "tower-http", "tokio-cron-scheduler", "rust-embed", "mime_guess"]
+server-mode = ["axum", "tower-http"]
 
 [dependencies]
 # HTTP 框架 (CLI only)
@@ -56,7 +62,7 @@ mime_guess = { version = "2", optional = true }
 # 同时 re-export ai-cli-session-collector 类型，避免重复依赖
 # 使用 git 依赖，支持独立编译；在 ETerm 主仓库中通过 [patch] 覆盖成本地路径
 # [V2] memex-rs 只需要 reader + search，不再需要 client（事件订阅已移除）
-ai-cli-session-db = { git = "https://github.com/vimo-ai/ai-cli-session-db", features = ["reader", "search"] }
+ai-cli-session-db = { git = "https://github.com/vimo-ai/ai-cli-session-db", features = ["reader", "search", "sync"] }
 
 # 工具
 anyhow = "1"
@@ -74,6 +80,7 @@ futures = "0.3"
 async-trait = "0.1"
 regex = "1"
 libc = "0.2"
+parking_lot = "0.12"
 
 [dev-dependencies]
 tempfile = "3"
