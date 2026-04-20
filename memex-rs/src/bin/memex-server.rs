@@ -10,7 +10,9 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use memex::auth::{auth_layer, AuthState};
-use memex::server::{create_sync_router, IngestState};
+use memex::db_reader::DbReader;
+use memex::search::HybridSearchService;
+use memex::server::{create_search_router, create_sync_router, IngestState};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -166,7 +168,12 @@ async fn main() -> anyhow::Result<()> {
     let ingest = Arc::new(IngestState::new(&config.db_path)?);
     let ingest_for_shutdown = ingest.clone();
 
+    let db = Arc::new(DbReader::new(Some(config.db_path.clone().into()))?);
+    let search_service = Arc::new(HybridSearchService::new(db, None, None));
+    tracing::info!("Search service ready (FTS mode)");
+
     let sync_router = create_sync_router(ingest);
+    let search_router = create_search_router(search_service);
 
     let health_route = axum::Router::new().route(
         "/api/sync/health",
@@ -177,12 +184,13 @@ async fn main() -> anyhow::Result<()> {
 
     let app = if config.users.is_empty() {
         tracing::warn!("No users configured, running without auth");
-        health_route.merge(sync_router)
+        health_route.merge(sync_router).merge(search_router)
     } else {
         let user_names: Vec<&str> = config.users.iter().map(|(n, _)| n.as_str()).collect();
         tracing::info!("Auth enabled: {:?}", user_names);
         let auth_state = Arc::new(AuthState::from_users(&config.users));
         let authed = sync_router
+            .merge(search_router)
             .layer(middleware::from_fn(auth_layer))
             .layer(axum::Extension(auth_state));
         health_route.merge(authed)
@@ -204,6 +212,7 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Endpoints:");
             tracing::info!("  POST /api/sync/push    - Receive client push");
             tracing::info!("  GET  /api/sync/health  - Health check");
+            tracing::info!("  GET  /api/search       - Search (FTS/vector/hybrid)");
 
             let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
                 cert_path, key_path,
@@ -219,6 +228,7 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Endpoints:");
             tracing::info!("  POST /api/sync/push    - Receive client push");
             tracing::info!("  GET  /api/sync/health  - Health check");
+            tracing::info!("  GET  /api/search       - Search (FTS/vector/hybrid)");
 
             let listener = tokio::net::TcpListener::bind(addr).await?;
             axum::serve(listener, app)
