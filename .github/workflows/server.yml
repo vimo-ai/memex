@@ -101,24 +101,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download amd64 binary
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          name: memex-server-linux-x64
-          path: docker/build/amd64
+          path: artifacts
 
-      - name: Download arm64 binary
-        uses: actions/download-artifact@v4
-        with:
-          name: memex-server-linux-arm64
-          path: docker/build/arm64
-
-      - name: Prepare binaries
+      - name: Assemble Docker contexts
         run: |
-          mv docker/build/amd64/memex-server-linux-x64 docker/build/amd64/memex-server
-          mv docker/build/arm64/memex-server-linux-arm64 docker/build/arm64/memex-server
-          chmod +x docker/build/amd64/memex-server
-          chmod +x docker/build/arm64/memex-server
+          for arch in amd64:memex-server-linux-x64 arm64:memex-server-linux-arm64; do
+            ARCH="${arch%%:*}"
+            ARTIFACT="${arch##*:}"
+            DIR="contexts/${ARCH}"
+            mkdir -p "${DIR}"
+            cp "artifacts/${ARTIFACT}/${ARTIFACT}" "${DIR}/memex-server"
+            chmod +x "${DIR}/memex-server"
+            cp docker/Dockerfile.server "${DIR}/Dockerfile"
+          done
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -133,20 +131,16 @@ jobs:
       - name: Build and push amd64
         uses: docker/build-push-action@v6
         with:
-          context: docker
-          file: docker/Dockerfile.server
+          context: contexts/amd64
           platforms: linux/amd64
-          build-args: TARGETARCH=amd64
           push: true
           tags: ghcr.io/${{ github.repository }}-server:${{ github.ref_name }}-amd64
 
       - name: Build and push arm64
         uses: docker/build-push-action@v6
         with:
-          context: docker
-          file: docker/Dockerfile.server
+          context: contexts/arm64
           platforms: linux/arm64
-          build-args: TARGETARCH=arm64
           push: true
           tags: ghcr.io/${{ github.repository }}-server:${{ github.ref_name }}-arm64
 
