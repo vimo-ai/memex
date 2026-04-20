@@ -389,7 +389,6 @@ async fn health() -> impl IntoResponse {
 pub fn create_sync_router(state: Arc<IngestState>) -> Router {
     Router::new()
         .route("/api/sync/push", post(handle_push))
-        .route("/api/sync/health", axum::routing::get(health))
         .with_state(state)
 }
 

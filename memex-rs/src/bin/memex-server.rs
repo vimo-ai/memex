@@ -125,15 +125,23 @@ async fn main() -> anyhow::Result<()> {
 
     let sync_router = create_sync_router(ingest);
 
+    let health_route = axum::Router::new().route(
+        "/api/sync/health",
+        axum::routing::get(|| async {
+            axum::Json(serde_json::json!({"status": "ok", "mode": "server"}))
+        }),
+    );
+
     let app = if config.api_keys.is_empty() {
         tracing::warn!("MEMEX_API_KEYS not set, running without auth");
-        sync_router
+        health_route.merge(sync_router)
     } else {
         tracing::info!("Auth enabled ({} keys)", config.api_keys.len());
         let auth_state = Arc::new(AuthState::new(&config.api_keys));
-        sync_router
+        let authed = sync_router
             .layer(middleware::from_fn(auth_layer))
-            .layer(axum::Extension(auth_state))
+            .layer(axum::Extension(auth_state));
+        health_route.merge(authed)
     };
 
     let app = app.layer(
