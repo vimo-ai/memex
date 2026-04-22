@@ -17,6 +17,15 @@ struct FileConfig {
     ollama: OllamaConfig,
     features: FeaturesConfig,
     backup: BackupConfig,
+    sync: SyncRemoteConfig,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct SyncRemoteConfig {
+    server: Option<String>,
+    api_key: Option<String>,
+    ca_cert: Option<String>,
 }
 
 /// 备份配置
@@ -76,6 +85,10 @@ pub struct Config {
     pub compact: CompactConfig,
     /// 备份配置
     pub backup: BackupConfig,
+    /// 远程 sync server（用于搜索 fallback）
+    pub sync_server: Option<String>,
+    pub sync_api_key: Option<String>,
+    pub sync_ca_cert: Option<String>,
 }
 
 impl Config {
@@ -193,6 +206,10 @@ impl Config {
 
             // 备份配置
             backup: file_config.backup,
+
+            sync_server: file_config.sync.server.filter(|s| !s.is_empty()),
+            sync_api_key: file_config.sync.api_key.filter(|s| !s.is_empty()),
+            sync_ca_cert: file_config.sync.ca_cert.filter(|s| !s.is_empty()),
         }
     }
 

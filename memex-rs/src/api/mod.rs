@@ -20,7 +20,7 @@ use crate::indexer::VectorIndexer;
 use crate::inject::InjectService;
 use crate::llm::{ChatProvider, EmbeddingProvider};
 use crate::rag::{RagOptions, RagService};
-use crate::search::{HybridSearchOptions, HybridSearchResult, HybridSearchService};
+use crate::search::{HybridSearchOptions, HybridSearchResult, HybridSearchService, remote::RemoteSearchClient};
 use crate::vector::VectorStore;
 
 /// 应用状态
@@ -43,6 +43,8 @@ pub struct AppState {
     pub compact_queue: Option<CompactQueue>,
     /// Compact 向量存储（L1/L2/L3 摘要向量，用于 inject）
     pub compact_vector: Option<Arc<RwLock<CompactVectorStore>>>,
+    /// 远程搜索客户端（sync server fallback）
+    pub remote_search: Option<RemoteSearchClient>,
     /// 启动初始化耗时（毫秒）
     pub startup_duration_ms: u64,
 }

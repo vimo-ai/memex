@@ -9,6 +9,8 @@
 
 #![allow(dead_code)] // 预留 API: is_semantic_available
 
+pub mod remote;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};

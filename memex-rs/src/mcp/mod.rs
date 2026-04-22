@@ -437,7 +437,7 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
     let effective_level = if has_time_filter { "raw" } else { level };
 
     // 根据 level 选择搜索方式
-    match effective_level {
+    let mut result = match effective_level {
         "sessions" => search_session_summaries(state, query, limit, &filter, &session_ids).await,
         "talks" => search_talk_summaries(state, query, limit, &filter, &session_ids).await,
         "raw" => {
@@ -445,7 +445,42 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
                 .await
         }
         _ => Err(format!("Invalid level: {}. Use sessions/talks/raw", level)),
+    }?;
+
+    // 远程 fallback：本地结果不足时查 sync server 补充
+    if let Some(ref remote) = state.remote_search {
+        let local_results = result["results"].as_array().map_or(0, |a| a.len());
+        if local_results < limit {
+            let remaining = limit - local_results;
+            let remote_results = remote.search(query, remaining, effective_level).await;
+            if !remote_results.is_empty() {
+                let local_sessions: std::collections::HashSet<String> = result["results"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|r| r["session"].as_str().or(r["sessionId"].as_str()))
+                            .map(String::from)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let mut merged = crate::search::remote::format_remote_results(
+                    remote_results,
+                    &local_sessions,
+                );
+
+                if !merged.is_empty() {
+                    if let Some(arr) = result.get_mut("results").and_then(|v| v.as_array_mut()) {
+                        arr.append(&mut merged);
+                        let new_total = arr.len();
+                        result["total"] = json!(new_total);
+                    }
+                }
+            }
+        }
     }
+
+    Ok(result)
 }
 
 /// L3: 搜索会话摘要
@@ -1687,6 +1722,7 @@ mod tests {
                 compact_db: None,
                 compact_queue: None,
                 compact_vector: None,
+                remote_search: None,
                 startup_duration_ms: 0,
             };
 
@@ -2019,6 +2055,7 @@ mod tests {
                 compact_db: None,
                 compact_queue: None,
                 compact_vector: None,
+                remote_search: None,
                 startup_duration_ms: 0,
             };
 

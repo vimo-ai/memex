@@ -468,6 +468,8 @@ async fn main() -> anyhow::Result<()> {
     let startup_duration_ms = startup_start.elapsed().as_millis() as u64;
     tracing::info!("⏱️ Startup initialization took {}ms", startup_duration_ms);
 
+    let remote_search = memex::search::remote::RemoteSearchClient::from_config(&config);
+
     // Create app state
     let state = Arc::new(AppState {
         config: config.clone(),
@@ -482,6 +484,7 @@ async fn main() -> anyhow::Result<()> {
         compact_db,
         compact_queue,
         compact_vector,
+        remote_search,
         startup_duration_ms,
     });
 
