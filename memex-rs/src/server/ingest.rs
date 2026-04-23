@@ -4,10 +4,10 @@
 //! 去重依赖自然键：uuid (messages), session_id (sessions), path (projects)。
 
 use axum::{
-    extract::State,
+    extract::{ws, State, WebSocketUpgrade},
     http::StatusCode,
     response::IntoResponse,
-    routing::post,
+    routing::{get, post},
     Extension, Json, Router,
 };
 use rusqlite::{params, Connection};
@@ -16,11 +16,11 @@ use tracing::{debug, error, info};
 
 use ai_cli_session_db::schema;
 use ai_cli_session_db::sync::{
-    SyncBatch, SyncChainNode, SyncContinuationChain, SyncMessage, SyncProject,
-    SyncPushRequest, SyncPushResponse, SyncSession, SyncSessionRelation, SyncTalk,
+    SyncAck, SyncBatch, SyncChainNode, SyncContinuationChain, SyncFrame, SyncMessage,
+    SyncProject, SyncPushRequest, SyncPushResponse, SyncSession, SyncSessionRelation, SyncTalk,
 };
 
-use crate::auth::AuthenticatedUser;
+use crate::auth::{AuthState, AuthenticatedUser};
 
 use parking_lot::Mutex;
 
@@ -72,6 +72,16 @@ impl IngestState {
         if !has_repo_url {
             conn.execute_batch("ALTER TABLE projects ADD COLUMN repo_url TEXT;")?;
         }
+
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sync_devices (
+                device_id          TEXT PRIMARY KEY,
+                username           TEXT NOT NULL,
+                last_heartbeat_at  INTEGER NOT NULL DEFAULT 0,
+                last_db_updated_at INTEGER NOT NULL DEFAULT 0,
+                connected_since    INTEGER NOT NULL DEFAULT 0
+            );"
+        )?;
 
         Ok(())
     }
@@ -240,6 +250,38 @@ impl IngestState {
         )?;
         Ok(())
     }
+
+    pub fn update_device_heartbeat(
+        &self,
+        device_id: &str,
+        username: &str,
+        last_db_updated_at: i64,
+    ) {
+        let conn = self.conn.lock();
+        let now = chrono::Utc::now().timestamp_millis();
+        let _ = conn.execute(
+            "INSERT INTO sync_devices (device_id, username, last_heartbeat_at, last_db_updated_at, connected_since)
+             VALUES (?1, ?2, ?3, ?4, ?3)
+             ON CONFLICT(device_id) DO UPDATE SET
+                 last_heartbeat_at = excluded.last_heartbeat_at,
+                 last_db_updated_at = excluded.last_db_updated_at",
+            params![device_id, username, now, last_db_updated_at],
+        );
+    }
+
+    pub fn mark_device_connected(&self, device_id: &str, username: &str) {
+        let conn = self.conn.lock();
+        let now = chrono::Utc::now().timestamp_millis();
+        let _ = conn.execute(
+            "INSERT INTO sync_devices (device_id, username, last_heartbeat_at, last_db_updated_at, connected_since)
+             VALUES (?1, ?2, ?3, 0, ?3)
+             ON CONFLICT(device_id) DO UPDATE SET
+                 connected_since = excluded.connected_since,
+                 last_heartbeat_at = excluded.last_heartbeat_at,
+                 username = excluded.username",
+            params![device_id, username, now],
+        );
+    }
 }
 
 #[derive(Debug, Default)]
@@ -271,9 +313,136 @@ async fn handle_push(
     (StatusCode::OK, Json(response))
 }
 
+async fn handle_ws_upgrade(
+    State(state): State<Arc<IngestState>>,
+    auth_state: Option<Extension<Arc<AuthState>>>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    let auth = auth_state.map(|Extension(a)| a);
+    ws.on_upgrade(move |socket| handle_ws_connection(socket, state, auth))
+}
+
+async fn handle_ws_connection(
+    mut socket: ws::WebSocket,
+    state: Arc<IngestState>,
+    auth_state: Option<Arc<AuthState>>,
+) {
+    let (device_id, username) = match ws_authenticate(&mut socket, &auth_state).await {
+        Some(pair) => pair,
+        None => return,
+    };
+
+    info!("ws connected: device={}, user={}", &device_id[..8.min(device_id.len())], username);
+    state.mark_device_connected(&device_id, &username);
+
+    while let Some(Ok(msg)) = socket.recv().await {
+        let text = match msg {
+            ws::Message::Text(t) => t,
+            ws::Message::Close(_) => break,
+            _ => continue,
+        };
+
+        let frame: SyncFrame = match serde_json::from_str(&text) {
+            Ok(f) => f,
+            Err(e) => {
+                let ack = SyncAck::PushFail { message: format!("invalid frame: {e}") };
+                let _ = socket.send(ws::Message::Text(serde_json::to_string(&ack).unwrap().into())).await;
+                continue;
+            }
+        };
+
+        let ack = match frame {
+            SyncFrame::Auth { .. } => SyncAck::AuthFail {
+                message: "already authenticated".to_string(),
+            },
+            SyncFrame::Push { batch, cursors } => {
+                let msg_count = batch.messages.len();
+                debug!("ws push: device={}, messages={}", &device_id[..8.min(device_id.len())], msg_count);
+                let result = state.ingest_batch(&username, &batch);
+                SyncAck::PushOk {
+                    accepted: result.accepted,
+                    skipped: result.skipped,
+                    server_cursors: cursors,
+                }
+            }
+            SyncFrame::Heartbeat { last_db_updated_at } => {
+                state.update_device_heartbeat(&device_id, &username, last_db_updated_at);
+                debug!("ws heartbeat: device={}, last_db_updated_at={}", &device_id[..8.min(device_id.len())], last_db_updated_at);
+                SyncAck::HeartbeatOk
+            }
+        };
+
+        if socket.send(ws::Message::Text(serde_json::to_string(&ack).unwrap().into())).await.is_err() {
+            break;
+        }
+    }
+
+    info!("ws disconnected: device={}", &device_id[..8.min(device_id.len())]);
+}
+
+async fn ws_authenticate(
+    socket: &mut ws::WebSocket,
+    auth_state: &Option<Arc<AuthState>>,
+) -> Option<(String, String)> {
+    let msg = tokio::time::timeout(std::time::Duration::from_secs(10), socket.recv())
+        .await
+        .ok()??
+        .ok()?;
+
+    let text = match msg {
+        ws::Message::Text(t) => t,
+        _ => {
+            let ack = SyncAck::AuthFail { message: "expected text frame".to_string() };
+            let _ = socket.send(ws::Message::Text(serde_json::to_string(&ack).unwrap().into())).await;
+            return None;
+        }
+    };
+
+    let frame: SyncFrame = match serde_json::from_str(&text) {
+        Ok(f) => f,
+        Err(e) => {
+            let ack = SyncAck::AuthFail { message: format!("invalid auth frame: {e}") };
+            let _ = socket.send(ws::Message::Text(serde_json::to_string(&ack).unwrap().into())).await;
+            return None;
+        }
+    };
+
+    let (device_id, api_key) = match frame {
+        SyncFrame::Auth { device_id, api_key } => (device_id, api_key),
+        _ => {
+            let ack = SyncAck::AuthFail { message: "first frame must be Auth".to_string() };
+            let _ = socket.send(ws::Message::Text(serde_json::to_string(&ack).unwrap().into())).await;
+            return None;
+        }
+    };
+
+    let username = if let Some(auth) = auth_state {
+        match auth.verify(&api_key) {
+            Some(name) => name.to_string(),
+            None => {
+                let ack = SyncAck::AuthFail { message: "invalid api key".to_string() };
+                let _ = socket.send(ws::Message::Text(serde_json::to_string(&ack).unwrap().into())).await;
+                return None;
+            }
+        }
+    } else {
+        device_id.clone()
+    };
+
+    let ack = SyncAck::AuthOk {
+        server_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    if socket.send(ws::Message::Text(serde_json::to_string(&ack).unwrap().into())).await.is_err() {
+        return None;
+    }
+
+    Some((device_id, username))
+}
+
 pub fn create_sync_router(state: Arc<IngestState>) -> Router {
     Router::new()
         .route("/api/sync/push", post(handle_push))
+        .route("/api/sync/stream", get(handle_ws_upgrade))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .with_state(state)
 }
