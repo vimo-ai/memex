@@ -227,7 +227,7 @@ impl DbReader {
             }
         }
 
-        all_messages.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        all_messages.sort_by_key(|m| std::cmp::Reverse(m.timestamp));
         all_messages.truncate(limit);
 
         Ok(all_messages)

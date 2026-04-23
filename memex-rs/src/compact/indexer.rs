@@ -134,8 +134,8 @@ impl CompactIndexer {
         // 构建记录
         let records: Vec<CompactVectorRecord> = observations
             .iter()
-            .zip(texts.into_iter())
-            .zip(embeddings.into_iter())
+            .zip(texts)
+            .zip(embeddings)
             .map(|((obs, text), embedding)| CompactVectorRecord {
                 id: format!("l1_{}", obs.id),
                 session_id: obs.session_id.clone(),
@@ -170,8 +170,8 @@ impl CompactIndexer {
 
         let records: Vec<CompactVectorRecord> = summaries
             .iter()
-            .zip(texts.into_iter())
-            .zip(embeddings.into_iter())
+            .zip(texts)
+            .zip(embeddings)
             .map(|((s, text), embedding)| CompactVectorRecord {
                 id: format!("l2_{}", s.id),
                 session_id: s.session_id.clone(),

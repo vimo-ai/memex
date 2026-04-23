@@ -625,7 +625,7 @@ impl HybridSearchService {
         // 合并并按分数排序
         let mut all_results: Vec<HybridSearchResult> = raw_results
             .into_iter()
-            .chain(compact_results.into_iter())
+            .chain(compact_results)
             .collect();
 
         all_results.sort_by(|a, b| {

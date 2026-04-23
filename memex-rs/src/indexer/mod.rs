@@ -343,7 +343,7 @@ impl VectorIndexer {
         // 组装 VectorRecord
         let all_records: Vec<VectorRecord> = all_chunks
             .into_iter()
-            .zip(embeddings.into_iter())
+            .zip(embeddings)
             .map(|(chunk, embedding)| VectorRecord {
                 message_id: chunk.message_id,
                 chunk_index: chunk.chunk_index,
@@ -472,7 +472,7 @@ impl VectorIndexer {
         // 3. 组装 VectorRecord
         let all_records: Vec<VectorRecord> = all_chunks
             .into_iter()
-            .zip(embeddings.into_iter())
+            .zip(embeddings)
             .map(|(chunk, embedding)| VectorRecord {
                 message_id: chunk.message_id,
                 chunk_index: chunk.chunk_index,

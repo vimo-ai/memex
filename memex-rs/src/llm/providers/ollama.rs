@@ -84,7 +84,7 @@ impl EmbeddingProvider for OllamaProvider {
         const CONCURRENCY: usize = 10;
 
         // 使用 buffered 而非 buffer_unordered，保证结果顺序与输入一致
-        let results: Vec<Result<Vec<f32>>> = stream::iter(texts.into_iter())
+        let results: Vec<Result<Vec<f32>>> = stream::iter(texts)
             .map(|text| async move { self.embed(&text).await })
             .buffered(CONCURRENCY)
             .collect()
