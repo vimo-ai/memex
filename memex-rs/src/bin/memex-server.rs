@@ -1,6 +1,6 @@
 use std::env;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::middleware;
@@ -87,7 +87,7 @@ impl ServerConfig {
         }
     }
 
-    fn load_config_file(vimo_root: &PathBuf) -> FileConfig {
+    fn load_config_file(vimo_root: &Path) -> FileConfig {
         let path = vimo_root.join("memex/config.json");
         if !path.exists() {
             return FileConfig::default();
