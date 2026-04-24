@@ -10,9 +10,15 @@ NAS_HOST="${NAS_HOST:-10.0.0.1}"
 NAS_USER="${NAS_USER:-aguai}"
 NAS_DIR="/volume2/docker/${CONTAINER_NAME}"
 
-MEMEX_API_KEYS="${MEMEX_API_KEYS:?请设置 MEMEX_API_KEYS 环境变量}"
+MEMEX_MASTER_KEY="${MEMEX_MASTER_KEY:-}"
+MEMEX_API_KEYS="${MEMEX_API_KEYS:-}"
 TLS_CERT="${TLS_CERT:-}"
 TLS_KEY="${TLS_KEY:-}"
+
+if [ -z "${MEMEX_MASTER_KEY}" ] && [ -z "${MEMEX_API_KEYS}" ]; then
+    echo "请设置 MEMEX_MASTER_KEY 或 MEMEX_API_KEYS 环境变量"
+    exit 1
+fi
 
 echo "=== Memex Server 部署 ==="
 echo "目标: ${NAS_USER}@${NAS_HOST}"
@@ -43,7 +49,10 @@ docker save "${IMAGE_NAME}:${TAG}" | ssh "${NAS_USER}@${NAS_HOST}" "/usr/local/b
 
 # --- 写入 env file ---
 echo "写入配置..."
-ENV_CONTENT="RUST_LOG=memex=info
+ENV_CONTENT="RUST_LOG=memex=info"
+[ -n "${MEMEX_MASTER_KEY}" ] && ENV_CONTENT="${ENV_CONTENT}
+MEMEX_MASTER_KEY=${MEMEX_MASTER_KEY}"
+[ -n "${MEMEX_API_KEYS}" ] && ENV_CONTENT="${ENV_CONTENT}
 MEMEX_API_KEYS=${MEMEX_API_KEYS}"
 
 if [ -n "${TLS_CERT}" ] && [ -n "${TLS_KEY}" ]; then
@@ -89,5 +98,6 @@ PROTO="http"
 
 echo ""
 echo "=== 部署完成 ==="
-echo "Health: curl ${PROTO}://${NAS_HOST}:10013/api/sync/health"
-echo "Push:   POST ${PROTO}://${NAS_HOST}:10013/api/sync/push"
+echo "Health:   curl ${PROTO}://${NAS_HOST}:10013/api/sync/health"
+echo "Push:     POST ${PROTO}://${NAS_HOST}:10013/api/sync/push"
+echo "Register: POST ${PROTO}://${NAS_HOST}:10013/api/auth/register"
