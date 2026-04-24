@@ -12,7 +12,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use memex::auth::{auth_layer, AuthState};
 use memex::db_reader::DbReader;
 use memex::search::HybridSearchService;
-use memex::server::{create_search_router, create_sync_router, IngestState};
+use memex::server::{create_register_router, create_search_router, create_sync_router, IngestState};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -26,6 +26,7 @@ struct UserConfig {
 #[serde(default)]
 struct FileConfig {
     users: Vec<UserConfig>,
+    master_key: Option<String>,
 }
 
 #[derive(Debug)]
@@ -33,6 +34,7 @@ struct ServerConfig {
     port: u16,
     db_path: String,
     users: Vec<(String, String)>, // (name, api_key)
+    master_key: Option<String>,
     tls_cert: Option<String>,
     tls_key: Option<String>,
 }
@@ -61,6 +63,11 @@ impl ServerConfig {
 
         let file_config = Self::load_config_file(&vimo_root);
 
+        let master_key = file_config
+            .master_key
+            .or_else(|| env::var("MEMEX_MASTER_KEY").ok())
+            .filter(|s| !s.is_empty());
+
         let users = if !file_config.users.is_empty() {
             file_config
                 .users
@@ -82,6 +89,7 @@ impl ServerConfig {
             port,
             db_path,
             users,
+            master_key,
             tls_cert,
             tls_key,
         }
@@ -118,12 +126,13 @@ async fn main() -> anyhow::Result<()> {
                 println!("No local collection, no LLM, no embedding.");
                 println!();
                 println!("Config file: $VIMO_HOME/memex/config.json");
-                println!("  {{\"users\": [{{\"name\": \"alice\", \"api_key\": \"mk_xxx\"}}]}}");
+                println!("  {{\"master_key\": \"mmk_xxx\", \"users\": [...]}}");
                 println!();
                 println!("Environment:");
                 println!("  PORT              Server port (default: 10013)");
                 println!("  VIMO_HOME         Data root (default: ~/.vimo)");
                 println!("  MEMEX_DB_PATH     Database path (default: $VIMO_HOME/db/server.db)");
+                println!("  MEMEX_MASTER_KEY  Master key for self-registration");
                 println!("  MEMEX_API_KEYS    Fallback: comma-separated keys (if no config file)");
                 println!("  TLS_CERT          Path to TLS certificate (PEM)");
                 println!("  TLS_KEY           Path to TLS private key (PEM)");
@@ -172,8 +181,13 @@ async fn main() -> anyhow::Result<()> {
     let search_service = Arc::new(HybridSearchService::new(db, None, None));
     tracing::info!("Search service ready (FTS mode)");
 
-    let sync_router = create_sync_router(ingest);
+    let sync_router = create_sync_router(ingest.clone());
     let search_router = create_search_router(search_service);
+
+    let register_router = config
+        .master_key
+        .as_ref()
+        .map(|mk| create_register_router(ingest.clone(), mk.clone()));
 
     let health_route = axum::Router::new().route(
         "/api/sync/health",
@@ -182,18 +196,41 @@ async fn main() -> anyhow::Result<()> {
         }),
     );
 
-    let app = if config.users.is_empty() {
-        tracing::warn!("No users configured, running without auth");
-        health_route.merge(sync_router).merge(search_router)
+    let has_auth = !config.users.is_empty() || config.master_key.is_some();
+
+    let app = if !has_auth {
+        tracing::warn!("No users and no master_key configured, running without auth");
+        let mut app = health_route.merge(sync_router).merge(search_router);
+        if let Some(reg) = register_router {
+            app = app.merge(reg);
+        }
+        app
     } else {
         let user_names: Vec<&str> = config.users.iter().map(|(n, _)| n.as_str()).collect();
-        tracing::info!("Auth enabled: {:?}", user_names);
-        let auth_state = Arc::new(AuthState::from_users(&config.users));
+        if !user_names.is_empty() {
+            tracing::info!("Static users: {:?}", user_names);
+        }
+        if config.master_key.is_some() {
+            tracing::info!("Self-registration enabled (master_key configured)");
+        }
+
+        let ingest_for_lookup = ingest.clone();
+        let dynamic_lookup: memex::auth::UserLookupFn =
+            Arc::new(move |key: &str| ingest_for_lookup.lookup_registered_user_by_key(key));
+
+        let auth_state = Arc::new(AuthState::with_dynamic_lookup(
+            &config.users,
+            dynamic_lookup,
+        ));
         let authed = sync_router
             .merge(search_router)
             .layer(middleware::from_fn(auth_layer))
             .layer(axum::Extension(auth_state));
-        health_route.merge(authed)
+        let mut app = health_route.merge(authed);
+        if let Some(reg) = register_router {
+            app = app.merge(reg);
+        }
+        app
     };
 
     let app = app.layer(
@@ -209,10 +246,7 @@ async fn main() -> anyhow::Result<()> {
         (Some(cert_path), Some(key_path)) => {
             tracing::info!("TLS enabled: cert={cert_path}");
             tracing::info!("Listening on https://0.0.0.0:{}", config.port);
-            tracing::info!("Endpoints:");
-            tracing::info!("  POST /api/sync/push    - Receive client push");
-            tracing::info!("  GET  /api/sync/health  - Health check");
-            tracing::info!("  GET  /api/search       - Search (FTS/vector/hybrid)");
+            log_endpoints(config.master_key.is_some());
 
             let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
                 cert_path, key_path,
@@ -225,10 +259,7 @@ async fn main() -> anyhow::Result<()> {
         }
         _ => {
             tracing::info!("Listening on http://0.0.0.0:{}", config.port);
-            tracing::info!("Endpoints:");
-            tracing::info!("  POST /api/sync/push    - Receive client push");
-            tracing::info!("  GET  /api/sync/health  - Health check");
-            tracing::info!("  GET  /api/search       - Search (FTS/vector/hybrid)");
+            log_endpoints(config.master_key.is_some());
 
             let listener = tokio::net::TcpListener::bind(addr).await?;
             axum::serve(listener, app)
@@ -244,6 +275,16 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Shutdown complete");
     Ok(())
+}
+
+fn log_endpoints(has_register: bool) {
+    tracing::info!("Endpoints:");
+    tracing::info!("  POST /api/sync/push       - Receive client push");
+    tracing::info!("  GET  /api/sync/health     - Health check");
+    tracing::info!("  GET  /api/search          - Search (FTS/vector/hybrid)");
+    if has_register {
+        tracing::info!("  POST /api/auth/register   - Self-registration (master_key)");
+    }
 }
 
 async fn shutdown_signal() {

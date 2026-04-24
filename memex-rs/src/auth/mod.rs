@@ -2,4 +2,4 @@
 
 mod middleware;
 
-pub use middleware::{auth_layer, AuthState, AuthenticatedUser};
+pub use middleware::{auth_layer, AuthState, AuthenticatedUser, UserLookupFn};

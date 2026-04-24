@@ -83,6 +83,14 @@ impl IngestState {
             );"
         )?;
 
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS registered_users (
+                username   TEXT PRIMARY KEY,
+                api_key    TEXT NOT NULL UNIQUE,
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000)
+            );"
+        )?;
+
         Ok(())
     }
 
@@ -267,6 +275,43 @@ impl IngestState {
                  last_db_updated_at = excluded.last_db_updated_at",
             params![device_id, username, now, last_db_updated_at],
         );
+    }
+
+    pub fn register_user(&self, name: &str) -> Option<String> {
+        let conn = self.conn.lock();
+        let existing: Option<String> = conn
+            .query_row(
+                "SELECT api_key FROM registered_users WHERE username = ?1",
+                params![name],
+                |row| row.get(0),
+            )
+            .ok();
+
+        if let Some(key) = existing {
+            return Some(key);
+        }
+
+        let api_key = format!("mk_{}", uuid::Uuid::new_v4());
+        match conn.execute(
+            "INSERT OR IGNORE INTO registered_users (username, api_key) VALUES (?1, ?2)",
+            params![name, api_key],
+        ) {
+            Ok(_) => Some(api_key),
+            Err(e) => {
+                error!("register user failed: {e}");
+                None
+            }
+        }
+    }
+
+    pub fn lookup_registered_user_by_key(&self, api_key: &str) -> Option<String> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT username FROM registered_users WHERE api_key = ?1",
+            params![api_key],
+            |row| row.get(0),
+        )
+        .ok()
     }
 
     pub fn mark_device_connected(&self, device_id: &str, username: &str) {

@@ -10,12 +10,15 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub type UserLookupFn = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
 #[derive(Clone, Debug)]
 pub struct AuthenticatedUser(pub String);
 
 #[derive(Clone)]
 pub struct AuthState {
     keys: HashMap<String, String>, // key_hash → username
+    dynamic_lookup: Option<UserLookupFn>,
 }
 
 impl AuthState {
@@ -24,12 +27,29 @@ impl AuthState {
             .iter()
             .map(|(name, key)| (hash_key(key), name.clone()))
             .collect();
-        Self { keys }
+        Self { keys, dynamic_lookup: None }
     }
 
-    pub fn verify(&self, key: &str) -> Option<&str> {
+    pub fn with_dynamic_lookup(
+        users: &[(String, String)],
+        lookup: UserLookupFn,
+    ) -> Self {
+        let keys = users
+            .iter()
+            .map(|(name, key)| (hash_key(key), name.clone()))
+            .collect();
+        Self { keys, dynamic_lookup: Some(lookup) }
+    }
+
+    pub fn verify(&self, key: &str) -> Option<String> {
         let h = hash_key(key);
-        self.keys.get(&h).map(|s| s.as_str())
+        if let Some(name) = self.keys.get(&h) {
+            return Some(name.clone());
+        }
+        if let Some(ref lookup) = self.dynamic_lookup {
+            return lookup(key);
+        }
+        None
     }
 }
 
@@ -65,7 +85,7 @@ pub async fn auth_layer(
 
     match state.verify(key) {
         Some(username) => {
-            request.extensions_mut().insert(AuthenticatedUser(username.to_string()));
+            request.extensions_mut().insert(AuthenticatedUser(username));
             next.run(request).await
         }
         None => (StatusCode::UNAUTHORIZED, "Invalid API key").into_response(),
@@ -81,7 +101,7 @@ mod tests {
         let state = AuthState::from_users(&[
             ("alice".to_string(), "mk_test_key_123".to_string()),
         ]);
-        assert_eq!(state.verify("mk_test_key_123"), Some("alice"));
+        assert_eq!(state.verify("mk_test_key_123").as_deref(), Some("alice"));
         assert_eq!(state.verify("wrong_key"), None);
     }
 
@@ -91,8 +111,26 @@ mod tests {
             ("alice".to_string(), "key_alice".to_string()),
             ("bob".to_string(), "key_bob".to_string()),
         ]);
-        assert_eq!(state.verify("key_alice"), Some("alice"));
-        assert_eq!(state.verify("key_bob"), Some("bob"));
+        assert_eq!(state.verify("key_alice").as_deref(), Some("alice"));
+        assert_eq!(state.verify("key_bob").as_deref(), Some("bob"));
         assert_eq!(state.verify("key_eve"), None);
+    }
+
+    #[test]
+    fn test_dynamic_lookup() {
+        let lookup: UserLookupFn = Arc::new(|key: &str| {
+            if key == "dynamic_key_123" {
+                Some("dynamic_user".to_string())
+            } else {
+                None
+            }
+        });
+        let state = AuthState::with_dynamic_lookup(
+            &[("alice".to_string(), "key_alice".to_string())],
+            lookup,
+        );
+        assert_eq!(state.verify("key_alice").as_deref(), Some("alice"));
+        assert_eq!(state.verify("dynamic_key_123").as_deref(), Some("dynamic_user"));
+        assert_eq!(state.verify("unknown"), None);
     }
 }

@@ -25,6 +25,8 @@ struct FileConfig {
 struct SyncRemoteConfig {
     server: Option<String>,
     api_key: Option<String>,
+    master_key: Option<String>,
+    name: Option<String>,
     ca_cert: Option<String>,
 }
 
@@ -88,6 +90,8 @@ pub struct Config {
     /// 远程 sync server（用于搜索 fallback）
     pub sync_server: Option<String>,
     pub sync_api_key: Option<String>,
+    pub sync_master_key: Option<String>,
+    pub sync_name: Option<String>,
     pub sync_ca_cert: Option<String>,
 }
 
@@ -209,6 +213,8 @@ impl Config {
 
             sync_server: file_config.sync.server.filter(|s| !s.is_empty()),
             sync_api_key: file_config.sync.api_key.filter(|s| !s.is_empty()),
+            sync_master_key: file_config.sync.master_key.filter(|s| !s.is_empty()),
+            sync_name: file_config.sync.name.filter(|s| !s.is_empty()),
             sync_ca_cert: file_config.sync.ca_cert.filter(|s| !s.is_empty()),
         }
     }
