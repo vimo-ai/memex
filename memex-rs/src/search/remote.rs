@@ -60,7 +60,7 @@ impl RemoteSearchClient {
             }
         }
 
-        let client = builder.build().ok()?;
+        let client = builder.use_rustls_tls().build().ok()?;
 
         tracing::info!("🔗 Remote search enabled: {server}");
         Some(Self {

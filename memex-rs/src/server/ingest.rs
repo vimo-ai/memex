@@ -314,6 +314,48 @@ impl IngestState {
         .ok()
     }
 
+    pub fn query_peers(&self) -> Vec<serde_json::Value> {
+        let conn = self.conn.lock();
+        let today_start = {
+            let now = chrono::Utc::now();
+            let today = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+            today.and_utc().timestamp_millis()
+        };
+
+        let mut stmt = match conn.prepare(
+            r#"
+            SELECT
+                s.pushed_by,
+                COUNT(DISTINCT s.session_id),
+                COALESCE(SUM(s.message_count), 0),
+                MAX(s.updated_at),
+                COUNT(DISTINCT CASE WHEN s.updated_at >= ?1 THEN s.session_id END)
+            FROM sessions s
+            WHERE s.pushed_by IS NOT NULL
+            GROUP BY s.pushed_by
+            ORDER BY MAX(s.updated_at) DESC
+            "#,
+        ) {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+
+        let rows = stmt
+            .query_map(params![today_start], |row| {
+                Ok(serde_json::json!({
+                    "name": row.get::<_, String>(0)?,
+                    "sessions": row.get::<_, i64>(1)?,
+                    "messages": row.get::<_, i64>(2)?,
+                    "last_active_at": row.get::<_, Option<i64>>(3)?,
+                    "today_sessions": row.get::<_, i64>(4)?
+                }))
+            })
+            .ok();
+
+        rows.map(|r| r.filter_map(|v| v.ok()).collect())
+            .unwrap_or_default()
+    }
+
     pub fn mark_device_connected(&self, device_id: &str, username: &str) {
         let conn = self.conn.lock();
         let now = chrono::Utc::now().timestamp_millis();
@@ -356,6 +398,14 @@ async fn handle_push(
     };
 
     (StatusCode::OK, Json(response))
+}
+
+async fn handle_peers(
+    State(state): State<Arc<IngestState>>,
+    Extension(_user): Extension<AuthenticatedUser>,
+) -> impl IntoResponse {
+    let peers = state.query_peers();
+    (StatusCode::OK, Json(peers))
 }
 
 async fn handle_ws_upgrade(
@@ -487,6 +537,7 @@ async fn ws_authenticate(
 pub fn create_sync_router(state: Arc<IngestState>) -> Router {
     Router::new()
         .route("/api/sync/push", post(handle_push))
+        .route("/api/sync/peers", get(handle_peers))
         .route("/api/sync/stream", get(handle_ws_upgrade))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .with_state(state)

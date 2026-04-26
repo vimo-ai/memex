@@ -187,7 +187,8 @@ fn get_tools() -> Vec<Value> {
                     "from": { "type": "string", "description": "Start date YYYY-MM-DD (forces raw level for accuracy)" },
                     "to": { "type": "string", "description": "End date YYYY-MM-DD (forces raw level for accuracy)" },
                     "limit": { "type": "number", "description": "Max results, default 5" },
-                    "sessionId": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Filter to specific session(s). Supports prefix matching (e.g. 'abc12' matches 'abc12345-...')" }
+                    "sessionId": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Filter to specific session(s). Supports prefix matching (e.g. 'abc12' matches 'abc12345-...')" },
+                    "source": { "type": "string", "enum": ["local", "remote", "all"], "description": "Search source: local (default), remote (sync server only), all (local + remote merge)" }
                 },
                 "required": ["query"]
             }
@@ -397,8 +398,33 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
         return Err("'time' and 'from'/'to' are mutually exclusive".to_string());
     }
 
+    let source = args
+        .get("source")
+        .and_then(|s| s.as_str())
+        .unwrap_or("local");
+
     if query.is_empty() {
         return Ok(json!({ "results": [], "total": 0, "level": level }));
+    }
+
+    // remote-only: 直接查 sync server
+    if source == "remote" {
+        return match &state.remote_search {
+            Some(remote) => {
+                let remote_results = remote.search(query, limit, level).await;
+                let formatted = crate::search::remote::format_remote_results(
+                    remote_results,
+                    &std::collections::HashSet::new(),
+                );
+                Ok(json!({
+                    "results": formatted,
+                    "total": formatted.len(),
+                    "level": level,
+                    "source": "remote"
+                }))
+            }
+            None => Err("Remote search not configured (missing sync_server/sync_api_key in config)".to_string()),
+        };
     }
 
     // 构建项目过滤器
@@ -447,33 +473,35 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
         _ => Err(format!("Invalid level: {}. Use sessions/talks/raw", level)),
     }?;
 
-    // 远程 fallback：本地结果不足时查 sync server 补充
-    if let Some(ref remote) = state.remote_search {
-        let local_results = result["results"].as_array().map_or(0, |a| a.len());
-        if local_results < limit {
-            let remaining = limit - local_results;
-            let remote_results = remote.search(query, remaining, effective_level).await;
-            if !remote_results.is_empty() {
-                let local_sessions: std::collections::HashSet<String> = result["results"]
-                    .as_array()
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|r| r["session"].as_str().or(r["sessionId"].as_str()))
-                            .map(String::from)
-                            .collect()
-                    })
-                    .unwrap_or_default();
+    // source=all 或默认 fallback：本地结果不足时查 sync server 补充
+    if source == "all" || source == "local" {
+        if let Some(ref remote) = state.remote_search {
+            let local_results = result["results"].as_array().map_or(0, |a| a.len());
+            if local_results < limit {
+                let remaining = if source == "all" { limit } else { limit - local_results };
+                let remote_results = remote.search(query, remaining, effective_level).await;
+                if !remote_results.is_empty() {
+                    let local_sessions: std::collections::HashSet<String> = result["results"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|r| r["session"].as_str().or(r["sessionId"].as_str()))
+                                .map(String::from)
+                                .collect()
+                        })
+                        .unwrap_or_default();
 
-                let mut merged = crate::search::remote::format_remote_results(
-                    remote_results,
-                    &local_sessions,
-                );
+                    let mut merged = crate::search::remote::format_remote_results(
+                        remote_results,
+                        &local_sessions,
+                    );
 
-                if !merged.is_empty() {
-                    if let Some(arr) = result.get_mut("results").and_then(|v| v.as_array_mut()) {
-                        arr.append(&mut merged);
-                        let new_total = arr.len();
-                        result["total"] = json!(new_total);
+                    if !merged.is_empty() {
+                        if let Some(arr) = result.get_mut("results").and_then(|v| v.as_array_mut()) {
+                            arr.append(&mut merged);
+                            let new_total = arr.len();
+                            result["total"] = json!(new_total);
+                        }
                     }
                 }
             }

@@ -37,7 +37,7 @@ rustls-pemfile = { version = "2", optional = true }
 tokio = { version = "1", features = ["full", "sync"] }
 
 # HTTP 客户端 (Ollama)
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-manual-roots"] }
 
 # 数据库
 rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
