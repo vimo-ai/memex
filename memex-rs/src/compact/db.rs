@@ -1171,6 +1171,33 @@ impl CompactDB {
         Ok(rows)
     }
 
+    pub async fn stats_overview(&self) -> Result<(i64, i64, i64, i64, i64, Option<String>)> {
+        let conn = self.conn.lock().await;
+        let row = conn.query_row(
+            r#"
+            SELECT
+                (SELECT COUNT(*) FROM talk_summaries),
+                (SELECT COUNT(*) FROM session_summaries),
+                (SELECT COUNT(*) FROM observations),
+                (SELECT COUNT(*) FROM compact_progress),
+                (SELECT COUNT(*) FROM compact_progress WHERE processing = 1),
+                (SELECT MAX(updated_at) FROM compact_progress)
+            "#,
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            },
+        )?;
+        Ok(row)
+    }
+
     // ==================== FTS 搜索 ====================
 
     /// 搜索 Observations

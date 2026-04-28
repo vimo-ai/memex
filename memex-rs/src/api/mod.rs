@@ -1369,22 +1369,35 @@ async fn compact_trigger(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CompactStatusResponse {
-    /// Compact 是否启用
     enabled: bool,
-    /// Compact 队列是否可用
     queue_available: bool,
-    /// CompactDB 是否已连接
     db_connected: bool,
+    talk_summaries: i64,
+    session_summaries: i64,
+    observations: i64,
+    tracked_sessions: i64,
+    processing: i64,
+    last_updated: Option<String>,
 }
 
-/// 获取 Compact 状态
-///
 /// GET /api/compact/status
 async fn compact_status(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
+    let (talks, sessions, obs, tracked, processing, last_updated) = if let Some(ref db) = state.compact_db {
+        db.stats_overview().await.unwrap_or_default()
+    } else {
+        Default::default()
+    };
+
     Ok(Json(CompactStatusResponse {
         enabled: state.compact_queue.is_some(),
         queue_available: state.compact_queue.is_some(),
         db_connected: state.compact_db.is_some(),
+        talk_summaries: talks,
+        session_summaries: sessions,
+        observations: obs,
+        tracked_sessions: tracked,
+        processing,
+        last_updated,
     }))
 }
 
