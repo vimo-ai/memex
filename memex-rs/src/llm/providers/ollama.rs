@@ -7,6 +7,9 @@ use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use crate::llm::chat::ChatProvider;
 use crate::llm::core::{LlmClientConfig, LlmClientCore};
 use crate::llm::embedding::EmbeddingProvider;
@@ -20,6 +23,8 @@ pub struct OllamaProvider {
     core: LlmClientCore,
     embedding_model: String,
     chat_model: String,
+    use_new_embed_api: Arc<AtomicBool>,
+    embed_api_probed: Arc<AtomicBool>,
 }
 
 impl OllamaProvider {
@@ -30,6 +35,8 @@ impl OllamaProvider {
             core: LlmClientCore::new(config),
             embedding_model: embedding_model.to_string(),
             chat_model: chat_model.to_string(),
+            use_new_embed_api: Arc::new(AtomicBool::new(true)),
+            embed_api_probed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -66,18 +73,41 @@ impl EmbeddingProvider for OllamaProvider {
     }
 
     async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        let request = OllamaEmbeddingRequest {
-            model: self.embedding_model.clone(),
-            prompt: text.to_string(),
-        };
+        // Probe once, cache result
+        if !self.embed_api_probed.load(Ordering::Relaxed) {
+            let probe_req = OllamaEmbedRequest {
+                model: self.embedding_model.clone(),
+                input: "probe".to_string(),
+            };
+            let new_works = self.core.post_json::<_, OllamaEmbedResponse>("/api/embed", &probe_req).await.is_ok();
+            self.use_new_embed_api.store(new_works, Ordering::Relaxed);
+            self.embed_api_probed.store(true, Ordering::Relaxed);
+        }
 
-        let response: OllamaEmbeddingResponse = self
-            .core
-            .post_json("/api/embeddings", &request)
-            .await
-            .context("Ollama embedding 请求失败")?;
-
-        Ok(response.embedding)
+        if self.use_new_embed_api.load(Ordering::Relaxed) {
+            let request = OllamaEmbedRequest {
+                model: self.embedding_model.clone(),
+                input: text.to_string(),
+            };
+            let response: OllamaEmbedResponse = self
+                .core
+                .post_json("/api/embed", &request)
+                .await
+                .context("Ollama embed request failed")?;
+            response.embeddings.into_iter().next()
+                .context("empty embeddings response")
+        } else {
+            let request = OllamaEmbeddingRequest {
+                model: self.embedding_model.clone(),
+                prompt: text.to_string(),
+            };
+            let response: OllamaEmbeddingResponse = self
+                .core
+                .post_json("/api/embeddings", &request)
+                .await
+                .context("Ollama embedding request failed")?;
+            Ok(response.embedding)
+        }
     }
 
     async fn embed_batch(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
@@ -156,14 +186,27 @@ struct OllamaModelInfo {
     name: String,
 }
 
-/// Ollama embedding 请求
+/// Ollama /api/embed request (new API)
+#[derive(Serialize)]
+struct OllamaEmbedRequest {
+    model: String,
+    input: String,
+}
+
+/// Ollama /api/embed response (new API)
+#[derive(Deserialize)]
+struct OllamaEmbedResponse {
+    embeddings: Vec<Vec<f32>>,
+}
+
+/// Ollama /api/embeddings request (legacy)
 #[derive(Serialize)]
 struct OllamaEmbeddingRequest {
     model: String,
     prompt: String,
 }
 
-/// Ollama embedding 响应
+/// Ollama /api/embeddings response (legacy)
 #[derive(Deserialize)]
 struct OllamaEmbeddingResponse {
     embedding: Vec<f32>,
