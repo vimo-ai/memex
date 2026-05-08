@@ -329,7 +329,11 @@ impl IngestState {
                 COUNT(DISTINCT s.session_id),
                 COALESCE(SUM(s.message_count), 0),
                 MAX(s.updated_at),
-                COUNT(DISTINCT CASE WHEN s.updated_at >= ?1 THEN s.session_id END)
+                COUNT(DISTINCT CASE WHEN s.updated_at >= ?1 THEN s.session_id END),
+                (SELECT p.name FROM sessions s2
+                 JOIN projects p ON p.id = s2.project_id
+                 WHERE s2.pushed_by = s.pushed_by
+                 ORDER BY s2.updated_at DESC LIMIT 1)
             FROM sessions s
             WHERE s.pushed_by IS NOT NULL
             GROUP BY s.pushed_by
@@ -347,7 +351,8 @@ impl IngestState {
                     "sessions": row.get::<_, i64>(1)?,
                     "messages": row.get::<_, i64>(2)?,
                     "last_active_at": row.get::<_, Option<i64>>(3)?,
-                    "today_sessions": row.get::<_, i64>(4)?
+                    "today_sessions": row.get::<_, i64>(4)?,
+                    "active_project": row.get::<_, Option<String>>(5)?
                 }))
             })
             .ok();

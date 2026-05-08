@@ -4,7 +4,8 @@
 
 use anyhow::{Context, Result};
 use chrono::Local;
-use std::path::PathBuf;
+use rusqlite::OpenFlags;
+use std::path::{Path, PathBuf};
 
 /// 备份服务
 #[derive(Clone)]
@@ -37,7 +38,7 @@ impl BackupService {
         Self {
             db_path,
             backup_dir,
-            max_backups: 7, // 默认保留 7 天备份
+            max_backups: 3,
         }
     }
 
@@ -79,8 +80,19 @@ impl BackupService {
 
         tracing::info!("Backup done: {:?} ({} bytes)", backup_path, size);
 
-        // 清理旧备份
-        self.cleanup_old_backups()?;
+        // 验证备份完整性，通过后才清理旧备份
+        match Self::verify_integrity(&backup_path) {
+            Ok(true) => {
+                tracing::info!("Backup integrity OK, cleaning old backups");
+                self.cleanup_old_backups()?;
+            }
+            Ok(false) => {
+                tracing::warn!("Backup integrity FAILED: {:?}, keeping all old backups", backup_path);
+            }
+            Err(e) => {
+                tracing::warn!("Backup integrity check error: {:?}: {}, keeping all old backups", backup_path, e);
+            }
+        }
 
         Ok(BackupResult {
             path: backup_path,
@@ -173,6 +185,17 @@ impl BackupService {
         }
 
         Ok(())
+    }
+
+    /// 验证数据库文件完整性（quick_check，比 integrity_check 快，够用）
+    fn verify_integrity(path: &Path) -> Result<bool> {
+        let conn = rusqlite::Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.execute_batch("PRAGMA journal_mode=DELETE")?;
+        let result: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+        Ok(result == "ok")
     }
 
     /// 恢复备份
