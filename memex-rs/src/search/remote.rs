@@ -37,8 +37,8 @@ impl RemoteSearchClient {
         let api_key = config.sync_api_key.as_ref()?;
 
         let mut builder = reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .connect_timeout(Duration::from_secs(3));
+            .timeout(Duration::from_secs(15))
+            .connect_timeout(Duration::from_secs(5));
 
         if let Some(ref ca_path) = config.sync_ca_cert {
             let expanded: std::path::PathBuf = if ca_path.starts_with("~/") {
@@ -90,6 +90,7 @@ impl RemoteSearchClient {
                 ("q", query),
                 ("limit", &limit.to_string()),
                 ("level", level),
+                ("mode", "fts"),
             ])
             .send()
             .await

@@ -641,6 +641,8 @@ impl HybridSearchService {
     ///
     /// 支持 FTS + Vector + Hybrid 三种模式
     /// 支持 project_id 和日期范围过滤
+    ///
+    /// Fallback: 当 CompactDB 不可用时（如 server 端），直接查 talks 表 FTS
     #[allow(clippy::too_many_arguments)]
     async fn search_compact(
         &self,
@@ -663,6 +665,14 @@ impl HybridSearchService {
             end_date
         );
 
+        // Fallback: CompactDB 不可用时查 talks_fts
+        if self.compact_db.is_none() {
+            if mode == SearchMode::Fts || mode == SearchMode::Hybrid {
+                return self.search_talks_fts_fallback(query, limit, project_id).await;
+            }
+            return Ok(vec![]);
+        }
+
         let mut fts_results: Vec<CompactFtsItem> = Vec::new();
         let mut vector_results: Vec<CompactVectorItem> = Vec::new();
 
@@ -674,8 +684,6 @@ impl HybridSearchService {
                     .compact_fts_search(&db, query, level, limit * 2)
                     .await?;
                 tracing::debug!("[Compact FTS] Found {} results", fts_results.len());
-            } else {
-                tracing::warn!("[Compact Search] CompactDB not available for FTS");
             }
         }
 
@@ -966,6 +974,45 @@ impl HybridSearchService {
         } else {
             (0, "Unknown".to_string())
         }
+    }
+
+    /// Fallback: 无 CompactDB 时直接查 talks 表 FTS
+    ///
+    /// 用于 server 端（只有 sync 推上来的 talks 数据，没有 CompactDB）
+    async fn search_talks_fts_fallback(
+        &self,
+        query: &str,
+        limit: usize,
+        project_id: Option<i64>,
+    ) -> Result<Vec<HybridSearchResult>> {
+        let results = self.db.search_talks_fts(query, limit, project_id).await?;
+
+        tracing::debug!("[Talks FTS Fallback] Found {} results", results.len());
+
+        Ok(results
+            .into_iter()
+            .enumerate()
+            .map(|(idx, r)| HybridSearchResult {
+                message_id: None,
+                session_id: r.session_id,
+                project_id: r.project_id,
+                project_name: r.project_name,
+                message_type: "talk".to_string(),
+                content: r.summary_l2.clone(),
+                snippet: Some(r.snippet),
+                score: r.score.abs(),
+                timestamp: Some(crate::domain::ms_to_local_iso(r.created_at)),
+                sources: SearchSources {
+                    fts: true,
+                    vector: false,
+                },
+                fts_rank: Some(idx + 1),
+                vector_distance: None,
+                chunk_index: None,
+                search_level: "l2".to_string(),
+                source_id: Some(r.talk_id),
+            })
+            .collect())
     }
 }
 

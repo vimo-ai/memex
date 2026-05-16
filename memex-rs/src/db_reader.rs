@@ -298,6 +298,17 @@ impl DbReader {
         )?)
     }
 
+    /// 搜索 talks 表 FTS (L2 摘要)
+    pub async fn search_talks_fts(
+        &self,
+        query: &str,
+        limit: usize,
+        project_id: Option<i64>,
+    ) -> Result<Vec<ai_cli_session_db::TalkSearchResult>> {
+        let db = self.db.read().await;
+        Ok(db.search_talks_fts(query, limit, project_id)?)
+    }
+
     // ==================== 统计和维护 ====================
 
     /// 获取统计信息

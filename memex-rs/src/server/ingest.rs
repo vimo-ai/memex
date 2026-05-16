@@ -73,6 +73,26 @@ impl IngestState {
             conn.execute_batch("ALTER TABLE projects ADD COLUMN repo_url TEXT;")?;
         }
 
+        // talks_fts backfill: 填充已有 talks 数据到 FTS 索引
+        let talks_fts_exists: bool = conn
+            .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='talks_fts'")
+            .and_then(|mut s| s.exists([]))
+            .unwrap_or(false);
+        if talks_fts_exists {
+            let fts_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM talks_fts", [], |row| row.get(0))
+                .unwrap_or(0);
+            let talks_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM talks", [], |row| row.get(0))
+                .unwrap_or(0);
+            if fts_count == 0 && talks_count > 0 {
+                info!("backfilling talks_fts with {} existing records", talks_count);
+                conn.execute_batch(
+                    "INSERT INTO talks_fts(rowid, summary_l2) SELECT id, summary_l2 FROM talks;"
+                )?;
+            }
+        }
+
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS sync_devices (
                 device_id          TEXT PRIMARY KEY,
