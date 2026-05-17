@@ -989,6 +989,14 @@ impl HybridSearchService {
 
         tracing::debug!("[Talks FTS Fallback] Found {} results", results.len());
 
+        // talks_fts 也没数据时，降级到 raw FTS
+        if results.is_empty() {
+            tracing::info!("[Talks FTS Fallback] No talks data, falling back to raw FTS");
+            return self
+                .search_raw(query, SearchMode::Fts, limit, project_id, SearchOrderBy::Score, None, None)
+                .await;
+        }
+
         Ok(results
             .into_iter()
             .enumerate()
