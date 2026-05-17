@@ -989,11 +989,15 @@ impl HybridSearchService {
 
         tracing::debug!("[Talks FTS Fallback] Found {} results", results.len());
 
-        // talks_fts 也没数据时，降级到 raw FTS
+        // talks_fts 也没数据时，降级到 raw FTS（强制 30 天时间窗口避免全表扫描）
         if results.is_empty() {
-            tracing::info!("[Talks FTS Fallback] No talks data, falling back to raw FTS");
+            let end = chrono::Local::now();
+            let start = end - chrono::Duration::days(30);
+            let start_date = Some(start.format("%Y-%m-%d").to_string());
+            let end_date = Some(end.format("%Y-%m-%d").to_string());
+            tracing::info!("[Talks FTS Fallback] No talks data, falling back to raw FTS (last 30d)");
             return self
-                .search_raw(query, SearchMode::Fts, limit, project_id, SearchOrderBy::Score, None, None)
+                .search_raw(query, SearchMode::Fts, limit, project_id, SearchOrderBy::Score, start_date, end_date)
                 .await;
         }
 
