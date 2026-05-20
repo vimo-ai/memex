@@ -48,10 +48,19 @@ jobs:
           path: deps/ai-cli-session-collector
           token: ${{ secrets.VIMO_CORE_PAT }}
 
-      - name: Create symlinks for dependencies
+      - name: Patch dependencies to use local private checkouts
         run: |
-          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-db $GITHUB_WORKSPACE/../ai-cli-session-db
-          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-collector $GITHUB_WORKSPACE/../ai-cli-session-collector
+          # ai-cli-session-db → use local collector instead of public git
+          sed -i 's|ai-cli-session-collector = { git = "https://github.com/vimo-ai/ai-cli-session-collector" }|ai-cli-session-collector = { path = "../ai-cli-session-collector" }|' deps/ai-cli-session-db/Cargo.toml
+
+          # memex-rs → use local session-db instead of public git
+          sed -i 's|ai-cli-session-db = { git = "https://github.com/vimo-ai/ai-cli-session-db"[^}]*}|ai-cli-session-db = { path = "../deps/ai-cli-session-db", features = ["reader", "search", "sync"] }|' memex-rs/Cargo.toml
+
+          # Verify patches applied
+          echo "=== ai-cli-session-db/Cargo.toml (collector dep) ==="
+          grep "ai-cli-session-collector" deps/ai-cli-session-db/Cargo.toml
+          echo "=== memex-rs/Cargo.toml (session-db dep) ==="
+          grep "ai-cli-session-db" memex-rs/Cargo.toml
 
       - name: Install protobuf
         run: |
