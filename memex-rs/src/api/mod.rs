@@ -8,6 +8,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -18,10 +19,23 @@ use crate::db_reader::DbReader;
 use crate::domain::{MessageListDto, ProjectListDto, SessionListDto, SessionSearchDto};
 use crate::indexer::VectorIndexer;
 use crate::inject::InjectService;
+use crate::knowledge::{KnowledgeService, KnowledgeStore};
 use crate::llm::{ChatProvider, EmbeddingProvider};
 use crate::rag::{RagOptions, RagService};
 use crate::search::{HybridSearchOptions, HybridSearchResult, HybridSearchService, remote::RemoteSearchClient};
 use crate::vector::VectorStore;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KnowledgeJobProgress {
+    pub project_id: i64,
+    pub total_sessions: usize,
+    pub processed: usize,
+    pub failed: usize,
+    pub nodes_extracted: usize,
+    pub status: String, // "running", "done", "error"
+    pub error: Option<String>,
+    pub started_at: String,
+}
 
 /// 应用状态
 pub struct AppState {
@@ -45,6 +59,14 @@ pub struct AppState {
     pub compact_vector: Option<Arc<RwLock<CompactVectorStore>>>,
     /// 远程搜索客户端（sync server fallback）
     pub remote_search: Option<RemoteSearchClient>,
+    /// Knowledge store (L4 read-only, always available)
+    pub knowledge_store: KnowledgeStore,
+    /// Knowledge service (L4 extraction, requires chat/embed providers)
+    pub knowledge: Option<Arc<KnowledgeService>>,
+    /// Knowledge extraction job progress
+    pub knowledge_job: Arc<RwLock<Option<KnowledgeJobProgress>>>,
+    /// Cancel flag for running knowledge job
+    pub knowledge_cancel: Arc<AtomicBool>,
     /// 启动初始化耗时（毫秒）
     pub startup_duration_ms: u64,
 }
@@ -105,6 +127,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Compact
         .route("/api/compact/trigger", post(compact_trigger))
         .route("/api/compact/status", get(compact_status))
+        // Knowledge (L4)
+        .route("/api/knowledge/status", get(knowledge_status))
+        .route("/api/knowledge/extract", post(knowledge_extract))
+        .route("/api/knowledge/cancel", post(knowledge_cancel))
         // Inject (Claude Code Hook)
         .route("/api/inject", post(inject))
         .with_state(state)
@@ -1478,6 +1504,184 @@ struct InjectMeta {
     count: usize,
     estimated_tokens: usize,
     mode: String,
+}
+
+// ==================== Knowledge (L4) ====================
+
+/// GET /api/knowledge/status?search=xxx&limit=5
+///
+/// Returns global stats + pending projects (with unprocessed sessions).
+async fn knowledge_status(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<KnowledgeStatusQuery>,
+) -> Result<impl IntoResponse, AppError> {
+    let ks = match state.knowledge.as_ref() {
+        Some(ks) => ks,
+        None => {
+            return Ok(Json(serde_json::json!({
+                "enabled": false,
+                "nodes": 0,
+                "clusters": 0,
+                "pending": [],
+            })));
+        }
+    };
+
+    let (nodes, clusters) = ks.global_stats().await.unwrap_or((0, 0));
+    let limit = query.limit.unwrap_or(5);
+    let pending = ks
+        .get_pending_projects(query.search.as_deref(), limit)
+        .await
+        .unwrap_or_default();
+
+    let job = state.knowledge_job.read().await;
+
+    Ok(Json(serde_json::json!({
+        "enabled": true,
+        "chatModel": state.config.knowledge.chat_model,
+        "nodes": nodes,
+        "clusters": clusters,
+        "pending": pending,
+        "job": *job,
+    })))
+}
+
+#[derive(Deserialize)]
+struct KnowledgeStatusQuery {
+    search: Option<String>,
+    limit: Option<usize>,
+}
+
+/// POST /api/knowledge/extract
+///
+/// Trigger L4 extraction for a project (async — returns immediately, runs in background).
+async fn knowledge_extract(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<KnowledgeExtractRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let ks = state.knowledge.clone()
+        .ok_or_else(|| AppError(anyhow::anyhow!("knowledge not enabled")))?;
+
+    // Check if a job is already running
+    {
+        let job = state.knowledge_job.read().await;
+        if let Some(ref j) = *job {
+            if j.status == "running" {
+                return Ok(Json(serde_json::json!({
+                    "status": "already_running",
+                    "job": j,
+                })));
+            }
+        }
+    }
+
+    let limit = req.limit.unwrap_or(usize::MAX);
+    let desc = req.desc.as_deref().unwrap_or("a software engineering project").to_string();
+    let project_id = req.project_id;
+
+    let pending = ks.count_unprocessed(&[project_id], limit).await
+        .map_err(|e| AppError(e))?;
+
+    if pending == 0 {
+        return Ok(Json(serde_json::json!({
+            "status": "no_pending",
+            "totalSessions": 0,
+        })));
+    }
+
+    // Initialize job progress
+    let now = chrono::Local::now().format("%H:%M:%S").to_string();
+    {
+        let mut job = state.knowledge_job.write().await;
+        *job = Some(KnowledgeJobProgress {
+            project_id,
+            total_sessions: pending,
+            processed: 0,
+            failed: 0,
+            nodes_extracted: 0,
+            status: "running".to_string(),
+            error: None,
+            started_at: now.clone(),
+        });
+    }
+
+    // Reset cancel flag and spawn background task
+    state.knowledge_cancel.store(false, Ordering::Relaxed);
+    let job_ref = state.knowledge_job.clone();
+    let cancel_flag = state.knowledge_cancel.clone();
+    tokio::spawn(async move {
+        let job_ref2 = job_ref.clone();
+        let result = ks.process_project_with_progress(
+            &[project_id],
+            limit,
+            &desc,
+            move |_done, r| {
+                if let Ok(mut job) = job_ref2.try_write() {
+                    if let Some(ref mut j) = *job {
+                        j.processed = r.sessions_processed;
+                        j.failed = r.sessions_failed;
+                        j.nodes_extracted = r.nodes_extracted;
+                    }
+                }
+            },
+            Some(cancel_flag),
+        ).await;
+
+        let mut job = job_ref.write().await;
+        if let Some(ref mut j) = *job {
+            match result {
+                Ok(r) => {
+                    j.processed = r.sessions_processed;
+                    j.failed = r.sessions_failed;
+                    j.nodes_extracted = r.nodes_extracted;
+                    j.status = "done".to_string();
+                    tracing::info!("L4 job done: {r}");
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg == "cancelled" {
+                        j.status = "cancelled".to_string();
+                        tracing::info!("L4 job cancelled at {}/{}", j.processed, j.total_sessions);
+                    } else {
+                        j.status = "error".to_string();
+                        j.error = Some(msg);
+                        tracing::error!("L4 job error: {e}");
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(Json(serde_json::json!({
+        "status": "started",
+        "totalSessions": pending,
+    })))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KnowledgeExtractRequest {
+    project_id: i64,
+    limit: Option<usize>,
+    desc: Option<String>,
+}
+
+/// POST /api/knowledge/cancel
+///
+/// Cancel a running L4 extraction job.
+async fn knowledge_cancel(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, AppError> {
+    let job = state.knowledge_job.read().await;
+    let is_running = job.as_ref().map_or(false, |j| j.status == "running");
+    drop(job);
+
+    if is_running {
+        state.knowledge_cancel.store(true, Ordering::Relaxed);
+        Ok(Json(serde_json::json!({ "status": "cancelling" })))
+    } else {
+        Ok(Json(serde_json::json!({ "status": "no_running_job" })))
+    }
 }
 
 /// Claude Code Hook 上下文注入

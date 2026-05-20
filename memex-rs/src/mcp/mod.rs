@@ -231,6 +231,19 @@ fn get_tools() -> Vec<Value> {
                 "properties": {}
             }
         }),
+        json!({
+            "name": "extract_knowledge",
+            "description": "Extract L4 knowledge nodes from sessions. Requires knowledge.enabled=true in config and a strong chat model (e.g. qwen3:14b).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "Project path or glob pattern (e.g. '*ETerm*')" },
+                    "limit": { "type": "number", "description": "Max sessions to process (default 10)" },
+                    "dry_run": { "type": "boolean", "description": "Preview only, don't write DB" },
+                    "desc": { "type": "string", "description": "Project description for LLM prompts" }
+                }
+            }
+        }),
     ]
 }
 
@@ -344,6 +357,7 @@ async fn call_tool(state: &AppState, name: &str, args: Value) -> Result<Value, S
         "get_session" => get_session(state, args).await,
         "get_recent_sessions" => get_recent_sessions(state, args).await,
         "list_projects" => list_projects(state, args).await,
+        "extract_knowledge" => extract_knowledge(state, args).await,
         _ => Err(format!("Unknown tool: {}", name)),
     }
 }
@@ -527,10 +541,23 @@ async fn search_session_summaries(
 
     // 多取一些结果用于过滤
     let search_limit = if filter.is_empty() { limit } else { limit * 3 };
-    let results = compact_db
+    let mut results = compact_db
         .search_session_summaries_with_sessions(query, search_limit, session_ids)
         .await
         .map_err(|e| e.to_string())?;
+
+    // L4 knowledge search: find sessions via knowledge nodes
+    let l4_session_ids = search_knowledge_sessions(state, query, limit * 2).await;
+    let l3_session_set: std::collections::HashSet<String> = results.iter().map(|s| s.session_id.clone()).collect();
+    let mut l4_extras = Vec::new();
+    for sid in &l4_session_ids {
+        if !l3_session_set.contains(sid) {
+            if let Ok(Some(summary)) = compact_db.get_session_summary(sid).await {
+                l4_extras.push(summary);
+            }
+        }
+    }
+    results.extend(l4_extras);
 
     // 如果没有结果，fallback 到 talks
     if results.is_empty() {
@@ -538,20 +565,14 @@ async fn search_session_summaries(
     }
 
     // 获取 session 到 project_id 的映射（用于过滤）
+    let all_sids: Vec<String> = results.iter().map(|s| s.session_id.clone()).collect();
     let session_project_map = if !filter.is_empty() {
-        get_session_project_map(
-            state,
-            &results
-                .iter()
-                .map(|s| s.session_id.clone())
-                .collect::<Vec<_>>(),
-        )
-        .await
+        get_session_project_map(state, &all_sids).await
     } else {
         std::collections::HashMap::new()
     };
 
-    let formatted: Vec<Value> = results
+    let filtered: Vec<_> = results
         .iter()
         .filter(|s| {
             if filter.is_empty() {
@@ -560,19 +581,31 @@ async fn search_session_summaries(
             if let Some(&project_id) = session_project_map.get(&s.session_id) {
                 filter.matches(project_id)
             } else {
-                true // 如果找不到映射，不过滤
+                true
             }
         })
         .take(limit)
+        .collect();
+
+    // L4 knowledge enrichment
+    let session_ids_for_l4: Vec<String> = filtered.iter().map(|s| s.session_id.clone()).collect();
+    let knowledge_map = enrich_with_knowledge(state, &session_ids_for_l4).await;
+
+    let formatted: Vec<Value> = filtered
+        .iter()
         .map(|s| {
-            json!({
+            let mut entry = json!({
                 "session": &s.session_id,
                 "summary": &s.summary,
                 "keyPoints": &s.key_points,
                 "files": &s.files_involved,
                 "technologies": &s.technologies,
                 "time": &s.updated_at
-            })
+            });
+            if let Some(nodes) = knowledge_map.get(&s.session_id) {
+                entry["knowledge"] = json!(nodes);
+            }
+            entry
         })
         .collect();
 
@@ -582,6 +615,43 @@ async fn search_session_summaries(
         "level": "sessions",
         "hint": "Use level='talks' for per-prompt details, or get_session for full context"
     }))
+}
+
+/// Batch-load L4 knowledge nodes for a set of sessions, grouped by session_id.
+/// Search L4 knowledge nodes and return matching session IDs.
+async fn search_knowledge_sessions(state: &AppState, query: &str, limit: usize) -> Vec<String> {
+    let nodes = match state.knowledge_store.search_nodes(query, limit).await {
+        Ok(n) => n,
+        Err(_) => return Vec::new(),
+    };
+    let mut seen = std::collections::HashSet::new();
+    nodes.into_iter()
+        .filter_map(|n| if seen.insert(n.session_id.clone()) { Some(n.session_id) } else { None })
+        .collect()
+}
+
+async fn enrich_with_knowledge(
+    state: &AppState,
+    session_ids: &[String],
+) -> std::collections::HashMap<String, Vec<Value>> {
+    let nodes = match state.knowledge_store.get_nodes_by_sessions(session_ids).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::debug!("L4 knowledge lookup skipped: {e}");
+            return std::collections::HashMap::new();
+        }
+    };
+    let mut map: std::collections::HashMap<String, Vec<Value>> = std::collections::HashMap::new();
+    for n in nodes {
+        map.entry(n.session_id.clone()).or_default().push(json!({
+            "topic": n.topic,
+            "conclusion": n.conclusion,
+            "confidence": n.confidence,
+            "type": n.node_type,
+            "cluster": n.cluster_id,
+        }));
+    }
+    map
 }
 
 /// L2: 搜索对话摘要
@@ -1101,6 +1171,123 @@ async fn list_projects(state: &AppState, _args: Value) -> Result<Value, String> 
     Ok(json!({ "projects": formatted }))
 }
 
+async fn extract_knowledge(state: &AppState, args: Value) -> Result<Value, String> {
+    let service = state.knowledge.clone()
+        .ok_or("knowledge extraction not enabled — set knowledge.enabled=true in config")?;
+
+    // Check status / get current job
+    if args.get("status").and_then(|v| v.as_bool()).unwrap_or(false) {
+        let job = state.knowledge_job.read().await;
+        return Ok(json!({ "job": *job }));
+    }
+
+    // Check if already running
+    {
+        let job = state.knowledge_job.read().await;
+        if let Some(ref j) = *job {
+            if j.status == "running" {
+                return Ok(json!({
+                    "status": "already_running",
+                    "job": j,
+                }));
+            }
+        }
+    }
+
+    let project_filter = args.get("project").and_then(|v| v.as_str());
+    let limit = args.get("limit").and_then(|v| v.as_u64()).map(|v| v as usize).unwrap_or(usize::MAX);
+    let project_desc = args
+        .get("desc")
+        .and_then(|v| v.as_str())
+        .unwrap_or("a software engineering project")
+        .to_string();
+
+    let projects = state.db.list_projects().await.map_err(|e| e.to_string())?;
+    let project_ids: Vec<i64> = if let Some(filter) = project_filter {
+        projects
+            .iter()
+            .filter(|p| p.path.contains(filter) || p.name.contains(filter))
+            .map(|p| p.id)
+            .collect()
+    } else {
+        projects.iter().map(|p| p.id).collect()
+    };
+
+    if project_ids.is_empty() {
+        return Ok(json!({"error": "no projects matched", "filter": project_filter}));
+    }
+
+    let pending = service.count_unprocessed(&project_ids, limit).await
+        .map_err(|e| e.to_string())?;
+
+    if pending == 0 {
+        return Ok(json!({ "status": "no_pending", "totalSessions": 0 }));
+    }
+
+    let now = chrono::Local::now().format("%H:%M:%S").to_string();
+    {
+        let mut job = state.knowledge_job.write().await;
+        *job = Some(crate::api::KnowledgeJobProgress {
+            project_id: project_ids[0],
+            total_sessions: pending,
+            processed: 0,
+            failed: 0,
+            nodes_extracted: 0,
+            status: "running".to_string(),
+            error: None,
+            started_at: now,
+        });
+    }
+
+    state.knowledge_cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+    let job_ref = state.knowledge_job.clone();
+    let cancel_flag = state.knowledge_cancel.clone();
+    tokio::spawn(async move {
+        let job_ref2 = job_ref.clone();
+        let result = service.process_project_with_progress(
+            &project_ids,
+            limit,
+            &project_desc,
+            move |_done, r| {
+                if let Ok(mut job) = job_ref2.try_write() {
+                    if let Some(ref mut j) = *job {
+                        j.processed = r.sessions_processed;
+                        j.failed = r.sessions_failed;
+                        j.nodes_extracted = r.nodes_extracted;
+                    }
+                }
+            },
+            Some(cancel_flag),
+        ).await;
+
+        let mut job = job_ref.write().await;
+        if let Some(ref mut j) = *job {
+            match result {
+                Ok(r) => {
+                    j.processed = r.sessions_processed;
+                    j.failed = r.sessions_failed;
+                    j.nodes_extracted = r.nodes_extracted;
+                    j.status = "done".to_string();
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg == "cancelled" {
+                        j.status = "cancelled".to_string();
+                    } else {
+                        j.status = "error".to_string();
+                        j.error = Some(msg);
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(json!({
+        "status": "started",
+        "totalSessions": pending,
+    }))
+}
+
 /// 根据 cwd 查找项目
 async fn find_project_by_cwd(state: &AppState, cwd: &str) -> Option<i64> {
     let projects = state.db.list_projects_with_stats(1000, 0).await.ok()?;
@@ -1536,7 +1723,7 @@ mod tests {
     #[test]
     fn test_tools_schema() {
         let tools = get_tools();
-        assert_eq!(tools.len(), 4);
+        assert_eq!(tools.len(), 5);
 
         // search_history
         let search = &tools[0];
@@ -1733,6 +1920,10 @@ mod tests {
 
             // 创建 AppState
             let config = Config::default();
+            let knowledge_store = {
+                let conn = rusqlite::Connection::open(&db_path).unwrap();
+                crate::knowledge::KnowledgeStore::new(Arc::new(tokio::sync::Mutex::new(conn)))
+            };
             let backup = BackupService::new(db_path, backup_dir);
             let hybrid_search = HybridSearchService::new(db.clone(), None, None);
             let rag_service = RagService::new(db.clone(), None, None, None);
@@ -1751,6 +1942,10 @@ mod tests {
                 compact_queue: None,
                 compact_vector: None,
                 remote_search: None,
+                knowledge_store,
+                knowledge: None,
+                knowledge_job: Arc::new(tokio::sync::RwLock::new(None)),
+                knowledge_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 startup_duration_ms: 0,
             };
 
@@ -2066,9 +2261,13 @@ mod tests {
 
             let db = Arc::new(DbReader::new(Some(db_path.clone())).unwrap());
             let config = Config::default();
-            let backup = BackupService::new(db_path, backup_dir);
+            let backup = BackupService::new(db_path.clone(), backup_dir);
             let hybrid_search = HybridSearchService::new(db.clone(), None, None);
             let rag_service = RagService::new(db.clone(), None, None, None);
+            let knowledge_store = {
+                let conn = rusqlite::Connection::open(&db_path).unwrap();
+                crate::knowledge::KnowledgeStore::new(Arc::new(tokio::sync::Mutex::new(conn)))
+            };
 
             let state = AppState {
                 config,
@@ -2084,6 +2283,10 @@ mod tests {
                 compact_queue: None,
                 compact_vector: None,
                 remote_search: None,
+                knowledge_store,
+                knowledge: None,
+                knowledge_job: Arc::new(tokio::sync::RwLock::new(None)),
+                knowledge_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 startup_duration_ms: 0,
             };
 

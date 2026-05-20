@@ -7,12 +7,14 @@ use serde::Deserialize;
 use std::path::PathBuf;
 
 use crate::compact::CompactConfig;
+use crate::knowledge::KnowledgeConfig;
 
 /// 配置文件结构（用于反序列化 JSON）
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct FileConfig {
     compact: CompactConfig,
+    knowledge: KnowledgeConfig,
     server: ServerConfig,
     ollama: OllamaConfig,
     features: FeaturesConfig,
@@ -85,6 +87,8 @@ pub struct Config {
     pub enable_ai_chat: bool,
     /// Compact 配置
     pub compact: CompactConfig,
+    /// Knowledge 配置 (L4)
+    pub knowledge: KnowledgeConfig,
     /// 备份配置
     pub backup: BackupConfig,
     /// 远程 sync server（用于搜索 fallback）
@@ -207,6 +211,9 @@ impl Config {
                 }
                 compact
             },
+
+            // Knowledge 配置 (L4)
+            knowledge: file_config.knowledge,
 
             // 备份配置
             backup: file_config.backup,

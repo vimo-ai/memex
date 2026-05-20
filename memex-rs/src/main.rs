@@ -22,6 +22,7 @@ use memex::compact::{
 };
 use memex::config::Config;
 use memex::db_reader::DbReader;
+use memex::knowledge::{KnowledgeService, KnowledgeStore};
 use memex::indexer::VectorIndexer;
 use memex::llm::{ChatProvider, EmbeddingProvider, OllamaProvider};
 use memex::rag::RagService;
@@ -56,6 +57,12 @@ async fn main() -> anyhow::Result<()> {
                 println!("    --monthly          Run monthly merge");
                 println!("    --yearly           Run yearly merge");
                 println!();
+                println!("  extract-knowledge    L4 knowledge extraction");
+                println!("    --project <path>   Project path filter (glob, e.g. '*ETerm*')");
+                println!("    --limit <N>        Max sessions to process (default 10)");
+                println!("    --dry-run          Preview only, don't write DB");
+                println!("    --desc <text>      Project description for LLM prompts");
+                println!();
                 println!("Options:");
                 println!("  -V, --version    Show version");
                 println!("  -h, --help       Show help");
@@ -75,6 +82,9 @@ async fn main() -> anyhow::Result<()> {
             }
             "archive" => {
                 return handle_archive_command(&args[2..]).await;
+            }
+            "extract-knowledge" => {
+                return handle_extract_knowledge(&args[2..]).await;
             }
             _ => {
                 eprintln!("Unknown argument: {}", args[1]);
@@ -464,11 +474,64 @@ async fn main() -> anyhow::Result<()> {
         vector.clone(),
     );
 
+    // Initialize Knowledge service (L4) if enabled
+    let knowledge: Option<Arc<KnowledgeService>> = if config.knowledge.enabled {
+        let chat_model = config.knowledge.chat_model.as_deref().unwrap_or(&config.chat_model);
+        let embed_model = config.knowledge.embedding_model.as_deref().unwrap_or(&config.embedding_model);
+
+        let (k_chat, k_embed): (Arc<dyn ChatProvider>, Arc<dyn EmbeddingProvider>) =
+            match config.knowledge.provider.as_str() {
+                "openai" => {
+                    let api_base = config.knowledge.api_base.as_deref()
+                        .unwrap_or("https://api.openai.com/v1");
+                    let api_key = config.knowledge.api_key.as_deref().unwrap_or("");
+                    let chat_provider = memex::llm::OpenAIProvider::new(api_base, api_key, chat_model);
+                    // embedding stays on ollama (cheaper, local)
+                    let embed_api = config.knowledge.api_base.as_deref()
+                        .unwrap_or(&config.ollama_api);
+                    let embed_provider = OllamaProvider::new(embed_api, embed_model, chat_model);
+                    (Arc::new(chat_provider), Arc::new(embed_provider))
+                }
+                _ => {
+                    // "ollama" (default) — supports local or remote ollama
+                    let api_base = config.knowledge.api_base.as_deref()
+                        .unwrap_or(&config.ollama_api);
+                    let provider = OllamaProvider::new(api_base, embed_model, chat_model);
+                    (Arc::new(provider.clone()), Arc::new(provider))
+                }
+            };
+
+        let k_conn = rusqlite::Connection::open(config.db_path())?;
+        let k_store = KnowledgeStore::new(Arc::new(tokio::sync::Mutex::new(k_conn)));
+
+        let service = KnowledgeService::new(k_store, db.clone(), k_chat, k_embed, config.knowledge.clone());
+        if let Err(e) = service.ensure_schema().await {
+            tracing::warn!("⚠️ Knowledge schema init failed: {e}");
+        } else {
+            tracing::info!(
+                "🧠 Knowledge L4 enabled (provider: {}, chat: {chat_model}, embed: {embed_model})",
+                config.knowledge.provider
+            );
+        }
+        Some(Arc::new(service))
+    } else {
+        None
+    };
+
     // 计算启动初始化耗时
     let startup_duration_ms = startup_start.elapsed().as_millis() as u64;
     tracing::info!("⏱️ Startup initialization took {}ms", startup_duration_ms);
 
     let remote_search = memex::search::remote::RemoteSearchClient::from_config(&config);
+
+    // L4 knowledge store (read-only, always available regardless of knowledge.enabled)
+    let knowledge_store = {
+        let conn = rusqlite::Connection::open_with_flags(
+            config.db_path(),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        KnowledgeStore::new(Arc::new(tokio::sync::Mutex::new(conn)))
+    };
 
     // Create app state
     let state = Arc::new(AppState {
@@ -485,6 +548,10 @@ async fn main() -> anyhow::Result<()> {
         compact_queue,
         compact_vector,
         remote_search,
+        knowledge_store,
+        knowledge,
+        knowledge_job: Arc::new(tokio::sync::RwLock::new(None)),
+        knowledge_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         startup_duration_ms,
     });
 
@@ -1063,4 +1130,174 @@ async fn handle_archive_command(args: &[String]) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Handle extract-knowledge command
+async fn handle_extract_knowledge(args: &[String]) -> anyhow::Result<()> {
+    let timer = tracing_subscriber::fmt::time::OffsetTime::new(
+        time::UtcOffset::from_hms(8, 0, 0).unwrap(),
+        time::macros::format_description!("[hour]:[minute]:[second]"),
+    );
+    tracing_subscriber::fmt()
+        .with_timer(timer)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "memex=info".into()),
+        )
+        .init();
+
+    let config = Config::load();
+
+    if !config.knowledge.enabled {
+        eprintln!("Knowledge extraction is disabled. Enable in ~/.vimo/memex/config.json:");
+        eprintln!("  {{\"knowledge\": {{\"enabled\": true, \"chat_model\": \"qwen3:14b\"}}}}");
+        std::process::exit(1);
+    }
+
+    // Parse CLI args
+    let mut project_filter: Option<String> = None;
+    let mut limit: usize = 10;
+    let mut dry_run = false;
+    let mut project_desc = "a software engineering project".to_string();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--project" => {
+                i += 1;
+                project_filter = Some(args.get(i).cloned().unwrap_or_default());
+            }
+            "--limit" => {
+                i += 1;
+                limit = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(10);
+            }
+            "--dry-run" => dry_run = true,
+            "--desc" => {
+                i += 1;
+                project_desc = args.get(i).cloned().unwrap_or(project_desc);
+            }
+            other => {
+                eprintln!("Unknown option: {other}");
+                std::process::exit(1);
+            }
+        }
+        i += 1;
+    }
+
+    // Initialize providers
+    let chat_model = config.knowledge.chat_model.as_deref().unwrap_or(&config.chat_model);
+    let embed_model = config.knowledge.embedding_model.as_deref().unwrap_or(&config.embedding_model);
+
+    let (chat, embed): (Arc<dyn ChatProvider>, Arc<dyn EmbeddingProvider>) =
+        match config.knowledge.provider.as_str() {
+            "openai" => {
+                let api_base = config.knowledge.api_base.as_deref()
+                    .unwrap_or("https://api.openai.com/v1");
+                let api_key = config.knowledge.api_key.as_deref().unwrap_or("");
+                let chat_provider = memex::llm::OpenAIProvider::new(api_base, api_key, chat_model);
+                let embed_api = config.knowledge.api_base.as_deref()
+                    .unwrap_or(&config.ollama_api);
+                let embed_provider = OllamaProvider::new(embed_api, embed_model, chat_model);
+                (Arc::new(chat_provider), Arc::new(embed_provider))
+            }
+            _ => {
+                let api_base = config.knowledge.api_base.as_deref()
+                    .unwrap_or(&config.ollama_api);
+                let provider = OllamaProvider::new(api_base, embed_model, chat_model);
+                (Arc::new(provider.clone()), Arc::new(provider))
+            }
+        };
+
+    tracing::info!(
+        "provider: {}, chat: {chat_model}, embed: {embed_model}",
+        config.knowledge.provider
+    );
+
+    if !chat.is_available().await {
+        eprintln!("Chat provider not available");
+        std::process::exit(1);
+    }
+
+    // Initialize DB + store
+    let db = Arc::new(DbReader::new(Some(config.db_path()))?);
+
+    let db_path = config.db_path();
+    let conn = rusqlite::Connection::open(&db_path)?;
+    let store = KnowledgeStore::new(Arc::new(tokio::sync::Mutex::new(conn)));
+
+    let service = KnowledgeService::new(store, db.clone(), chat, embed, config.knowledge.clone());
+    service.ensure_schema().await?;
+
+    // Find matching projects
+    let projects = db.list_projects().await?;
+    let project_ids: Vec<i64> = if let Some(ref filter) = project_filter {
+        projects
+            .iter()
+            .filter(|p| glob_match(filter, &p.path) || glob_match(filter, &p.name))
+            .map(|p| p.id)
+            .collect()
+    } else {
+        projects.iter().map(|p| p.id).collect()
+    };
+
+    if project_ids.is_empty() {
+        eprintln!("No projects matched filter: {:?}", project_filter);
+        std::process::exit(1);
+    }
+
+    tracing::info!("{} projects matched, limit {limit}", project_ids.len());
+
+    if dry_run {
+        let sessions = store_get_unprocessed(&config, &project_ids, limit).await?;
+        println!("Would process {} sessions:", sessions.len());
+        for (sid, _pid, day) in &sessions {
+            println!("  {} ({})", &sid[..8.min(sid.len())], day);
+        }
+        return Ok(());
+    }
+
+    let result = service.process_project(&project_ids, limit, &project_desc).await?;
+    println!("{result}");
+
+    Ok(())
+}
+
+fn glob_match(pattern: &str, text: &str) -> bool {
+    if pattern.contains('*') {
+        let parts: Vec<&str> = pattern.split('*').collect();
+        let mut pos = 0;
+        for (i, part) in parts.iter().enumerate() {
+            if part.is_empty() {
+                continue;
+            }
+            match text[pos..].find(part) {
+                Some(found) => {
+                    if i == 0 && found != 0 {
+                        return false;
+                    }
+                    pos += found + part.len();
+                }
+                None => return false,
+            }
+        }
+        if let Some(last) = parts.last() {
+            if !last.is_empty() {
+                return text.ends_with(last);
+            }
+        }
+        true
+    } else {
+        text.contains(pattern)
+    }
+}
+
+async fn store_get_unprocessed(
+    config: &Config,
+    project_ids: &[i64],
+    limit: usize,
+) -> anyhow::Result<Vec<(String, i64, String)>> {
+    let conn = rusqlite::Connection::open(config.db_path())?;
+    let store = KnowledgeStore::new(Arc::new(tokio::sync::Mutex::new(conn)));
+    store.ensure_schema().await?;
+    store.get_unprocessed_sessions(project_ids, limit).await
 }
