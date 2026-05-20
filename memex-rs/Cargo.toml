@@ -22,6 +22,7 @@ required-features = ["server-mode"]
 default = ["cli"]
 cli = ["notify", "notify-debouncer-mini", "axum", "tower-http", "tokio-cron-scheduler", "rust-embed", "mime_guess"]
 server-mode = ["axum", "tower-http", "dep:axum-server", "dep:rustls", "dep:rustls-pemfile"]
+team = ["ai-cli-session-db/team"]
 
 [dependencies]
 # HTTP 框架 (CLI only)
