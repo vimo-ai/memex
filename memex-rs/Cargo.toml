@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "memex"
 path = "src/main.rs"
-required-features = ["cli"]
+required-features = ["cli-core"]
 
 [[bin]]
 name = "memex-server"
