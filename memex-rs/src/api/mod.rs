@@ -1591,7 +1591,7 @@ async fn knowledge_extract(
     let pending = ks
         .count_unprocessed(&[project_id], limit)
         .await
-        .map_err(|e| AppError(e))?;
+        .map_err(AppError)?;
 
     if pending == 0 {
         return Ok(Json(serde_json::json!({
@@ -1686,7 +1686,7 @@ async fn knowledge_cancel(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, AppError> {
     let job = state.knowledge_job.read().await;
-    let is_running = job.as_ref().map_or(false, |j| j.status == "running");
+    let is_running = job.as_ref().is_some_and(|j| j.status == "running");
     drop(job);
 
     if is_running {

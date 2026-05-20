@@ -51,11 +51,10 @@ impl Extractor {
                         continue;
                     }
                     if let Some(ref raw) = msg.raw {
-                        if raw.contains("\"tool_result\"") || raw.contains("\"tool_use\"") {
-                            if text.len() < 20 {
+                        if (raw.contains("\"tool_result\"") || raw.contains("\"tool_use\""))
+                            && text.len() < 20 {
                                 continue;
                             }
-                        }
                     }
                     lines.push(format!("ASSISTANT: {text}"));
                 }

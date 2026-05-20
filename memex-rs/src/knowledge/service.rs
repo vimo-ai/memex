@@ -95,7 +95,7 @@ impl KnowledgeService {
 
         // Stage 1: Extract + persist nodes per session (atomic per session)
         for (session_id, project_id, day) in sessions {
-            if cancel.map_or(false, |c| c.load(Ordering::Relaxed)) {
+            if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
                 info!(
                     "extraction cancelled after {} sessions",
                     result.sessions_processed
