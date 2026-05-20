@@ -279,11 +279,14 @@ async fn main() -> anyhow::Result<()> {
 
 fn log_endpoints(has_register: bool) {
     tracing::info!("Endpoints:");
-    tracing::info!("  POST /api/sync/push       - Receive client push");
-    tracing::info!("  GET  /api/sync/health     - Health check");
-    tracing::info!("  GET  /api/search          - Search (FTS/vector/hybrid)");
+    tracing::info!("  POST /api/sync/push                 - Receive client push");
+    tracing::info!("  GET  /api/sync/health               - Health check");
+    tracing::info!("  GET  /api/sync/peers                 - List peers");
+    tracing::info!("  GET  /api/sync/peers/:name/sessions  - Peer sessions");
+    tracing::info!("  GET  /api/sync/peers/:name/timeline  - Peer timeline");
+    tracing::info!("  GET  /api/search                    - Search (FTS/vector/hybrid)");
     if has_register {
-        tracing::info!("  POST /api/auth/register   - Self-registration (master_key)");
+        tracing::info!("  POST /api/auth/register             - Self-registration");
     }
 }
 

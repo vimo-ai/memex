@@ -4,12 +4,13 @@
 //! 去重依赖自然键：uuid (messages), session_id (sessions), path (projects)。
 
 use axum::{
-    extract::{ws, State, WebSocketUpgrade},
+    extract::{ws, Path, Query, State, WebSocketUpgrade},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
     Extension, Json, Router,
 };
+use serde::Deserialize;
 use rusqlite::{params, Connection};
 use std::sync::Arc;
 use tracing::{debug, error, info};
@@ -422,6 +423,177 @@ impl IngestState {
             .unwrap_or_default()
     }
 
+    pub fn query_peer_sessions(
+        &self,
+        name: &str,
+        date: Option<&str>,
+        limit: usize,
+    ) -> serde_json::Value {
+        let conn = self.conn.lock();
+
+        let (date_start, date_end) = if let Some(d) = date {
+            let start = format!("{d}T00:00:00");
+            let end = format!("{d}T23:59:59");
+            let start_ms = chrono::NaiveDateTime::parse_from_str(&start, "%Y-%m-%dT%H:%M:%S")
+                .map(|dt| dt.and_utc().timestamp_millis())
+                .unwrap_or(0);
+            let end_ms = chrono::NaiveDateTime::parse_from_str(&end, "%Y-%m-%dT%H:%M:%S")
+                .map(|dt| dt.and_utc().timestamp_millis())
+                .unwrap_or(i64::MAX);
+            (start_ms, end_ms)
+        } else {
+            let now = chrono::Utc::now();
+            let today_start = now
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp_millis();
+            (today_start, now.timestamp_millis())
+        };
+
+        let limit = limit.min(200);
+
+        let mut stmt = match conn.prepare(
+            r#"
+            SELECT
+                s.session_id,
+                p.name AS project,
+                s.model,
+                s.message_count,
+                s.created_at,
+                s.updated_at
+            FROM sessions s
+            JOIN projects p ON p.id = s.project_id
+            WHERE s.pushed_by = ?1
+              AND s.updated_at >= ?2
+              AND s.updated_at <= ?3
+            ORDER BY s.updated_at DESC
+            LIMIT ?4
+            "#,
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("query_peer_sessions prepare failed: {e}");
+                return serde_json::json!({"sessions": [], "total": 0});
+            }
+        };
+
+        let rows: Vec<serde_json::Value> = stmt
+            .query_map(
+                params![name, date_start, date_end, limit as i64],
+                |row| {
+                    Ok(serde_json::json!({
+                        "session_id": row.get::<_, String>(0)?,
+                        "project": row.get::<_, String>(1)?,
+                        "model": row.get::<_, Option<String>>(2)?,
+                        "message_count": row.get::<_, i64>(3)?,
+                        "created_at": row.get::<_, i64>(4)?,
+                        "updated_at": row.get::<_, i64>(5)?,
+                    }))
+                },
+            )
+            .ok()
+            .map(|r| r.filter_map(|v| v.ok()).collect())
+            .unwrap_or_default();
+
+        let total = rows.len();
+        serde_json::json!({
+            "peer": name,
+            "date": date.unwrap_or("today"),
+            "sessions": rows,
+            "total": total,
+        })
+    }
+
+    pub fn query_peer_timeline(
+        &self,
+        name: &str,
+        date: Option<&str>,
+    ) -> serde_json::Value {
+        let conn = self.conn.lock();
+
+        let (date_start, date_end) = if let Some(d) = date {
+            let start = format!("{d}T00:00:00");
+            let end = format!("{d}T23:59:59");
+            let start_ms = chrono::NaiveDateTime::parse_from_str(&start, "%Y-%m-%dT%H:%M:%S")
+                .map(|dt| dt.and_utc().timestamp_millis())
+                .unwrap_or(0);
+            let end_ms = chrono::NaiveDateTime::parse_from_str(&end, "%Y-%m-%dT%H:%M:%S")
+                .map(|dt| dt.and_utc().timestamp_millis())
+                .unwrap_or(i64::MAX);
+            (start_ms, end_ms)
+        } else {
+            let now = chrono::Utc::now();
+            let today_start = now
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp_millis();
+            (today_start, now.timestamp_millis())
+        };
+
+        // 按小时聚合消息数
+        let mut stmt = match conn.prepare(
+            r#"
+            SELECT
+                CAST((m.timestamp / 1000 / 3600) % 24 AS INTEGER) AS hour,
+                COUNT(*) AS count,
+                COUNT(DISTINCT m.session_id) AS sessions,
+                MIN(m.timestamp) AS first_msg,
+                MAX(m.timestamp) AS last_msg
+            FROM messages m
+            JOIN sessions s ON s.session_id = m.session_id
+            WHERE s.pushed_by = ?1
+              AND m.timestamp >= ?2
+              AND m.timestamp <= ?3
+            GROUP BY hour
+            ORDER BY hour
+            "#,
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("query_peer_timeline prepare failed: {e}");
+                return serde_json::json!({"hours": [], "total_messages": 0});
+            }
+        };
+
+        let hours: Vec<serde_json::Value> = stmt
+            .query_map(params![name, date_start, date_end], |row| {
+                Ok(serde_json::json!({
+                    "hour": row.get::<_, i64>(0)?,
+                    "messages": row.get::<_, i64>(1)?,
+                    "sessions": row.get::<_, i64>(2)?,
+                    "first_at": row.get::<_, i64>(3)?,
+                    "last_at": row.get::<_, i64>(4)?,
+                }))
+            })
+            .ok()
+            .map(|r| r.filter_map(|v| v.ok()).collect())
+            .unwrap_or_default();
+
+        let total_messages: i64 = hours
+            .iter()
+            .map(|h| h["messages"].as_i64().unwrap_or(0))
+            .sum();
+        let active_hours = hours.len();
+
+        // 计算工作时段
+        let first_active = hours.first().and_then(|h| h["first_at"].as_i64());
+        let last_active = hours.last().and_then(|h| h["last_at"].as_i64());
+
+        serde_json::json!({
+            "peer": name,
+            "date": date.unwrap_or("today"),
+            "hours": hours,
+            "total_messages": total_messages,
+            "active_hours": active_hours,
+            "first_active_at": first_active,
+            "last_active_at": last_active,
+        })
+    }
+
     pub fn mark_device_connected(&self, device_id: &str, username: &str) {
         let conn = self.conn.lock();
         let now = chrono::Utc::now().timestamp_millis();
@@ -660,10 +832,44 @@ async fn ws_authenticate(
     Some((device_id, username))
 }
 
+#[derive(Deserialize)]
+struct PeerSessionsQuery {
+    #[serde(default)]
+    date: Option<String>,
+    #[serde(default = "default_peer_limit")]
+    limit: usize,
+}
+
+fn default_peer_limit() -> usize {
+    50
+}
+
+async fn handle_peer_sessions(
+    State(state): State<Arc<IngestState>>,
+    Extension(_user): Extension<AuthenticatedUser>,
+    Path(name): Path<String>,
+    Query(params): Query<PeerSessionsQuery>,
+) -> impl IntoResponse {
+    let sessions = state.query_peer_sessions(&name, params.date.as_deref(), params.limit);
+    (StatusCode::OK, Json(sessions))
+}
+
+async fn handle_peer_timeline(
+    State(state): State<Arc<IngestState>>,
+    Extension(_user): Extension<AuthenticatedUser>,
+    Path(name): Path<String>,
+    Query(params): Query<PeerSessionsQuery>,
+) -> impl IntoResponse {
+    let timeline = state.query_peer_timeline(&name, params.date.as_deref());
+    (StatusCode::OK, Json(timeline))
+}
+
 pub fn create_sync_router(state: Arc<IngestState>) -> Router {
     Router::new()
         .route("/api/sync/push", post(handle_push))
         .route("/api/sync/peers", get(handle_peers))
+        .route("/api/sync/peers/:name/sessions", get(handle_peer_sessions))
+        .route("/api/sync/peers/:name/timeline", get(handle_peer_timeline))
         .route("/api/sync/stream", get(handle_ws_upgrade))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .with_state(state)
