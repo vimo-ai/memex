@@ -1,0 +1,110 @@
+name: Team Build
+
+on:
+  push:
+    tags:
+      - 'team-v*'
+  workflow_dispatch:
+    inputs:
+      sync_server:
+        description: 'Sync server URL (hard-coded into binary)'
+        required: true
+        default: 'https://memex.internal:10013'
+
+env:
+  CARGO_TERM_COLOR: always
+  TEAM_SYNC_SERVER: ${{ inputs.sync_server || 'https://memex.internal:10013' }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: Linux arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+
+    steps:
+      - name: Checkout memex
+        uses: actions/checkout@v4
+
+      - name: Checkout ai-cli-session-db
+        uses: actions/checkout@v4
+        with:
+          repository: vimo-core/ai-cli-session-db
+          path: deps/ai-cli-session-db
+          token: ${{ secrets.VIMO_CORE_PAT }}
+
+      - name: Checkout ai-cli-session-collector
+        uses: actions/checkout@v4
+        with:
+          repository: vimo-core/ai-cli-session-collector
+          path: deps/ai-cli-session-collector
+          token: ${{ secrets.VIMO_CORE_PAT }}
+
+      - name: Create symlinks for dependencies
+        run: |
+          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-db $GITHUB_WORKSPACE/../ai-cli-session-db
+          ln -s $GITHUB_WORKSPACE/deps/ai-cli-session-collector $GITHUB_WORKSPACE/../ai-cli-session-collector
+
+      - name: Install protobuf
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libprotobuf-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: memex-rs
+          shared-key: team-${{ matrix.target }}
+
+      - name: Build vimo-agent (team)
+        working-directory: deps/ai-cli-session-db
+        run: |
+          cargo build --release --bin vimo-agent --features "agent,team" --target ${{ matrix.target }}
+          strip target/${{ matrix.target }}/release/vimo-agent
+
+      - name: Build memex CLI
+        working-directory: memex-rs
+        run: |
+          cargo build --release --bin memex --features "cli,team" --target ${{ matrix.target }}
+          strip target/${{ matrix.target }}/release/memex
+
+      - name: Package
+        run: |
+          ARCH="${{ matrix.target == 'x86_64-unknown-linux-gnu' && 'x64' || 'arm64' }}"
+          ARTIFACT="memex-team-linux-${ARCH}"
+          mkdir -p "${ARTIFACT}"
+          cp deps/ai-cli-session-db/target/${{ matrix.target }}/release/vimo-agent "${ARTIFACT}/"
+          cp memex-rs/target/${{ matrix.target }}/release/memex "${ARTIFACT}/"
+          tar czf "${ARTIFACT}.tar.gz" "${ARTIFACT}"
+          shasum -a 256 "${ARTIFACT}.tar.gz" > "${ARTIFACT}.tar.gz.sha256"
+
+          echo "ARTIFACT=${ARTIFACT}" >> $GITHUB_ENV
+
+          AGENT_SIZE=$(stat -c%s "${ARTIFACT}/vimo-agent")
+          MEMEX_SIZE=$(stat -c%s "${ARTIFACT}/memex")
+          echo "### ${{ matrix.name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **vimo-agent**: $(echo "scale=2; $AGENT_SIZE / 1048576" | bc)MB" >> $GITHUB_STEP_SUMMARY
+          echo "- **memex**: $(echo "scale=2; $MEMEX_SIZE / 1048576" | bc)MB" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sync server**: \`${TEAM_SYNC_SERVER}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: |
+            ${{ env.ARTIFACT }}.tar.gz
+            ${{ env.ARTIFACT }}.tar.gz.sha256
+          retention-days: 90
