@@ -621,11 +621,11 @@ impl IngestState {
             .unwrap_or(0);
 
         let sql = if order == "desc" {
-            "SELECT uuid, msg_type, content_text, timestamp, sequence
+            "SELECT uuid, type, content_text, timestamp, sequence
              FROM messages WHERE session_id = ?1
              ORDER BY sequence DESC LIMIT ?2 OFFSET ?3"
         } else {
-            "SELECT uuid, msg_type, content_text, timestamp, sequence
+            "SELECT uuid, type, content_text, timestamp, sequence
              FROM messages WHERE session_id = ?1
              ORDER BY sequence ASC LIMIT ?2 OFFSET ?3"
         };
