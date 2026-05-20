@@ -195,7 +195,7 @@ fn get_tools() -> Vec<Value> {
         }),
         json!({
             "name": "get_session",
-            "description": "Get session messages. Three modes: (1) at: get single message with full content, (2) around+context: get context around position (truncated), (3) limit+order: pagination (truncated when limit>5)",
+            "description": "Get session messages. Three modes: (1) at: get single message with full content, (2) around+context: get context around position (truncated), (3) limit+order: pagination (truncated when limit>5). Use source='remote' to read sessions from sync server (admin key required).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -205,7 +205,8 @@ fn get_tools() -> Vec<Value> {
                     "context": { "type": "number", "description": "Messages before/after 'around', default 5, max 20" },
                     "limit": { "type": "number", "description": "Messages to return, default 10 (ignored if at/around is set)" },
                     "offset": { "type": "number", "description": "Skip N messages before applying limit. For asc: skip from start; for desc: skip from end. Default 0 (ignored if at/around is set)" },
-                    "order": { "type": "string", "enum": ["asc", "desc"], "description": "asc (from start) / desc (from end), default asc (ignored if at/around is set)" }
+                    "order": { "type": "string", "enum": ["asc", "desc"], "description": "asc (from start) / desc (from end), default asc (ignored if at/around is set)" },
+                    "source": { "type": "string", "enum": ["local", "remote"], "description": "Data source: local (default) or remote (sync server, admin key required)" }
                 },
                 "required": ["sessionId"]
             }
@@ -853,6 +854,26 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
         .get("sessionId")
         .and_then(|s| s.as_str())
         .ok_or("sessionId is required")?;
+
+    let source = args
+        .get("source")
+        .and_then(|s| s.as_str())
+        .unwrap_or("local");
+
+    if source == "remote" {
+        let remote = state
+            .remote_search
+            .as_ref()
+            .ok_or("Remote not configured (missing sync_server/sync_api_key in config)")?;
+        let limit = args.get("limit").and_then(|l| l.as_u64()).unwrap_or(50) as usize;
+        let offset = args.get("offset").and_then(|o| o.as_u64()).unwrap_or(0) as usize;
+        let order = args.get("order").and_then(|o| o.as_str()).unwrap_or("asc");
+        let result = remote
+            .get_session_messages(session_id_input, limit, offset, order)
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(result);
+    }
 
     // at 模式：获取单条消息完整内容
     let at = args.get("at").and_then(|a| a.as_i64());

@@ -594,6 +594,103 @@ impl IngestState {
         })
     }
 
+    pub fn query_session_messages(
+        &self,
+        session_id: &str,
+        limit: usize,
+        offset: usize,
+        order: &str,
+    ) -> serde_json::Value {
+        let conn = self.conn.lock();
+
+        let full_session_id: Option<String> = conn
+            .prepare("SELECT session_id FROM sessions WHERE session_id LIKE ?1 || '%' LIMIT 1")
+            .ok()
+            .and_then(|mut s| s.query_row(params![session_id], |row| row.get(0)).ok());
+
+        let Some(sid) = full_session_id else {
+            return serde_json::json!({"error": "session not found", "session_id": session_id});
+        };
+
+        let total: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE session_id = ?1",
+                params![sid],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let sql = if order == "desc" {
+            "SELECT uuid, msg_type, content_text, timestamp, sequence
+             FROM messages WHERE session_id = ?1
+             ORDER BY sequence DESC LIMIT ?2 OFFSET ?3"
+        } else {
+            "SELECT uuid, msg_type, content_text, timestamp, sequence
+             FROM messages WHERE session_id = ?1
+             ORDER BY sequence ASC LIMIT ?2 OFFSET ?3"
+        };
+
+        let limit = limit.min(200);
+
+        let mut stmt = match conn.prepare(sql) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("query_session_messages prepare failed: {e}");
+                return serde_json::json!({"messages": [], "total": 0});
+            }
+        };
+
+        let messages: Vec<serde_json::Value> = stmt
+            .query_map(params![sid, limit as i64, offset as i64], |row| {
+                Ok(serde_json::json!({
+                    "uuid": row.get::<_, String>(0)?,
+                    "role": row.get::<_, String>(1)?,
+                    "text": row.get::<_, String>(2)?,
+                    "timestamp": row.get::<_, i64>(3)?,
+                    "sequence": row.get::<_, i64>(4)?,
+                }))
+            })
+            .ok()
+            .map(|r| r.filter_map(|v| v.ok()).collect())
+            .unwrap_or_default();
+
+        let has_more = (offset + messages.len()) < total as usize;
+
+        // session meta
+        let session_meta: Option<serde_json::Value> = conn
+            .prepare(
+                "SELECT s.session_id, p.name, s.model, s.message_count, s.created_at, s.updated_at, s.pushed_by
+                 FROM sessions s JOIN projects p ON p.id = s.project_id
+                 WHERE s.session_id = ?1",
+            )
+            .ok()
+            .and_then(|mut s| {
+                s.query_row(params![sid], |row| {
+                    Ok(serde_json::json!({
+                        "session_id": row.get::<_, String>(0)?,
+                        "project": row.get::<_, String>(1)?,
+                        "model": row.get::<_, Option<String>>(2)?,
+                        "message_count": row.get::<_, i64>(3)?,
+                        "created_at": row.get::<_, i64>(4)?,
+                        "updated_at": row.get::<_, i64>(5)?,
+                        "pushed_by": row.get::<_, Option<String>>(6)?,
+                    }))
+                })
+                .ok()
+            });
+
+        serde_json::json!({
+            "session": session_meta,
+            "messages": messages,
+            "total": total,
+            "pagination": {
+                "offset": offset,
+                "limit": limit,
+                "has_more": has_more,
+            }
+        })
+    }
+
     pub fn mark_device_connected(&self, device_id: &str, username: &str) {
         let conn = self.conn.lock();
         let now = chrono::Utc::now().timestamp_millis();
@@ -623,9 +720,9 @@ async fn handle_push(
     Json(request): Json<SyncPushRequest>,
 ) -> impl IntoResponse {
     let msg_count = request.batch.messages.len();
-    info!("收到 push: user={}, messages={}", user.0, msg_count);
+    info!("收到 push: user={}, messages={}", user.name, msg_count);
 
-    let result = state.ingest_batch(&user.0, &request.batch);
+    let result = state.ingest_batch(&user.name, &request.batch);
 
     info!(
         "ingest 完成: accepted={}, skipped={}",
@@ -844,24 +941,61 @@ fn default_peer_limit() -> usize {
     50
 }
 
+#[derive(Deserialize)]
+struct SessionMessagesQuery {
+    #[serde(default = "default_session_limit")]
+    limit: usize,
+    #[serde(default)]
+    offset: usize,
+    #[serde(default = "default_order")]
+    order: String,
+}
+
+fn default_session_limit() -> usize {
+    50
+}
+
+fn default_order() -> String {
+    "asc".to_string()
+}
+
+async fn handle_session_messages(
+    State(state): State<Arc<IngestState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Path(id): Path<String>,
+    Query(params): Query<SessionMessagesQuery>,
+) -> impl IntoResponse {
+    if !user.is_admin {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "admin access required"}))).into_response();
+    }
+    let result = state.query_session_messages(&id, params.limit, params.offset, &params.order);
+    (StatusCode::OK, Json(result)).into_response()
+}
+
 async fn handle_peer_sessions(
     State(state): State<Arc<IngestState>>,
-    Extension(_user): Extension<AuthenticatedUser>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path(name): Path<String>,
     Query(params): Query<PeerSessionsQuery>,
 ) -> impl IntoResponse {
+    if !user.is_admin {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "admin access required"}))).into_response();
+    }
     let sessions = state.query_peer_sessions(&name, params.date.as_deref(), params.limit);
-    (StatusCode::OK, Json(sessions))
+    (StatusCode::OK, Json(sessions)).into_response()
 }
 
 async fn handle_peer_timeline(
     State(state): State<Arc<IngestState>>,
-    Extension(_user): Extension<AuthenticatedUser>,
+    Extension(user): Extension<AuthenticatedUser>,
     Path(name): Path<String>,
     Query(params): Query<PeerSessionsQuery>,
 ) -> impl IntoResponse {
+    if !user.is_admin {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "admin access required"}))).into_response();
+    }
     let timeline = state.query_peer_timeline(&name, params.date.as_deref());
-    (StatusCode::OK, Json(timeline))
+    (StatusCode::OK, Json(timeline)).into_response()
 }
 
 pub fn create_sync_router(state: Arc<IngestState>) -> Router {
@@ -870,6 +1004,7 @@ pub fn create_sync_router(state: Arc<IngestState>) -> Router {
         .route("/api/sync/peers", get(handle_peers))
         .route("/api/sync/peers/{name}/sessions", get(handle_peer_sessions))
         .route("/api/sync/peers/{name}/timeline", get(handle_peer_timeline))
+        .route("/api/sessions/{id}/messages", get(handle_session_messages))
         .route("/api/sync/stream", get(handle_ws_upgrade))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .with_state(state)

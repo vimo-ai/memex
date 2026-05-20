@@ -13,11 +13,21 @@ use std::sync::Arc;
 pub type UserLookupFn = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
 #[derive(Clone, Debug)]
-pub struct AuthenticatedUser(pub String);
+pub struct AuthenticatedUser {
+    pub name: String,
+    pub is_admin: bool,
+}
+
+impl AuthenticatedUser {
+    pub fn new(name: String, is_admin: bool) -> Self {
+        Self { name, is_admin }
+    }
+}
 
 #[derive(Clone)]
 pub struct AuthState {
     keys: HashMap<String, String>, // key_hash → username
+    admin_keys: std::collections::HashSet<String>, // key_hash set for admin keys
     dynamic_lookup: Option<UserLookupFn>,
 }
 
@@ -29,6 +39,7 @@ impl AuthState {
             .collect();
         Self {
             keys,
+            admin_keys: std::collections::HashSet::new(),
             dynamic_lookup: None,
         }
     }
@@ -40,8 +51,13 @@ impl AuthState {
             .collect();
         Self {
             keys,
+            admin_keys: std::collections::HashSet::new(),
             dynamic_lookup: Some(lookup),
         }
+    }
+
+    pub fn set_admin_keys(&mut self, admin_keys: &[String]) {
+        self.admin_keys = admin_keys.iter().map(|k| hash_key(k)).collect();
     }
 
     pub fn verify(&self, key: &str) -> Option<String> {
@@ -53,6 +69,11 @@ impl AuthState {
             return lookup(key);
         }
         None
+    }
+
+    pub fn is_admin(&self, key: &str) -> bool {
+        let h = hash_key(key);
+        self.admin_keys.contains(&h)
     }
 }
 
@@ -82,7 +103,10 @@ pub async fn auth_layer(mut request: Request, next: Next) -> Response {
 
     match state.verify(key) {
         Some(username) => {
-            request.extensions_mut().insert(AuthenticatedUser(username));
+            let is_admin = state.is_admin(key);
+            request
+                .extensions_mut()
+                .insert(AuthenticatedUser::new(username, is_admin));
             next.run(request).await
         }
         None => (StatusCode::UNAUTHORIZED, "Invalid API key").into_response(),
@@ -130,5 +154,17 @@ mod tests {
             Some("dynamic_user")
         );
         assert_eq!(state.verify("unknown"), None);
+    }
+
+    #[test]
+    fn test_admin_keys() {
+        let mut state = AuthState::from_users(&[
+            ("alice".to_string(), "key_alice".to_string()),
+            ("bob".to_string(), "key_bob".to_string()),
+        ]);
+        state.set_admin_keys(&["key_alice".to_string()]);
+        assert!(state.is_admin("key_alice"));
+        assert!(!state.is_admin("key_bob"));
+        assert!(!state.is_admin("unknown"));
     }
 }

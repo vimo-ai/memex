@@ -83,6 +83,38 @@ impl RemoteSearchClient {
         }
     }
 
+    pub async fn get_session_messages(
+        &self,
+        session_id: &str,
+        limit: usize,
+        offset: usize,
+        order: &str,
+    ) -> Result<Value> {
+        let url = format!("{}/api/sessions/{}/messages", self.server, session_id);
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .query(&[
+                ("limit", limit.to_string()),
+                ("offset", offset.to_string()),
+                ("order", order.to_string()),
+            ])
+            .send()
+            .await
+            .context("remote get_session request failed")?;
+
+        let status = resp.status();
+        if status == reqwest::StatusCode::FORBIDDEN {
+            anyhow::bail!("admin access required for remote get_session");
+        }
+        if !status.is_success() {
+            anyhow::bail!("remote get_session returned {status}");
+        }
+
+        resp.json().await.context("failed to parse remote response")
+    }
+
     async fn do_search(&self, query: &str, limit: usize, level: &str) -> Result<Vec<Value>> {
         let url = format!("{}/api/search", self.server);
         let resp = self

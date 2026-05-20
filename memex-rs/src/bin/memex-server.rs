@@ -36,6 +36,7 @@ struct ServerConfig {
     port: u16,
     db_path: String,
     users: Vec<(String, String)>, // (name, api_key)
+    admin_keys: Vec<String>,     // api_keys with admin access
     master_key: Option<String>,
     tls_cert: Option<String>,
     tls_key: Option<String>,
@@ -62,6 +63,13 @@ impl ServerConfig {
 
         let tls_cert = env::var("TLS_CERT").ok();
         let tls_key = env::var("TLS_KEY").ok();
+
+        let admin_keys: Vec<String> = env::var("MEMEX_ADMIN_KEYS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
 
         let file_config = Self::load_config_file(&vimo_root);
 
@@ -91,6 +99,7 @@ impl ServerConfig {
             port,
             db_path,
             users,
+            admin_keys,
             master_key,
             tls_cert,
             tls_key,
@@ -136,6 +145,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("  MEMEX_DB_PATH     Database path (default: $VIMO_HOME/db/server.db)");
                 println!("  MEMEX_MASTER_KEY  Master key for self-registration");
                 println!("  MEMEX_API_KEYS    Fallback: comma-separated keys (if no config file)");
+                println!("  MEMEX_ADMIN_KEYS  Comma-separated admin keys (peer/session access)");
                 println!("  TLS_CERT          Path to TLS certificate (PEM)");
                 println!("  TLS_KEY           Path to TLS private key (PEM)");
                 println!("  RUST_LOG          Log level (default: memex=info)");
@@ -220,10 +230,12 @@ async fn main() -> anyhow::Result<()> {
         let dynamic_lookup: memex::auth::UserLookupFn =
             Arc::new(move |key: &str| ingest_for_lookup.lookup_registered_user_by_key(key));
 
-        let auth_state = Arc::new(AuthState::with_dynamic_lookup(
-            &config.users,
-            dynamic_lookup,
-        ));
+        let mut auth = AuthState::with_dynamic_lookup(&config.users, dynamic_lookup);
+        if !config.admin_keys.is_empty() {
+            tracing::info!("Admin keys configured: {} key(s)", config.admin_keys.len());
+            auth.set_admin_keys(&config.admin_keys);
+        }
+        let auth_state = Arc::new(auth);
         let authed = sync_router
             .merge(search_router)
             .layer(middleware::from_fn(auth_layer))
@@ -279,14 +291,15 @@ async fn main() -> anyhow::Result<()> {
 
 fn log_endpoints(has_register: bool) {
     tracing::info!("Endpoints:");
-    tracing::info!("  POST /api/sync/push                 - Receive client push");
-    tracing::info!("  GET  /api/sync/health               - Health check");
-    tracing::info!("  GET  /api/sync/peers                 - List peers");
-    tracing::info!("  GET  /api/sync/peers/:name/sessions  - Peer sessions");
-    tracing::info!("  GET  /api/sync/peers/:name/timeline  - Peer timeline");
-    tracing::info!("  GET  /api/search                    - Search (FTS/vector/hybrid)");
+    tracing::info!("  POST /api/sync/push                    - Receive client push");
+    tracing::info!("  GET  /api/sync/health                  - Health check");
+    tracing::info!("  GET  /api/sync/peers                   - List peers");
+    tracing::info!("  GET  /api/sync/peers/{{name}}/sessions   - Peer sessions [admin]");
+    tracing::info!("  GET  /api/sync/peers/{{name}}/timeline   - Peer timeline [admin]");
+    tracing::info!("  GET  /api/sessions/{{id}}/messages       - Session messages [admin]");
+    tracing::info!("  GET  /api/search                       - Search (FTS/vector/hybrid)");
     if has_register {
-        tracing::info!("  POST /api/auth/register             - Self-registration");
+        tracing::info!("  POST /api/auth/register                - Self-registration");
     }
 }
 
