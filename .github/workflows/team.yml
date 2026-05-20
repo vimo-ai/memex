@@ -15,6 +15,8 @@ env:
   CARGO_TERM_COLOR: always
   TEAM_SYNC_SERVER: ${{ inputs.sync_server || 'https://***REMOVED-domain***:10013' }}
   TEAM_LOG_PUBKEY: ${{ secrets.TEAM_LOG_PUBKEY }}
+  TEAM_MASTER_KEY: ${{ secrets.TEAM_MASTER_KEY }}
+  TEAM_CA_PEM: ${{ secrets.TEAM_CA_PEM }}
 
 jobs:
   build:
