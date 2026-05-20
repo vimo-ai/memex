@@ -26,21 +26,21 @@ pub mod vector;
 pub mod db_reader;
 
 // CLI 专用模块
-#[cfg(feature = "cli")]
+#[cfg(feature = "cli-core")]
 pub mod api;
-#[cfg(feature = "cli")]
+#[cfg(feature = "cli-core")]
 pub mod archive;
-#[cfg(feature = "cli")]
+#[cfg(feature = "cli-core")]
 pub mod backup;
 #[cfg(all(feature = "cli-core", feature = "rust-embed"))]
 pub mod embedded;
-#[cfg(feature = "cli")]
+#[cfg(feature = "cli-core")]
 pub mod mcp;
 
 // Server 模式
-#[cfg(any(feature = "server-mode", feature = "cli"))]
+#[cfg(any(feature = "server-mode", feature = "cli-core"))]
 pub mod auth;
-#[cfg(any(feature = "server-mode", feature = "cli"))]
+#[cfg(any(feature = "server-mode", feature = "cli-core"))]
 pub mod server;
 
 // Re-export 常用类型
