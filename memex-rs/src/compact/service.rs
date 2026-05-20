@@ -465,7 +465,10 @@ impl CompactService {
         let talk_summaries = self.compact_db.get_talk_summaries(session_id).await?;
 
         if talk_summaries.is_empty() {
-            tracing::debug!("Session {} has no talk summaries, skipping L3 generation", session_id);
+            tracing::debug!(
+                "Session {} has no talk summaries, skipping L3 generation",
+                session_id
+            );
             return Ok(false);
         }
 

@@ -30,9 +30,7 @@ impl DbReader {
         let db_path = db_path.unwrap_or_else(|| {
             let vimo_root = std::env::var("VIMO_HOME")
                 .map(PathBuf::from)
-                .unwrap_or_else(|_| {
-                    dirs::home_dir().unwrap_or_default().join(".vimo")
-                });
+                .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join(".vimo"));
             vimo_root.join("db").join("ai-cli-session.db")
         });
 
@@ -41,7 +39,10 @@ impl DbReader {
             std::fs::create_dir_all(parent)?;
         }
 
-        info!("[DbReader] Connecting to database (read-only mode): {:?}", db_path);
+        info!(
+            "[DbReader] Connecting to database (read-only mode): {:?}",
+            db_path
+        );
         let config = DbConfig::local(db_path.to_string_lossy().into_owned());
         let db = SessionDB::connect(config)?;
 

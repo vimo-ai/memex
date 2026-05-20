@@ -27,18 +27,21 @@ impl AuthState {
             .iter()
             .map(|(name, key)| (hash_key(key), name.clone()))
             .collect();
-        Self { keys, dynamic_lookup: None }
+        Self {
+            keys,
+            dynamic_lookup: None,
+        }
     }
 
-    pub fn with_dynamic_lookup(
-        users: &[(String, String)],
-        lookup: UserLookupFn,
-    ) -> Self {
+    pub fn with_dynamic_lookup(users: &[(String, String)], lookup: UserLookupFn) -> Self {
         let keys = users
             .iter()
             .map(|(name, key)| (hash_key(key), name.clone()))
             .collect();
-        Self { keys, dynamic_lookup: Some(lookup) }
+        Self {
+            keys,
+            dynamic_lookup: Some(lookup),
+        }
     }
 
     pub fn verify(&self, key: &str) -> Option<String> {
@@ -59,14 +62,8 @@ fn hash_key(key: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-pub async fn auth_layer(
-    mut request: Request,
-    next: Next,
-) -> Response {
-    let auth_state = request
-        .extensions()
-        .get::<Arc<AuthState>>()
-        .cloned();
+pub async fn auth_layer(mut request: Request, next: Next) -> Response {
+    let auth_state = request.extensions().get::<Arc<AuthState>>().cloned();
 
     let Some(state) = auth_state else {
         return next.run(request).await;
@@ -98,9 +95,7 @@ mod tests {
 
     #[test]
     fn test_verify_key() {
-        let state = AuthState::from_users(&[
-            ("alice".to_string(), "mk_test_key_123".to_string()),
-        ]);
+        let state = AuthState::from_users(&[("alice".to_string(), "mk_test_key_123".to_string())]);
         assert_eq!(state.verify("mk_test_key_123").as_deref(), Some("alice"));
         assert_eq!(state.verify("wrong_key"), None);
     }
@@ -130,7 +125,10 @@ mod tests {
             lookup,
         );
         assert_eq!(state.verify("key_alice").as_deref(), Some("alice"));
-        assert_eq!(state.verify("dynamic_key_123").as_deref(), Some("dynamic_user"));
+        assert_eq!(
+            state.verify("dynamic_key_123").as_deref(),
+            Some("dynamic_user")
+        );
         assert_eq!(state.verify("unknown"), None);
     }
 }

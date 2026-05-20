@@ -16,8 +16,8 @@ use tracing::{debug, error, info};
 
 use ai_cli_session_db::schema;
 use ai_cli_session_db::sync::{
-    SyncAck, SyncBatch, SyncChainNode, SyncContinuationChain, SyncFrame, SyncMessage,
-    SyncProject, SyncPushRequest, SyncPushResponse, SyncSession, SyncSessionRelation, SyncTalk,
+    SyncAck, SyncBatch, SyncChainNode, SyncContinuationChain, SyncFrame, SyncMessage, SyncProject,
+    SyncPushRequest, SyncPushResponse, SyncSession, SyncSessionRelation, SyncTalk,
 };
 
 use crate::auth::{AuthState, AuthenticatedUser};
@@ -86,9 +86,12 @@ impl IngestState {
                 .query_row("SELECT COUNT(*) FROM talks", [], |row| row.get(0))
                 .unwrap_or(0);
             if fts_count == 0 && talks_count > 0 {
-                info!("backfilling talks_fts with {} existing records", talks_count);
+                info!(
+                    "backfilling talks_fts with {} existing records",
+                    talks_count
+                );
                 conn.execute_batch(
-                    "INSERT INTO talks_fts(rowid, summary_l2) SELECT id, summary_l2 FROM talks;"
+                    "INSERT INTO talks_fts(rowid, summary_l2) SELECT id, summary_l2 FROM talks;",
                 )?;
             }
         }
@@ -100,7 +103,7 @@ impl IngestState {
                 last_heartbeat_at  INTEGER NOT NULL DEFAULT 0,
                 last_db_updated_at INTEGER NOT NULL DEFAULT 0,
                 connected_since    INTEGER NOT NULL DEFAULT 0
-            );"
+            );",
         )?;
 
         conn.execute_batch(
@@ -108,7 +111,7 @@ impl IngestState {
                 username   TEXT PRIMARY KEY,
                 api_key    TEXT NOT NULL UNIQUE,
                 created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000)
-            );"
+            );",
         )?;
 
         Ok(())
@@ -209,11 +212,17 @@ impl IngestState {
                    pushed_by = excluded.pushed_by,
                    updated_at = excluded.updated_at"#,
             params![
-                s.session_id, project_id,
-                s.cwd, s.model, s.channel,
-                s.message_count, s.last_message_at,
-                s.meta, pushed_by,
-                s.created_at, s.updated_at
+                s.session_id,
+                project_id,
+                s.cwd,
+                s.model,
+                s.channel,
+                s.message_count,
+                s.last_message_at,
+                s.meta,
+                pushed_by,
+                s.created_at,
+                s.updated_at
             ],
         )?;
         Ok(())
@@ -257,7 +266,12 @@ impl IngestState {
             r#"INSERT OR IGNORE INTO session_relations
                (parent_session_id, child_session_id, relation_type, source)
                VALUES (?1, ?2, ?3, ?4)"#,
-            params![r.parent_session_id, r.child_session_id, r.relation_type, r.source],
+            params![
+                r.parent_session_id,
+                r.child_session_id,
+                r.relation_type,
+                r.source
+            ],
         )?;
         Ok(())
     }
@@ -339,8 +353,12 @@ impl IngestState {
     pub fn query_peers(&self) -> Vec<serde_json::Value> {
         let conn = self.conn.lock();
         let now = chrono::Utc::now();
-        let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap()
-            .and_utc().timestamp_millis();
+        let today_start = now
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis();
         let hour_ago = now.timestamp_millis() - 3_600_000;
 
         let mut stmt = match conn.prepare(
@@ -386,8 +404,8 @@ impl IngestState {
         let rows = stmt
             .query_map(params![today_start, hour_ago], |row| {
                 let projects_json: String = row.get(5)?;
-                let active_projects: Vec<String> = serde_json::from_str(&projects_json)
-                    .unwrap_or_default();
+                let active_projects: Vec<String> =
+                    serde_json::from_str(&projects_json).unwrap_or_default();
                 Ok(serde_json::json!({
                     "name": row.get::<_, String>(0)?,
                     "sessions": row.get::<_, i64>(1)?,
@@ -437,7 +455,10 @@ async fn handle_push(
 
     let result = state.ingest_batch(&user.0, &request.batch);
 
-    info!("ingest 完成: accepted={}, skipped={}", result.accepted, result.skipped);
+    info!(
+        "ingest 完成: accepted={}, skipped={}",
+        result.accepted, result.skipped
+    );
 
     let response = SyncPushResponse {
         accepted: result.accepted,
@@ -475,7 +496,11 @@ async fn handle_ws_connection(
         None => return,
     };
 
-    info!("ws connected: device={}, user={}", &device_id[..8.min(device_id.len())], username);
+    info!(
+        "ws connected: device={}, user={}",
+        &device_id[..8.min(device_id.len())],
+        username
+    );
     state.mark_device_connected(&device_id, &username);
 
     while let Some(Ok(msg)) = socket.recv().await {
@@ -488,8 +513,14 @@ async fn handle_ws_connection(
         let frame: SyncFrame = match serde_json::from_str(&text) {
             Ok(f) => f,
             Err(e) => {
-                let ack = SyncAck::PushFail { message: format!("invalid frame: {e}") };
-                let _ = socket.send(ws::Message::Text(serde_json::to_string(&ack).unwrap().into())).await;
+                let ack = SyncAck::PushFail {
+                    message: format!("invalid frame: {e}"),
+                };
+                let _ = socket
+                    .send(ws::Message::Text(
+                        serde_json::to_string(&ack).unwrap().into(),
+                    ))
+                    .await;
                 continue;
             }
         };
@@ -500,7 +531,11 @@ async fn handle_ws_connection(
             },
             SyncFrame::Push { batch, cursors } => {
                 let msg_count = batch.messages.len();
-                debug!("ws push: device={}, messages={}", &device_id[..8.min(device_id.len())], msg_count);
+                debug!(
+                    "ws push: device={}, messages={}",
+                    &device_id[..8.min(device_id.len())],
+                    msg_count
+                );
                 let result = state.ingest_batch(&username, &batch);
                 SyncAck::PushOk {
                     accepted: result.accepted,
@@ -510,17 +545,30 @@ async fn handle_ws_connection(
             }
             SyncFrame::Heartbeat { last_db_updated_at } => {
                 state.update_device_heartbeat(&device_id, &username, last_db_updated_at);
-                debug!("ws heartbeat: device={}, last_db_updated_at={}", &device_id[..8.min(device_id.len())], last_db_updated_at);
+                debug!(
+                    "ws heartbeat: device={}, last_db_updated_at={}",
+                    &device_id[..8.min(device_id.len())],
+                    last_db_updated_at
+                );
                 SyncAck::HeartbeatOk
             }
         };
 
-        if socket.send(ws::Message::Text(serde_json::to_string(&ack).unwrap().into())).await.is_err() {
+        if socket
+            .send(ws::Message::Text(
+                serde_json::to_string(&ack).unwrap().into(),
+            ))
+            .await
+            .is_err()
+        {
             break;
         }
     }
 
-    info!("ws disconnected: device={}", &device_id[..8.min(device_id.len())]);
+    info!(
+        "ws disconnected: device={}",
+        &device_id[..8.min(device_id.len())]
+    );
 }
 
 async fn ws_authenticate(
@@ -535,8 +583,14 @@ async fn ws_authenticate(
     let text = match msg {
         ws::Message::Text(t) => t,
         _ => {
-            let ack = SyncAck::AuthFail { message: "expected text frame".to_string() };
-            let _ = socket.send(ws::Message::Text(serde_json::to_string(&ack).unwrap().into())).await;
+            let ack = SyncAck::AuthFail {
+                message: "expected text frame".to_string(),
+            };
+            let _ = socket
+                .send(ws::Message::Text(
+                    serde_json::to_string(&ack).unwrap().into(),
+                ))
+                .await;
             return None;
         }
     };
@@ -544,8 +598,14 @@ async fn ws_authenticate(
     let frame: SyncFrame = match serde_json::from_str(&text) {
         Ok(f) => f,
         Err(e) => {
-            let ack = SyncAck::AuthFail { message: format!("invalid auth frame: {e}") };
-            let _ = socket.send(ws::Message::Text(serde_json::to_string(&ack).unwrap().into())).await;
+            let ack = SyncAck::AuthFail {
+                message: format!("invalid auth frame: {e}"),
+            };
+            let _ = socket
+                .send(ws::Message::Text(
+                    serde_json::to_string(&ack).unwrap().into(),
+                ))
+                .await;
             return None;
         }
     };
@@ -553,8 +613,14 @@ async fn ws_authenticate(
     let (device_id, api_key) = match frame {
         SyncFrame::Auth { device_id, api_key } => (device_id, api_key),
         _ => {
-            let ack = SyncAck::AuthFail { message: "first frame must be Auth".to_string() };
-            let _ = socket.send(ws::Message::Text(serde_json::to_string(&ack).unwrap().into())).await;
+            let ack = SyncAck::AuthFail {
+                message: "first frame must be Auth".to_string(),
+            };
+            let _ = socket
+                .send(ws::Message::Text(
+                    serde_json::to_string(&ack).unwrap().into(),
+                ))
+                .await;
             return None;
         }
     };
@@ -563,8 +629,14 @@ async fn ws_authenticate(
         match auth.verify(&api_key) {
             Some(name) => name.to_string(),
             None => {
-                let ack = SyncAck::AuthFail { message: "invalid api key".to_string() };
-                let _ = socket.send(ws::Message::Text(serde_json::to_string(&ack).unwrap().into())).await;
+                let ack = SyncAck::AuthFail {
+                    message: "invalid api key".to_string(),
+                };
+                let _ = socket
+                    .send(ws::Message::Text(
+                        serde_json::to_string(&ack).unwrap().into(),
+                    ))
+                    .await;
                 return None;
             }
         }
@@ -575,7 +647,13 @@ async fn ws_authenticate(
     let ack = SyncAck::AuthOk {
         server_version: env!("CARGO_PKG_VERSION").to_string(),
     };
-    if socket.send(ws::Message::Text(serde_json::to_string(&ack).unwrap().into())).await.is_err() {
+    if socket
+        .send(ws::Message::Text(
+            serde_json::to_string(&ack).unwrap().into(),
+        ))
+        .await
+        .is_err()
+    {
         return None;
     }
 
@@ -599,9 +677,7 @@ mod tests {
     fn setup_server() -> (TempDir, Arc<IngestState>) {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("server.db");
-        let state = Arc::new(
-            IngestState::new(db_path.to_str().unwrap()).unwrap(),
-        );
+        let state = Arc::new(IngestState::new(db_path.to_str().unwrap()).unwrap());
         (dir, state)
     }
 
@@ -636,11 +712,19 @@ mod tests {
                     content_full: "hello".to_string(),
                     timestamp: 1000,
                     sequence: 1,
-                    source: None, channel: None, model: None,
-                    tool_call_id: None, tool_name: None, tool_args: None,
-                    raw: None, approval_status: None, approval_resolved_at: None,
-                    input_tokens: None, output_tokens: None,
-                    cache_read_input_tokens: None, cache_creation_input_tokens: None,
+                    source: None,
+                    channel: None,
+                    model: None,
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_args: None,
+                    raw: None,
+                    approval_status: None,
+                    approval_resolved_at: None,
+                    input_tokens: None,
+                    output_tokens: None,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                 },
                 SyncMessage {
                     uuid: "uuid-2".to_string(),
@@ -650,11 +734,19 @@ mod tests {
                     content_full: "world".to_string(),
                     timestamp: 1001,
                     sequence: 2,
-                    source: None, channel: None, model: None,
-                    tool_call_id: None, tool_name: None, tool_args: None,
-                    raw: None, approval_status: None, approval_resolved_at: None,
-                    input_tokens: None, output_tokens: None,
-                    cache_read_input_tokens: None, cache_creation_input_tokens: None,
+                    source: None,
+                    channel: None,
+                    model: None,
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_args: None,
+                    raw: None,
+                    approval_status: None,
+                    approval_resolved_at: None,
+                    input_tokens: None,
+                    output_tokens: None,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                 },
             ],
             session_relations: vec![],
@@ -717,7 +809,9 @@ mod tests {
 
         let conn = state.conn.lock();
         let pushed_by: String = conn
-            .query_row("SELECT pushed_by FROM sessions LIMIT 1", [], |row| row.get(0))
+            .query_row("SELECT pushed_by FROM sessions LIMIT 1", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(pushed_by, "alice");
     }
@@ -747,7 +841,9 @@ mod tests {
 
         let conn = state.conn.lock();
         let url: String = conn
-            .query_row("SELECT repo_url FROM projects LIMIT 1", [], |row| row.get(0))
+            .query_row("SELECT repo_url FROM projects LIMIT 1", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(url, "git@github.com:vimo-ai/ETerm.git");
     }

@@ -17,4 +17,6 @@ pub use matcher::{
     cluster_unmatched, evolve_cluster, match_nodes_to_clusters, name_clusters, EvolutionResult,
 };
 pub use service::{KnowledgeService, ProcessResult, SessionKnowledge};
-pub use store::{KnowledgeStore, KnowledgeNode, KnowledgeCluster, KnowledgeRelation, PendingProject};
+pub use store::{
+    KnowledgeCluster, KnowledgeNode, KnowledgeRelation, KnowledgeStore, PendingProject,
+};

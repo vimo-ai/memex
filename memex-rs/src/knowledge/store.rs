@@ -69,11 +69,13 @@ impl KnowledgeStore {
         conn.execute_batch(SCHEMA_SQL)?;
         // Migrate: allow NULL cluster_id + drop FK constraints
         // (FK on cluster_id breaks atomic per-session insert)
-        let col_info: String = conn.query_row(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='knowledge_nodes'",
-            [],
-            |row| row.get(0),
-        ).unwrap_or_default();
+        let col_info: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='knowledge_nodes'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
         if col_info.contains("NOT NULL") && col_info.contains("cluster_id") {
             conn.execute_batch(
                 "PRAGMA foreign_keys = OFF;
@@ -139,7 +141,11 @@ impl KnowledgeStore {
         limit: usize,
     ) -> Result<Vec<(String, i64, String)>> {
         let conn = self.conn.lock().await;
-        let placeholders = project_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let placeholders = project_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
         let sql = format!(
             r#"
             SELECT s.session_id, s.project_id,
@@ -244,22 +250,29 @@ impl KnowledgeStore {
                 pipeline_version: row.get(9)?,
             })
         })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
-    pub async fn get_nodes_by_sessions(&self, session_ids: &[String]) -> Result<Vec<KnowledgeNode>> {
+    pub async fn get_nodes_by_sessions(
+        &self,
+        session_ids: &[String],
+    ) -> Result<Vec<KnowledgeNode>> {
         if session_ids.is_empty() {
             return Ok(Vec::new());
         }
         let conn = self.conn.lock().await;
-        let placeholders = session_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let placeholders = session_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
         let sql = format!(
             "SELECT id, cluster_id, project_id, session_id, day, topic, conclusion, node_type, confidence, pipeline_version FROM knowledge_nodes WHERE session_id IN ({placeholders}) ORDER BY day",
         );
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(
-            rusqlite::params_from_iter(session_ids.iter()),
-            |row| Ok(KnowledgeNode {
+        let rows = stmt.query_map(rusqlite::params_from_iter(session_ids.iter()), |row| {
+            Ok(KnowledgeNode {
                 id: row.get(0)?,
                 cluster_id: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
                 project_id: row.get(2)?,
@@ -270,9 +283,10 @@ impl KnowledgeStore {
                 node_type: row.get(7)?,
                 confidence: row.get(8)?,
                 pipeline_version: row.get(9)?,
-            }),
-        )?;
-        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
     // ---- Clusters ----
@@ -295,14 +309,17 @@ impl KnowledgeStore {
 
     pub async fn load_clusters(&self, project_ids: &[i64]) -> Result<Vec<KnowledgeCluster>> {
         let conn = self.conn.lock().await;
-        let placeholders = project_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let placeholders = project_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
         let sql = format!(
             "SELECT id, project_id, canonical_topic, l5_domain, current_understanding, evolution_narrative, final_confidence, node_count, day_count, first_day, last_day, pipeline_version FROM knowledge_clusters WHERE project_id IN ({placeholders})",
         );
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(
-            rusqlite::params_from_iter(project_ids.iter()),
-            |row| Ok(KnowledgeCluster {
+        let rows = stmt.query_map(rusqlite::params_from_iter(project_ids.iter()), |row| {
+            Ok(KnowledgeCluster {
                 id: row.get(0)?,
                 project_id: row.get(1)?,
                 canonical_topic: row.get(2)?,
@@ -315,9 +332,10 @@ impl KnowledgeStore {
                 first_day: row.get(9)?,
                 last_day: row.get(10)?,
                 pipeline_version: row.get(11)?,
-            }),
-        )?;
-        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
     pub async fn update_cluster_stats(&self, cluster_id: &str) -> Result<()> {
@@ -356,7 +374,13 @@ impl KnowledgeStore {
                final_confidence = ?4,
                updated_at = ?5
                WHERE id = ?1"#,
-            params![cluster_id, current_understanding, evolution_narrative, final_confidence, now],
+            params![
+                cluster_id,
+                current_understanding,
+                evolution_narrative,
+                final_confidence,
+                now
+            ],
         )?;
         Ok(())
     }
@@ -380,7 +404,12 @@ impl KnowledgeStore {
                 r#"INSERT OR REPLACE INTO knowledge_relations
                    (from_node_id, to_node_id, relation_type, detail)
                    VALUES (?1, ?2, ?3, ?4)"#,
-                params![rel.from_node_id, rel.to_node_id, rel.relation_type, rel.detail],
+                params![
+                    rel.from_node_id,
+                    rel.to_node_id,
+                    rel.relation_type,
+                    rel.detail
+                ],
             )?;
             count += inserted;
         }
@@ -391,7 +420,11 @@ impl KnowledgeStore {
 
     pub async fn stats(&self, project_ids: &[i64]) -> Result<(i64, i64)> {
         let conn = self.conn.lock().await;
-        let placeholders = project_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let placeholders = project_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
 
         let nodes: i64 = conn.query_row(
             &format!("SELECT COUNT(*) FROM knowledge_nodes WHERE project_id IN ({placeholders})"),
@@ -400,7 +433,9 @@ impl KnowledgeStore {
         )?;
 
         let clusters: i64 = conn.query_row(
-            &format!("SELECT COUNT(*) FROM knowledge_clusters WHERE project_id IN ({placeholders})"),
+            &format!(
+                "SELECT COUNT(*) FROM knowledge_clusters WHERE project_id IN ({placeholders})"
+            ),
             rusqlite::params_from_iter(project_ids.iter()),
             |row| row.get(0),
         )?;
@@ -410,8 +445,10 @@ impl KnowledgeStore {
 
     pub async fn global_stats(&self) -> Result<(i64, i64)> {
         let conn = self.conn.lock().await;
-        let nodes: i64 = conn.query_row("SELECT COUNT(*) FROM knowledge_nodes", [], |r| r.get(0))?;
-        let clusters: i64 = conn.query_row("SELECT COUNT(*) FROM knowledge_clusters", [], |r| r.get(0))?;
+        let nodes: i64 =
+            conn.query_row("SELECT COUNT(*) FROM knowledge_nodes", [], |r| r.get(0))?;
+        let clusters: i64 =
+            conn.query_row("SELECT COUNT(*) FROM knowledge_clusters", [], |r| r.get(0))?;
         Ok((nodes, clusters))
     }
 
@@ -494,7 +531,9 @@ impl KnowledgeStore {
              INSERT INTO sessions (session_id, project_id, created_at) VALUES ('sess-001', 1, 1714300000000);
              INSERT INTO sessions (session_id, project_id, created_at) VALUES ('sess-002', 1, 1714400000000);"
         ).unwrap();
-        Self { conn: Arc::new(Mutex::new(conn)) }
+        Self {
+            conn: Arc::new(Mutex::new(conn)),
+        }
     }
 }
 
@@ -558,7 +597,10 @@ mod tests {
         assert_eq!(clusters[0].first_day.as_deref(), Some("2026-04-29"));
 
         // progress
-        store.update_progress("sess-001", "extracted", 1, None, "v1").await.unwrap();
+        store
+            .update_progress("sess-001", "extracted", 1, None, "v1")
+            .await
+            .unwrap();
         let p = store.get_progress("sess-001").await.unwrap().unwrap();
         assert_eq!(p.status, "extracted");
         assert_eq!(p.node_count, 1);

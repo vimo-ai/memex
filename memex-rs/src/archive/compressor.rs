@@ -142,7 +142,10 @@ impl Compressor {
             if rel_path.is_absolute() {
                 anyhow::bail!("拒绝绝对路径: {:?}", rel_path);
             }
-            if rel_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            if rel_path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
                 anyhow::bail!("拒绝含 .. 的路径: {:?}", rel_path);
             }
             let abs = base_dir.join(rel_path);

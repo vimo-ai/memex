@@ -11,7 +11,10 @@ pub struct RemoteSearchClient {
 }
 
 /// 将 server 返回的 HybridSearchResult 转为 MCP 格式，标记 source=remote
-pub fn format_remote_results(results: Vec<Value>, local_sessions: &std::collections::HashSet<String>) -> Vec<Value> {
+pub fn format_remote_results(
+    results: Vec<Value>,
+    local_sessions: &std::collections::HashSet<String>,
+) -> Vec<Value> {
     results
         .into_iter()
         .filter_map(|r| {
@@ -101,7 +104,10 @@ impl RemoteSearchClient {
             anyhow::bail!("remote search returned {status}");
         }
 
-        let body: Value = resp.json().await.context("failed to parse remote response")?;
+        let body: Value = resp
+            .json()
+            .await
+            .context("failed to parse remote response")?;
         let results = body
             .get("results")
             .and_then(|r| r.as_array())
@@ -179,9 +185,7 @@ mod tests {
 
     #[test]
     fn format_remote_results_skips_missing_session_id() {
-        let remote = vec![
-            json!({"content": "no session id"}),
-        ];
+        let remote = vec![json!({"content": "no session id"})];
         let local = std::collections::HashSet::new();
         let formatted = format_remote_results(remote, &local);
         assert!(formatted.is_empty());

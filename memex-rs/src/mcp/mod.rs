@@ -437,7 +437,10 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
                     "source": "remote"
                 }))
             }
-            None => Err("Remote search not configured (missing sync_server/sync_api_key in config)".to_string()),
+            None => Err(
+                "Remote search not configured (missing sync_server/sync_api_key in config)"
+                    .to_string(),
+            ),
         };
     }
 
@@ -481,8 +484,16 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
         "sessions" => search_session_summaries(state, query, limit, &filter, &session_ids).await,
         "talks" => search_talk_summaries(state, query, limit, &filter, &session_ids).await,
         "raw" => {
-            search_raw_messages(state, query, limit, &filter, _start_ts, _end_ts, &session_ids)
-                .await
+            search_raw_messages(
+                state,
+                query,
+                limit,
+                &filter,
+                _start_ts,
+                _end_ts,
+                &session_ids,
+            )
+            .await
         }
         _ => Err(format!("Invalid level: {}. Use sessions/talks/raw", level)),
     }?;
@@ -492,7 +503,11 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
         if let Some(ref remote) = state.remote_search {
             let local_results = result["results"].as_array().map_or(0, |a| a.len());
             if local_results < limit {
-                let remaining = if source == "all" { limit } else { limit - local_results };
+                let remaining = if source == "all" {
+                    limit
+                } else {
+                    limit - local_results
+                };
                 let remote_results = remote.search(query, remaining, effective_level).await;
                 if !remote_results.is_empty() {
                     let local_sessions: std::collections::HashSet<String> = result["results"]
@@ -511,7 +526,8 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
                     );
 
                     if !merged.is_empty() {
-                        if let Some(arr) = result.get_mut("results").and_then(|v| v.as_array_mut()) {
+                        if let Some(arr) = result.get_mut("results").and_then(|v| v.as_array_mut())
+                        {
                             arr.append(&mut merged);
                             let new_total = arr.len();
                             result["total"] = json!(new_total);
@@ -548,7 +564,8 @@ async fn search_session_summaries(
 
     // L4 knowledge search: find sessions via knowledge nodes
     let l4_session_ids = search_knowledge_sessions(state, query, limit * 2).await;
-    let l3_session_set: std::collections::HashSet<String> = results.iter().map(|s| s.session_id.clone()).collect();
+    let l3_session_set: std::collections::HashSet<String> =
+        results.iter().map(|s| s.session_id.clone()).collect();
     let mut l4_extras = Vec::new();
     for sid in &l4_session_ids {
         if !l3_session_set.contains(sid) {
@@ -625,8 +642,15 @@ async fn search_knowledge_sessions(state: &AppState, query: &str, limit: usize) 
         Err(_) => return Vec::new(),
     };
     let mut seen = std::collections::HashSet::new();
-    nodes.into_iter()
-        .filter_map(|n| if seen.insert(n.session_id.clone()) { Some(n.session_id) } else { None })
+    nodes
+        .into_iter()
+        .filter_map(|n| {
+            if seen.insert(n.session_id.clone()) {
+                Some(n.session_id)
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
@@ -634,7 +658,11 @@ async fn enrich_with_knowledge(
     state: &AppState,
     session_ids: &[String],
 ) -> std::collections::HashMap<String, Vec<Value>> {
-    let nodes = match state.knowledge_store.get_nodes_by_sessions(session_ids).await {
+    let nodes = match state
+        .knowledge_store
+        .get_nodes_by_sessions(session_ids)
+        .await
+    {
         Ok(n) => n,
         Err(e) => {
             tracing::debug!("L4 knowledge lookup skipped: {e}");
@@ -851,9 +879,21 @@ async fn get_session(state: &AppState, args: Value) -> Result<Value, String> {
         .ok_or_else(|| format!("Session not found: {}", session_id_input))?;
 
     // 获取会话信息（type, source, 关系）
-    let session_info = state.db.get_session(&session_id).await.map_err(|e| e.to_string())?;
-    let parent_relation = state.db.get_parent_session(&session_id).await.unwrap_or(None);
-    let children = state.db.get_children_sessions(&session_id).await.unwrap_or_default();
+    let session_info = state
+        .db
+        .get_session(&session_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let parent_relation = state
+        .db
+        .get_parent_session(&session_id)
+        .await
+        .unwrap_or(None);
+    let children = state
+        .db
+        .get_children_sessions(&session_id)
+        .await
+        .unwrap_or_default();
 
     // 获取所有消息（需要完整列表来计算位置）
     let all_messages = state
@@ -1172,11 +1212,17 @@ async fn list_projects(state: &AppState, _args: Value) -> Result<Value, String> 
 }
 
 async fn extract_knowledge(state: &AppState, args: Value) -> Result<Value, String> {
-    let service = state.knowledge.clone()
+    let service = state
+        .knowledge
+        .clone()
         .ok_or("knowledge extraction not enabled — set knowledge.enabled=true in config")?;
 
     // Check status / get current job
-    if args.get("status").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if args
+        .get("status")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         let job = state.knowledge_job.read().await;
         return Ok(json!({ "job": *job }));
     }
@@ -1195,7 +1241,11 @@ async fn extract_knowledge(state: &AppState, args: Value) -> Result<Value, Strin
     }
 
     let project_filter = args.get("project").and_then(|v| v.as_str());
-    let limit = args.get("limit").and_then(|v| v.as_u64()).map(|v| v as usize).unwrap_or(usize::MAX);
+    let limit = args
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(usize::MAX);
     let project_desc = args
         .get("desc")
         .and_then(|v| v.as_str())
@@ -1217,7 +1267,9 @@ async fn extract_knowledge(state: &AppState, args: Value) -> Result<Value, Strin
         return Ok(json!({"error": "no projects matched", "filter": project_filter}));
     }
 
-    let pending = service.count_unprocessed(&project_ids, limit).await
+    let pending = service
+        .count_unprocessed(&project_ids, limit)
+        .await
         .map_err(|e| e.to_string())?;
 
     if pending == 0 {
@@ -1239,26 +1291,30 @@ async fn extract_knowledge(state: &AppState, args: Value) -> Result<Value, Strin
         });
     }
 
-    state.knowledge_cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+    state
+        .knowledge_cancel
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     let job_ref = state.knowledge_job.clone();
     let cancel_flag = state.knowledge_cancel.clone();
     tokio::spawn(async move {
         let job_ref2 = job_ref.clone();
-        let result = service.process_project_with_progress(
-            &project_ids,
-            limit,
-            &project_desc,
-            move |_done, r| {
-                if let Ok(mut job) = job_ref2.try_write() {
-                    if let Some(ref mut j) = *job {
-                        j.processed = r.sessions_processed;
-                        j.failed = r.sessions_failed;
-                        j.nodes_extracted = r.nodes_extracted;
+        let result = service
+            .process_project_with_progress(
+                &project_ids,
+                limit,
+                &project_desc,
+                move |_done, r| {
+                    if let Ok(mut job) = job_ref2.try_write() {
+                        if let Some(ref mut j) = *job {
+                            j.processed = r.sessions_processed;
+                            j.failed = r.sessions_failed;
+                            j.nodes_extracted = r.nodes_extracted;
+                        }
                     }
-                }
-            },
-            Some(cancel_flag),
-        ).await;
+                },
+                Some(cancel_flag),
+            )
+            .await;
 
         let mut job = job_ref.write().await;
         if let Some(ref mut j) = *job {
@@ -1879,9 +1935,7 @@ mod tests {
 
             // 创建测试会话
             let session_id = "test-session-12345678";
-            session_db
-                .upsert_session(session_id, project_id)
-                .unwrap();
+            session_db.upsert_session(session_id, project_id).unwrap();
 
             // 插入测试消息
             let now = chrono::Local::now().timestamp_millis();
@@ -1908,9 +1962,7 @@ mod tests {
                     approval_resolved_at: None,
                 })
                 .collect();
-            session_db
-                .insert_messages(session_id, &messages)
-                .unwrap();
+            session_db.insert_messages(session_id, &messages).unwrap();
 
             // 释放 SessionDB，使用 DbReader 读取
             drop(session_db);
@@ -2140,8 +2192,14 @@ mod tests {
             .unwrap();
 
             // 应该返回 message 而不是 messages
-            assert!(result.get("message").is_some(), "at 模式应返回 message 字段");
-            assert!(result.get("messages").is_none(), "at 模式不应返回 messages 字段");
+            assert!(
+                result.get("message").is_some(),
+                "at 模式应返回 message 字段"
+            );
+            assert!(
+                result.get("messages").is_none(),
+                "at 模式不应返回 messages 字段"
+            );
 
             let message = &result["message"];
             assert_eq!(message["at"].as_i64(), Some(at_value));
@@ -2153,10 +2211,7 @@ mod tests {
                 "at 模式应返回完整内容: {}",
                 text
             );
-            assert!(
-                !text.ends_with("..."),
-                "at 模式不应截断内容"
-            );
+            assert!(!text.ends_with("..."), "at 模式不应截断内容");
         }
 
         /// at 模式：消息不存在时报错
@@ -2336,10 +2391,7 @@ mod tests {
                 .filter_map(|r| r["session"].as_str())
                 .collect();
             assert_eq!(filtered_sessions.len(), 1, "过滤后应只有 1 个 session");
-            assert!(
-                filtered_sessions[0].starts_with("aaaa"),
-                "应该是 session A"
-            );
+            assert!(filtered_sessions[0].starts_with("aaaa"), "应该是 session A");
         }
 
         /// sessionId 前缀匹配

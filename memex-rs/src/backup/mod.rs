@@ -87,10 +87,17 @@ impl BackupService {
                 self.cleanup_old_backups()?;
             }
             Ok(false) => {
-                tracing::warn!("Backup integrity FAILED: {:?}, keeping all old backups", backup_path);
+                tracing::warn!(
+                    "Backup integrity FAILED: {:?}, keeping all old backups",
+                    backup_path
+                );
             }
             Err(e) => {
-                tracing::warn!("Backup integrity check error: {:?}: {}, keeping all old backups", backup_path, e);
+                tracing::warn!(
+                    "Backup integrity check error: {:?}: {}, keeping all old backups",
+                    backup_path,
+                    e
+                );
             }
         }
 

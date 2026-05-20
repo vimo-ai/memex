@@ -13,8 +13,6 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-#[cfg(feature = "rust-embed")]
-use memex::embedded::{embedded_spa_handler, has_embedded_assets};
 use memex::api::{create_router, AppState};
 use memex::archive::ArchiveService;
 use memex::backup::BackupService;
@@ -23,8 +21,10 @@ use memex::compact::{
 };
 use memex::config::Config;
 use memex::db_reader::DbReader;
-use memex::knowledge::{KnowledgeService, KnowledgeStore};
+#[cfg(feature = "rust-embed")]
+use memex::embedded::{embedded_spa_handler, has_embedded_assets};
 use memex::indexer::VectorIndexer;
+use memex::knowledge::{KnowledgeService, KnowledgeStore};
 use memex::llm::{ChatProvider, EmbeddingProvider, OllamaProvider};
 use memex::rag::RagService;
 use memex::search::HybridSearchService;
@@ -73,8 +73,12 @@ async fn main() -> anyhow::Result<()> {
                     println!("Environment:");
                     println!("  PORT                 Server port (default: 10013)");
                     println!("  MEMEX_DATA_DIR       Data directory (default: ~/.vimo/db)");
-                    println!("  MEMEX_WEB_DIR        Web static files (default: ~/.vimo/memex/web)");
-                    println!("  OLLAMA_API           Ollama API URL (default: http://localhost:11434)");
+                    println!(
+                        "  MEMEX_WEB_DIR        Web static files (default: ~/.vimo/memex/web)"
+                    );
+                    println!(
+                        "  OLLAMA_API           Ollama API URL (default: http://localhost:11434)"
+                    );
                     println!("  EMBEDDING_MODEL      Embedding model (default: bge-m3)");
                     println!("  CHAT_MODEL           Chat model (default: qwen3:0.6b)");
                     println!("  ENABLE_AI_CHAT       Enable AI chat (default: false)");
@@ -454,38 +458,50 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("⏱️ [Compact] {}ms", phase_start.elapsed().as_millis());
 
     // Create hybrid search service
-    let hybrid_search =
-        HybridSearchService::new(db.clone(), embedding.clone(), vector.clone());
+    let hybrid_search = HybridSearchService::new(db.clone(), embedding.clone(), vector.clone());
 
     // Create RAG service
-    let rag_service = RagService::new(
-        db.clone(),
-        chat.clone(),
-        embedding.clone(),
-        vector.clone(),
-    );
+    let rag_service = RagService::new(db.clone(), chat.clone(), embedding.clone(), vector.clone());
 
     // Initialize Knowledge service (L4) if enabled
     let knowledge: Option<Arc<KnowledgeService>> = if config.knowledge.enabled {
-        let chat_model = config.knowledge.chat_model.as_deref().unwrap_or(&config.chat_model);
-        let embed_model = config.knowledge.embedding_model.as_deref().unwrap_or(&config.embedding_model);
+        let chat_model = config
+            .knowledge
+            .chat_model
+            .as_deref()
+            .unwrap_or(&config.chat_model);
+        let embed_model = config
+            .knowledge
+            .embedding_model
+            .as_deref()
+            .unwrap_or(&config.embedding_model);
 
         let (k_chat, k_embed): (Arc<dyn ChatProvider>, Arc<dyn EmbeddingProvider>) =
             match config.knowledge.provider.as_str() {
                 "openai" => {
-                    let api_base = config.knowledge.api_base.as_deref()
+                    let api_base = config
+                        .knowledge
+                        .api_base
+                        .as_deref()
                         .unwrap_or("https://api.openai.com/v1");
                     let api_key = config.knowledge.api_key.as_deref().unwrap_or("");
-                    let chat_provider = memex::llm::OpenAIProvider::new(api_base, api_key, chat_model);
+                    let chat_provider =
+                        memex::llm::OpenAIProvider::new(api_base, api_key, chat_model);
                     // embedding stays on ollama (cheaper, local)
-                    let embed_api = config.knowledge.api_base.as_deref()
+                    let embed_api = config
+                        .knowledge
+                        .api_base
+                        .as_deref()
                         .unwrap_or(&config.ollama_api);
                     let embed_provider = OllamaProvider::new(embed_api, embed_model, chat_model);
                     (Arc::new(chat_provider), Arc::new(embed_provider))
                 }
                 _ => {
                     // "ollama" (default) — supports local or remote ollama
-                    let api_base = config.knowledge.api_base.as_deref()
+                    let api_base = config
+                        .knowledge
+                        .api_base
+                        .as_deref()
                         .unwrap_or(&config.ollama_api);
                     let provider = OllamaProvider::new(api_base, embed_model, chat_model);
                     (Arc::new(provider.clone()), Arc::new(provider))
@@ -495,7 +511,13 @@ async fn main() -> anyhow::Result<()> {
         let k_conn = rusqlite::Connection::open(config.db_path())?;
         let k_store = KnowledgeStore::new(Arc::new(tokio::sync::Mutex::new(k_conn)));
 
-        let service = KnowledgeService::new(k_store, db.clone(), k_chat, k_embed, config.knowledge.clone());
+        let service = KnowledgeService::new(
+            k_store,
+            db.clone(),
+            k_chat,
+            k_embed,
+            config.knowledge.clone(),
+        );
         if let Err(e) = service.ensure_schema().await {
             tracing::warn!("⚠️ Knowledge schema init failed: {e}");
         } else {
@@ -589,14 +611,12 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "rust-embed")]
         {
             tracing::info!("📦 Using embedded web assets");
-            create_router(state)
-                .fallback(embedded_spa_handler)
-                .layer(
-                    CorsLayer::new()
-                        .allow_origin(Any)
-                        .allow_methods(Any)
-                        .allow_headers(Any),
-                )
+            create_router(state).fallback(embedded_spa_handler).layer(
+                CorsLayer::new()
+                    .allow_origin(Any)
+                    .allow_methods(Any)
+                    .allow_headers(Any),
+            )
         }
         #[cfg(not(feature = "rust-embed"))]
         unreachable!()
@@ -689,7 +709,10 @@ async fn monitor_parent_process(parent_pid: i32) {
         let alive = is_parent_alive(parent_pid);
 
         if !alive {
-            tracing::info!("👋 Parent process (PID: {}) exited, shutting down...", parent_pid);
+            tracing::info!(
+                "👋 Parent process (PID: {}) exited, shutting down...",
+                parent_pid
+            );
             std::process::exit(0);
         }
     }
@@ -1161,23 +1184,40 @@ async fn handle_extract_knowledge(args: &[String]) -> anyhow::Result<()> {
     }
 
     // Initialize providers
-    let chat_model = config.knowledge.chat_model.as_deref().unwrap_or(&config.chat_model);
-    let embed_model = config.knowledge.embedding_model.as_deref().unwrap_or(&config.embedding_model);
+    let chat_model = config
+        .knowledge
+        .chat_model
+        .as_deref()
+        .unwrap_or(&config.chat_model);
+    let embed_model = config
+        .knowledge
+        .embedding_model
+        .as_deref()
+        .unwrap_or(&config.embedding_model);
 
     let (chat, embed): (Arc<dyn ChatProvider>, Arc<dyn EmbeddingProvider>) =
         match config.knowledge.provider.as_str() {
             "openai" => {
-                let api_base = config.knowledge.api_base.as_deref()
+                let api_base = config
+                    .knowledge
+                    .api_base
+                    .as_deref()
                     .unwrap_or("https://api.openai.com/v1");
                 let api_key = config.knowledge.api_key.as_deref().unwrap_or("");
                 let chat_provider = memex::llm::OpenAIProvider::new(api_base, api_key, chat_model);
-                let embed_api = config.knowledge.api_base.as_deref()
+                let embed_api = config
+                    .knowledge
+                    .api_base
+                    .as_deref()
                     .unwrap_or(&config.ollama_api);
                 let embed_provider = OllamaProvider::new(embed_api, embed_model, chat_model);
                 (Arc::new(chat_provider), Arc::new(embed_provider))
             }
             _ => {
-                let api_base = config.knowledge.api_base.as_deref()
+                let api_base = config
+                    .knowledge
+                    .api_base
+                    .as_deref()
                     .unwrap_or(&config.ollama_api);
                 let provider = OllamaProvider::new(api_base, embed_model, chat_model);
                 (Arc::new(provider.clone()), Arc::new(provider))
@@ -1232,7 +1272,9 @@ async fn handle_extract_knowledge(args: &[String]) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let result = service.process_project(&project_ids, limit, &project_desc).await?;
+    let result = service
+        .process_project(&project_ids, limit, &project_desc)
+        .await?;
     println!("{result}");
 
     Ok(())
@@ -1272,8 +1314,8 @@ fn init_logging(default_filter: &str) {
     {
         use ai_cli_session_db::team::EncryptedLogLayer;
         let log_path = EncryptedLogLayer::default_log_path();
-        let layer = EncryptedLogLayer::from_team_key(&log_path)
-            .expect("failed to init encrypted log");
+        let layer =
+            EncryptedLogLayer::from_team_key(&log_path).expect("failed to init encrypted log");
         tracing_subscriber::registry()
             .with(
                 tracing_subscriber::EnvFilter::try_from_default_env()

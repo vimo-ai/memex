@@ -5,15 +5,15 @@
 
 use axum::{
     extract::{Query, State},
-    response::IntoResponse,
     http::StatusCode,
+    response::IntoResponse,
     routing::get,
     Json, Router,
 };
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::search::{HybridSearchOptions, HybridSearchService, SearchMode, SearchLevel};
+use crate::search::{HybridSearchOptions, HybridSearchService, SearchLevel, SearchMode};
 
 #[derive(Deserialize)]
 pub struct SearchQuery {
@@ -68,16 +68,22 @@ async fn handle_search(
     match search.search(options).await {
         Ok(results) => {
             let total = results.len();
-            (StatusCode::OK, Json(serde_json::json!({
-                "results": results,
-                "total": total,
-            })))
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "results": results,
+                    "total": total,
+                })),
+            )
         }
         Err(e) => {
             tracing::error!("搜索失败: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": format!("{e}"),
-            })))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("{e}"),
+                })),
+            )
         }
     }
 }

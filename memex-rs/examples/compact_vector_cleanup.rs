@@ -12,9 +12,7 @@ async fn main() -> Result<()> {
         .with_env_filter("info,memex=debug")
         .init();
 
-    let path = dirs::home_dir()
-        .unwrap()
-        .join(".vimo/db/lancedb/compact");
+    let path = dirs::home_dir().unwrap().join(".vimo/db/lancedb/compact");
 
     println!("Opening compact vector store: {:?}", path);
 

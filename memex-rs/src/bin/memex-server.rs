@@ -12,7 +12,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use memex::auth::{auth_layer, AuthState};
 use memex::db_reader::DbReader;
 use memex::search::HybridSearchService;
-use memex::server::{create_register_router, create_search_router, create_sync_router, IngestState};
+use memex::server::{
+    create_register_router, create_search_router, create_sync_router, IngestState,
+};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -248,10 +250,8 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("Listening on https://0.0.0.0:{}", config.port);
             log_endpoints(config.master_key.is_some());
 
-            let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
-                cert_path, key_path,
-            )
-            .await?;
+            let tls_config =
+                axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path).await?;
 
             axum_server::bind_rustls(addr, tls_config)
                 .serve(app.into_make_service())

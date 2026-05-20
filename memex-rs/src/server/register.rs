@@ -1,12 +1,6 @@
 //! 自注册 - 用 master_key 换取 api_key
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::post,
-    Json, Router,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -74,9 +68,7 @@ mod tests {
     fn setup() -> (TempDir, Arc<IngestState>) {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("server.db");
-        let state = Arc::new(
-            IngestState::new(db_path.to_str().unwrap()).unwrap(),
-        );
+        let state = Arc::new(IngestState::new(db_path.to_str().unwrap()).unwrap());
         (dir, state)
     }
 

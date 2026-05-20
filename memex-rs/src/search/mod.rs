@@ -286,7 +286,10 @@ impl HybridSearchService {
     ) -> Result<Vec<HybridSearchResult>> {
         // 时间排序时自动降级为 FTS-only 模式
         let effective_mode = if order_by != SearchOrderBy::Score {
-            tracing::info!("[Raw Search] order_by={:?}, downgrading to FTS-only mode", order_by);
+            tracing::info!(
+                "[Raw Search] order_by={:?}, downgrading to FTS-only mode",
+                order_by
+            );
             SearchMode::Fts
         } else {
             mode
@@ -623,10 +626,8 @@ impl HybridSearchService {
         );
 
         // 合并并按分数排序
-        let mut all_results: Vec<HybridSearchResult> = raw_results
-            .into_iter()
-            .chain(compact_results)
-            .collect();
+        let mut all_results: Vec<HybridSearchResult> =
+            raw_results.into_iter().chain(compact_results).collect();
 
         all_results.sort_by(|a, b| {
             b.score
@@ -668,7 +669,9 @@ impl HybridSearchService {
         // Fallback: CompactDB 不可用时查 talks_fts
         if self.compact_db.is_none() {
             if mode == SearchMode::Fts || mode == SearchMode::Hybrid {
-                return self.search_talks_fts_fallback(query, limit, project_id).await;
+                return self
+                    .search_talks_fts_fallback(query, limit, project_id)
+                    .await;
             }
             return Ok(vec![]);
         }
@@ -995,9 +998,19 @@ impl HybridSearchService {
             let start = end - chrono::Duration::days(30);
             let start_date = Some(start.format("%Y-%m-%d").to_string());
             let end_date = Some(end.format("%Y-%m-%d").to_string());
-            tracing::info!("[Talks FTS Fallback] No talks data, falling back to raw FTS (last 30d)");
+            tracing::info!(
+                "[Talks FTS Fallback] No talks data, falling back to raw FTS (last 30d)"
+            );
             return self
-                .search_raw(query, SearchMode::Fts, limit, project_id, SearchOrderBy::Score, start_date, end_date)
+                .search_raw(
+                    query,
+                    SearchMode::Fts,
+                    limit,
+                    project_id,
+                    SearchOrderBy::Score,
+                    start_date,
+                    end_date,
+                )
                 .await;
         }
 

@@ -73,7 +73,11 @@ impl Extractor {
         let total_chars: usize = lines.iter().map(|l| l.len() + 2).sum();
 
         if total_chars <= max_chunk_chars {
-            debug!("session {sid} digest: {} messages → {} lines, single chunk", messages.len(), lines.len());
+            debug!(
+                "session {sid} digest: {} messages → {} lines, single chunk",
+                messages.len(),
+                lines.len()
+            );
             return Ok(vec![lines.join("\n\n")]);
         }
 
@@ -81,7 +85,11 @@ impl Extractor {
         let mut chunks = Vec::new();
         let mut current = String::new();
         for line in &lines {
-            let addition = if current.is_empty() { line.len() } else { line.len() + 2 };
+            let addition = if current.is_empty() {
+                line.len()
+            } else {
+                line.len() + 2
+            };
             if !current.is_empty() && current.len() + addition > max_chunk_chars {
                 chunks.push(current);
                 current = line.clone();
@@ -98,7 +106,9 @@ impl Extractor {
 
         debug!(
             "session {sid} digest: {} messages → {} lines → {} chunks (total {total_chars} chars)",
-            messages.len(), lines.len(), chunks.len()
+            messages.len(),
+            lines.len(),
+            chunks.len()
         );
 
         Ok(chunks)
@@ -151,7 +161,9 @@ impl Extractor {
                     match prompt::try_parse_json(&retry.content) {
                         Some(v) => v,
                         None => {
-                            warn!("pass2{chunk_label} JSON parse failed after retry, skipping chunk");
+                            warn!(
+                                "pass2{chunk_label} JSON parse failed after retry, skipping chunk"
+                            );
                             continue;
                         }
                     }
@@ -183,7 +195,10 @@ impl Extractor {
             all_nodes.extend(nodes);
         }
 
-        debug!("session {sid} total → {} nodes from {total_chunks} chunk(s)", all_nodes.len());
+        debug!(
+            "session {sid} total → {} nodes from {total_chunks} chunk(s)",
+            all_nodes.len()
+        );
         Ok(all_nodes)
     }
 }

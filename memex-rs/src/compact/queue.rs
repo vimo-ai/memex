@@ -223,7 +223,11 @@ impl CompactWorker {
                 return;
             }
             Err(e) => {
-                tracing::error!("Compact failed to acquire lock (session={}): {}", session_id, e);
+                tracing::error!(
+                    "Compact failed to acquire lock (session={}): {}",
+                    session_id,
+                    e
+                );
                 return;
             }
         }

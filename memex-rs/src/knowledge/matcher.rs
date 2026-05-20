@@ -18,7 +18,10 @@ fn cluster_embed_text(cluster: &KnowledgeCluster) -> String {
     format!(
         "{}: {}",
         cluster.canonical_topic,
-        cluster.current_understanding.as_deref().unwrap_or(&cluster.canonical_topic)
+        cluster
+            .current_understanding
+            .as_deref()
+            .unwrap_or(&cluster.canonical_topic)
     )
 }
 
@@ -59,7 +62,11 @@ pub async fn match_nodes_to_clusters(
     let node_texts: Vec<String> = new_nodes.iter().map(node_embed_text).collect();
     let cluster_texts: Vec<String> = existing_clusters.iter().map(cluster_embed_text).collect();
 
-    info!("embedding {} nodes + {} clusters", node_texts.len(), cluster_texts.len());
+    info!(
+        "embedding {} nodes + {} clusters",
+        node_texts.len(),
+        cluster_texts.len()
+    );
 
     let node_embs = embed.embed_batch(node_texts).await?;
     let cluster_embs = embed.embed_batch(cluster_texts).await?;
@@ -84,7 +91,11 @@ pub async fn match_nodes_to_clusters(
         }
     }
 
-    debug!("{} matched, {} unmatched (threshold {threshold})", matched.len(), unmatched.len());
+    debug!(
+        "{} matched, {} unmatched (threshold {threshold})",
+        matched.len(),
+        unmatched.len()
+    );
     Ok((matched, unmatched))
 }
 
@@ -157,7 +168,11 @@ pub async fn cluster_unmatched(
         .map(|c| c[0])
         .collect();
 
-    debug!("{} multi-clusters, {} singletons", multi.len(), singletons.len());
+    debug!(
+        "{} multi-clusters, {} singletons",
+        multi.len(),
+        singletons.len()
+    );
     Ok((multi, singletons))
 }
 
@@ -234,7 +249,8 @@ pub async fn evolve_cluster(
         return Ok(None);
     }
 
-    let unique_days: std::collections::HashSet<&str> = nodes.iter().map(|n| n.day.as_str()).collect();
+    let unique_days: std::collections::HashSet<&str> =
+        nodes.iter().map(|n| n.day.as_str()).collect();
     if unique_days.len() < MIN_DAYS {
         return Ok(None);
     }

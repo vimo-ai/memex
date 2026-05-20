@@ -79,7 +79,11 @@ impl EmbeddingProvider for OllamaProvider {
                 model: self.embedding_model.clone(),
                 input: "probe".to_string(),
             };
-            let new_works = self.core.post_json::<_, OllamaEmbedResponse>("/api/embed", &probe_req).await.is_ok();
+            let new_works = self
+                .core
+                .post_json::<_, OllamaEmbedResponse>("/api/embed", &probe_req)
+                .await
+                .is_ok();
             self.use_new_embed_api.store(new_works, Ordering::Relaxed);
             self.embed_api_probed.store(true, Ordering::Relaxed);
         }
@@ -94,7 +98,10 @@ impl EmbeddingProvider for OllamaProvider {
                 .post_json("/api/embed", &request)
                 .await
                 .context("Ollama embed request failed")?;
-            response.embeddings.into_iter().next()
+            response
+                .embeddings
+                .into_iter()
+                .next()
                 .context("empty embeddings response")
         } else {
             let request = OllamaEmbeddingRequest {

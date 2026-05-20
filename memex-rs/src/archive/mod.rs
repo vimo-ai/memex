@@ -535,14 +535,17 @@ impl ArchiveService {
                 };
 
                 // 路径安全检查
-                if rel_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                if rel_path
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+                {
                     tracing::warn!("Skipping path with ..: {:?}", rel_path);
                     continue;
                 }
 
-                let entry = session_map.entry(uuid).or_insert_with(|| {
-                    (None, Vec::new(), SystemTime::UNIX_EPOCH)
-                });
+                let entry = session_map
+                    .entry(uuid)
+                    .or_insert_with(|| (None, Vec::new(), SystemTime::UNIX_EPOCH));
                 entry.0 = Some(rel_path);
                 if mtime > entry.2 {
                     entry.2 = mtime;
@@ -612,9 +615,9 @@ impl ArchiveService {
                         continue;
                     }
 
-                    let entry = session_map.entry(uuid.clone()).or_insert_with(|| {
-                        (None, Vec::new(), SystemTime::UNIX_EPOCH)
-                    });
+                    let entry = session_map
+                        .entry(uuid.clone())
+                        .or_insert_with(|| (None, Vec::new(), SystemTime::UNIX_EPOCH));
                     entry.1.push(rel_path);
                     if mtime > entry.2 {
                         entry.2 = mtime;
@@ -677,8 +680,11 @@ impl ArchiveService {
         }
 
         // 压缩（保留目录结构）
-        self.compressor
-            .compress_with_structure(&self.source_dir, &all_relative_paths, &tmp_path)?;
+        self.compressor.compress_with_structure(
+            &self.source_dir,
+            &all_relative_paths,
+            &tmp_path,
+        )?;
 
         // 解压验证
         let verify_dir = self.archive_dir.join(".verify");
@@ -973,11 +979,7 @@ mod tests {
         let mut f = std::fs::File::create(path).unwrap();
         f.write_all(content.as_bytes()).unwrap();
         drop(f);
-        filetime::set_file_mtime(
-            path,
-            filetime::FileTime::from_system_time(mtime),
-        )
-        .unwrap();
+        filetime::set_file_mtime(path, filetime::FileTime::from_system_time(mtime)).unwrap();
     }
 
     /// 两天前的时间（满足 quiet_period）
@@ -1139,11 +1141,7 @@ mod tests {
         let today = Local::now().date_naive();
 
         let project_dir = source_dir.path().join("-Users-test-project");
-        create_jsonl(
-            &project_dir.join("recent.jsonl"),
-            r#"{"type":"user"}"#,
-            now,
-        );
+        create_jsonl(&project_dir.join("recent.jsonl"), r#"{"type":"user"}"#, now);
 
         let svc = ArchiveService::new(
             source_dir.path().to_path_buf(),
@@ -1165,11 +1163,7 @@ mod tests {
 
         let project_dir = source_dir.path().join("-Users-test-project");
         // .jsonl 文件应该被收集
-        create_jsonl(
-            &project_dir.join("abc.jsonl"),
-            r#"{"type":"user"}"#,
-            mtime,
-        );
+        create_jsonl(&project_dir.join("abc.jsonl"), r#"{"type":"user"}"#, mtime);
         // .txt 文件应该被跳过
         create_jsonl(
             &project_dir.join("abc/subagents/notes.txt"),
@@ -1282,11 +1276,11 @@ mod tests {
 
         // 解压验证
         let verify_dir = archive_dir.path().join("final_verify");
-        svc.compressor.decompress(&archive_path, &verify_dir).unwrap();
+        svc.compressor
+            .decompress(&archive_path, &verify_dir)
+            .unwrap();
 
-        assert!(verify_dir
-            .join(format!("{}/sess1.jsonl", project))
-            .exists());
+        assert!(verify_dir.join(format!("{}/sess1.jsonl", project)).exists());
         assert!(verify_dir
             .join(format!("{}/sess1/subagents/agent-001.jsonl", project))
             .exists());
@@ -1358,21 +1352,13 @@ mod tests {
         let verify_dir = archive_dir.path().join("verify_merge");
         compressor.decompress(&merged_path, &verify_dir).unwrap();
 
-        assert!(verify_dir
-            .join(format!("{}/a.jsonl", project))
-            .exists());
-        assert!(verify_dir
-            .join(format!("{}/b.jsonl", project))
-            .exists());
-        assert!(verify_dir
-            .join(format!("{}/c.jsonl", project))
-            .exists());
+        assert!(verify_dir.join(format!("{}/a.jsonl", project)).exists());
+        assert!(verify_dir.join(format!("{}/b.jsonl", project)).exists());
+        assert!(verify_dir.join(format!("{}/c.jsonl", project)).exists());
 
         // a.jsonl 应该保留第一个归档的版本（先遇到的 wins）
-        let a_content = std::fs::read_to_string(
-            verify_dir.join(format!("{}/a.jsonl", project)),
-        )
-        .unwrap();
+        let a_content =
+            std::fs::read_to_string(verify_dir.join(format!("{}/a.jsonl", project))).unwrap();
         assert_eq!(a_content, "content-a-1");
     }
 }

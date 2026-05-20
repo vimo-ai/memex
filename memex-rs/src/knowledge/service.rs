@@ -74,7 +74,8 @@ impl KnowledgeService {
         sessions: &[(String, i64, String)], // (session_id, project_id, day)
         project_desc: &str,
     ) -> Result<ProcessResult> {
-        self.process_sessions_with_progress(sessions, project_desc, |_, _| {}, None).await
+        self.process_sessions_with_progress(sessions, project_desc, |_, _| {}, None)
+            .await
     }
 
     /// Process sessions with per-session progress callback and optional cancel flag.
@@ -95,10 +96,16 @@ impl KnowledgeService {
         // Stage 1: Extract + persist nodes per session (atomic per session)
         for (session_id, project_id, day) in sessions {
             if cancel.map_or(false, |c| c.load(Ordering::Relaxed)) {
-                info!("extraction cancelled after {} sessions", result.sessions_processed);
+                info!(
+                    "extraction cancelled after {} sessions",
+                    result.sessions_processed
+                );
                 bail!("cancelled");
             }
-            info!("extracting session {}...", &session_id[..8.min(session_id.len())]);
+            info!(
+                "extracting session {}...",
+                &session_id[..8.min(session_id.len())]
+            );
 
             let chunks = match self
                 .extractor
@@ -107,9 +114,18 @@ impl KnowledgeService {
             {
                 Ok(c) => c,
                 Err(e) => {
-                    warn!("digest failed for {}: {e}", &session_id[..8.min(session_id.len())]);
+                    warn!(
+                        "digest failed for {}: {e}",
+                        &session_id[..8.min(session_id.len())]
+                    );
                     self.store
-                        .update_progress(session_id, "failed", 0, Some(&e.to_string()), &self.config.pipeline_version)
+                        .update_progress(
+                            session_id,
+                            "failed",
+                            0,
+                            Some(&e.to_string()),
+                            &self.config.pipeline_version,
+                        )
                         .await?;
                     result.sessions_failed += 1;
                     on_progress(result.sessions_processed + result.sessions_failed, &result);
@@ -137,12 +153,24 @@ impl KnowledgeService {
                         let sid = &session_id[..8.min(session_id.len())];
                         warn!("insert_nodes wrote 0/{expected} for {sid} — possible schema constraint issue");
                         self.store
-                            .update_progress(session_id, "failed", 0, Some("insert_nodes wrote 0 rows"), &self.config.pipeline_version)
+                            .update_progress(
+                                session_id,
+                                "failed",
+                                0,
+                                Some("insert_nodes wrote 0 rows"),
+                                &self.config.pipeline_version,
+                            )
                             .await?;
                         result.sessions_failed += 1;
                     } else {
                         self.store
-                            .update_progress(session_id, "extracted", written as i64, None, &self.config.pipeline_version)
+                            .update_progress(
+                                session_id,
+                                "extracted",
+                                written as i64,
+                                None,
+                                &self.config.pipeline_version,
+                            )
                             .await?;
                         result.sessions_processed += 1;
                         result.nodes_extracted += written;
@@ -150,9 +178,18 @@ impl KnowledgeService {
                     }
                 }
                 Err(e) => {
-                    warn!("extraction failed for {}: {e}", &session_id[..8.min(session_id.len())]);
+                    warn!(
+                        "extraction failed for {}: {e}",
+                        &session_id[..8.min(session_id.len())]
+                    );
                     self.store
-                        .update_progress(session_id, "failed", 0, Some(&e.to_string()), &self.config.pipeline_version)
+                        .update_progress(
+                            session_id,
+                            "failed",
+                            0,
+                            Some(&e.to_string()),
+                            &self.config.pipeline_version,
+                        )
                         .await?;
                     result.sessions_failed += 1;
                 }
@@ -166,7 +203,12 @@ impl KnowledgeService {
 
         // Stage 2: Read back persisted nodes, match against existing clusters
         let all_nodes = self.store.get_nodes_by_sessions(&session_ids_done).await?;
-        let project_ids: Vec<i64> = sessions.iter().map(|(_, pid, _)| *pid).collect::<HashSet<_>>().into_iter().collect();
+        let project_ids: Vec<i64> = sessions
+            .iter()
+            .map(|(_, pid, _)| *pid)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
         let existing_clusters = self.store.load_clusters(&project_ids).await?;
 
         let (matched, unmatched) = matcher::match_nodes_to_clusters(
@@ -198,7 +240,8 @@ impl KnowledgeService {
         .await?;
 
         // Name new multi-node clusters
-        let cluster_names = matcher::name_clusters(self.chat.as_ref(), &multi_clusters, &all_nodes).await?;
+        let cluster_names =
+            matcher::name_clusters(self.chat.as_ref(), &multi_clusters, &all_nodes).await?;
 
         // Create new clusters for multi-node groups
         for (ci, members) in multi_clusters.iter().enumerate() {
@@ -222,7 +265,9 @@ impl KnowledgeService {
             };
             self.store.insert_cluster(&cluster).await?;
             for &ni in members {
-                self.store.update_node_cluster(&all_nodes[ni].id, &cluster_id).await?;
+                self.store
+                    .update_node_cluster(&all_nodes[ni].id, &cluster_id)
+                    .await?;
             }
             affected_cluster_ids.insert(cluster_id);
             result.clusters_created += 1;
@@ -247,7 +292,9 @@ impl KnowledgeService {
                 pipeline_version: Some(self.config.pipeline_version.clone()),
             };
             self.store.insert_cluster(&cluster).await?;
-            self.store.update_node_cluster(&node.id, &cluster_id).await?;
+            self.store
+                .update_node_cluster(&node.id, &cluster_id)
+                .await?;
             result.clusters_created += 1;
         }
 
@@ -298,7 +345,8 @@ impl KnowledgeService {
         limit: usize,
         project_desc: &str,
     ) -> Result<ProcessResult> {
-        self.process_project_with_progress(project_ids, limit, project_desc, |_, _| {}, None).await
+        self.process_project_with_progress(project_ids, limit, project_desc, |_, _| {}, None)
+            .await
     }
 
     /// Process unprocessed sessions with progress callback and optional cancel flag.
@@ -313,18 +361,25 @@ impl KnowledgeService {
     where
         F: Fn(usize, &ProcessResult),
     {
-        let sessions = self.store.get_unprocessed_sessions(project_ids, limit).await?;
+        let sessions = self
+            .store
+            .get_unprocessed_sessions(project_ids, limit)
+            .await?;
         if sessions.is_empty() {
             info!("no unprocessed sessions");
             return Ok(ProcessResult::default());
         }
         info!("{} unprocessed sessions (limit {limit})", sessions.len());
-        self.process_sessions_with_progress(&sessions, project_desc, on_progress, cancel.as_deref()).await
+        self.process_sessions_with_progress(&sessions, project_desc, on_progress, cancel.as_deref())
+            .await
     }
 
     /// Count unprocessed sessions for given project IDs.
     pub async fn count_unprocessed(&self, project_ids: &[i64], limit: usize) -> Result<usize> {
-        let sessions = self.store.get_unprocessed_sessions(project_ids, limit).await?;
+        let sessions = self
+            .store
+            .get_unprocessed_sessions(project_ids, limit)
+            .await?;
         Ok(sessions.len())
     }
 
@@ -338,9 +393,19 @@ impl KnowledgeService {
             return Ok(vec![]);
         }
 
-        let cluster_ids: Vec<&str> = nodes.iter().map(|n| n.cluster_id.as_str()).collect::<HashSet<_>>().into_iter().collect();
+        let cluster_ids: Vec<&str> = nodes
+            .iter()
+            .map(|n| n.cluster_id.as_str())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
         // load clusters in bulk — reuse project_ids from nodes
-        let project_ids: Vec<i64> = nodes.iter().map(|n| n.project_id).collect::<HashSet<_>>().into_iter().collect();
+        let project_ids: Vec<i64> = nodes
+            .iter()
+            .map(|n| n.project_id)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
         let all_clusters = self.store.load_clusters(&project_ids).await?;
 
         let mut results = Vec::new();

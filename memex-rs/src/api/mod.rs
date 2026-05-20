@@ -22,7 +22,9 @@ use crate::inject::InjectService;
 use crate::knowledge::{KnowledgeService, KnowledgeStore};
 use crate::llm::{ChatProvider, EmbeddingProvider};
 use crate::rag::{RagOptions, RagService};
-use crate::search::{HybridSearchOptions, HybridSearchResult, HybridSearchService, remote::RemoteSearchClient};
+use crate::search::{
+    remote::RemoteSearchClient, HybridSearchOptions, HybridSearchResult, HybridSearchService,
+};
 use crate::vector::VectorStore;
 
 #[derive(Debug, Clone, Serialize)]
@@ -1408,11 +1410,12 @@ struct CompactStatusResponse {
 
 /// GET /api/compact/status
 async fn compact_status(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
-    let (talks, sessions, obs, tracked, processing, last_updated) = if let Some(ref db) = state.compact_db {
-        db.stats_overview().await.unwrap_or_default()
-    } else {
-        Default::default()
-    };
+    let (talks, sessions, obs, tracked, processing, last_updated) =
+        if let Some(ref db) = state.compact_db {
+            db.stats_overview().await.unwrap_or_default()
+        } else {
+            Default::default()
+        };
 
     Ok(Json(CompactStatusResponse {
         enabled: state.compact_queue.is_some(),
@@ -1559,7 +1562,9 @@ async fn knowledge_extract(
     State(state): State<Arc<AppState>>,
     Json(req): Json<KnowledgeExtractRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let ks = state.knowledge.clone()
+    let ks = state
+        .knowledge
+        .clone()
         .ok_or_else(|| AppError(anyhow::anyhow!("knowledge not enabled")))?;
 
     // Check if a job is already running
@@ -1576,10 +1581,16 @@ async fn knowledge_extract(
     }
 
     let limit = req.limit.unwrap_or(usize::MAX);
-    let desc = req.desc.as_deref().unwrap_or("a software engineering project").to_string();
+    let desc = req
+        .desc
+        .as_deref()
+        .unwrap_or("a software engineering project")
+        .to_string();
     let project_id = req.project_id;
 
-    let pending = ks.count_unprocessed(&[project_id], limit).await
+    let pending = ks
+        .count_unprocessed(&[project_id], limit)
+        .await
         .map_err(|e| AppError(e))?;
 
     if pending == 0 {
@@ -1611,21 +1622,23 @@ async fn knowledge_extract(
     let cancel_flag = state.knowledge_cancel.clone();
     tokio::spawn(async move {
         let job_ref2 = job_ref.clone();
-        let result = ks.process_project_with_progress(
-            &[project_id],
-            limit,
-            &desc,
-            move |_done, r| {
-                if let Ok(mut job) = job_ref2.try_write() {
-                    if let Some(ref mut j) = *job {
-                        j.processed = r.sessions_processed;
-                        j.failed = r.sessions_failed;
-                        j.nodes_extracted = r.nodes_extracted;
+        let result = ks
+            .process_project_with_progress(
+                &[project_id],
+                limit,
+                &desc,
+                move |_done, r| {
+                    if let Ok(mut job) = job_ref2.try_write() {
+                        if let Some(ref mut j) = *job {
+                            j.processed = r.sessions_processed;
+                            j.failed = r.sessions_failed;
+                            j.nodes_extracted = r.nodes_extracted;
+                        }
                     }
-                }
-            },
-            Some(cancel_flag),
-        ).await;
+                },
+                Some(cancel_flag),
+            )
+            .await;
 
         let mut job = job_ref.write().await;
         if let Some(ref mut j) = *job {

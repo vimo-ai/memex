@@ -137,6 +137,9 @@ mod tests {
         );
         assert_eq!(cache_control_for_path("/index.html"), "no-cache");
         assert_eq!(cache_control_for_path("/"), "no-cache");
-        assert_eq!(cache_control_for_path("/favicon.ico"), "public, max-age=3600");
+        assert_eq!(
+            cache_control_for_path("/favicon.ico"),
+            "public, max-age=3600"
+        );
     }
 }

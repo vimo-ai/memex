@@ -1,4 +1,5 @@
-pub const SYSTEM_PROMPT: &str = "You are a precise knowledge extraction engine. Output valid JSON only.";
+pub const SYSTEM_PROMPT: &str =
+    "You are a precise knowledge extraction engine. Output valid JSON only.";
 
 pub const PASS1_PROMPT: &str = r#"You are analyzing a Claude Code conversation session to extract knowledge.
 The conversation is from {project_desc}.
