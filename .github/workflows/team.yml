@@ -26,12 +26,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux x64
+          - name: Linux x64 (musl)
             runner: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - name: Linux arm64
+            target: x86_64-unknown-linux-musl
+          - name: Linux arm64 (musl)
             runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
+            target: aarch64-unknown-linux-musl
 
     steps:
       - name: Checkout memex
@@ -65,10 +65,10 @@ jobs:
           echo "=== memex-rs/Cargo.toml (session-db dep) ==="
           grep "ai-cli-session-db" memex-rs/Cargo.toml
 
-      - name: Install protobuf
+      - name: Install build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libprotobuf-dev
+          sudo apt-get install -y protobuf-compiler libprotobuf-dev musl-tools
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -95,7 +95,7 @@ jobs:
 
       - name: Package
         run: |
-          ARCH="${{ matrix.target == 'x86_64-unknown-linux-gnu' && 'x64' || 'arm64' }}"
+          ARCH="${{ contains(matrix.target, 'x86_64') && 'x64' || 'arm64' }}"
           ARTIFACT="memex-team-linux-${ARCH}"
           mkdir -p "${ARTIFACT}"
           cp deps/ai-cli-session-db/target/${{ matrix.target }}/release/vimo-agent "${ARTIFACT}/"
