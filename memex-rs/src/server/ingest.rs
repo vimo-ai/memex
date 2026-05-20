@@ -224,14 +224,16 @@ impl IngestState {
             r#"INSERT OR IGNORE INTO messages
                (session_id, uuid, type, content_text, content_full, timestamp, sequence,
                 source, channel, model, tool_call_id, tool_name, tool_args, raw,
-                approval_status, approval_resolved_at)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"#,
+                approval_status, approval_resolved_at,
+                input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)"#,
             params![
                 m.session_id, m.uuid, m.msg_type,
                 m.content_text, m.content_full, m.timestamp, m.sequence,
                 m.source, m.channel, m.model,
                 m.tool_call_id, m.tool_name, m.tool_args, m.raw,
-                m.approval_status, m.approval_resolved_at
+                m.approval_status, m.approval_resolved_at,
+                m.input_tokens, m.output_tokens, m.cache_read_input_tokens, m.cache_creation_input_tokens
             ],
         )?;
         Ok(result > 0)
@@ -637,6 +639,8 @@ mod tests {
                     source: None, channel: None, model: None,
                     tool_call_id: None, tool_name: None, tool_args: None,
                     raw: None, approval_status: None, approval_resolved_at: None,
+                    input_tokens: None, output_tokens: None,
+                    cache_read_input_tokens: None, cache_creation_input_tokens: None,
                 },
                 SyncMessage {
                     uuid: "uuid-2".to_string(),
@@ -649,6 +653,8 @@ mod tests {
                     source: None, channel: None, model: None,
                     tool_call_id: None, tool_name: None, tool_args: None,
                     raw: None, approval_status: None, approval_resolved_at: None,
+                    input_tokens: None, output_tokens: None,
+                    cache_read_input_tokens: None, cache_creation_input_tokens: None,
                 },
             ],
             session_relations: vec![],
