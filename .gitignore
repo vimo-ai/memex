@@ -3,6 +3,8 @@ node_modules/
 
 # 构建输出
 dist/
+target/
+docker/build/
 
 # 环境变量
 .env
