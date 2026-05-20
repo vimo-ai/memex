@@ -368,7 +368,10 @@ impl IngestState {
                 s.pushed_by,
                 COUNT(DISTINCT s.session_id),
                 COALESCE(SUM(s.message_count), 0),
-                MAX(s.updated_at),
+                MAX(MAX(s.updated_at), COALESCE(
+                    (SELECT MAX(d.last_heartbeat_at) FROM sync_devices d WHERE d.username = s.pushed_by),
+                    0
+                )),
                 COUNT(DISTINCT CASE WHEN s.updated_at >= ?1 THEN s.session_id END),
                 COALESCE(
                     NULLIF(
@@ -759,6 +762,7 @@ async fn handle_push(
     info!("收到 push: user={}, messages={}", user.name, msg_count);
 
     let result = state.ingest_batch(&user.name, &request.batch);
+    state.update_device_heartbeat(&format!("http-{}", user.name), &user.name, 0);
 
     info!(
         "ingest 完成: accepted={}, skipped={}",
