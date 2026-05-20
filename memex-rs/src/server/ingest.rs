@@ -600,6 +600,7 @@ impl IngestState {
         limit: usize,
         offset: usize,
         order: &str,
+        keyword: Option<&str>,
     ) -> serde_json::Value {
         let conn = self.conn.lock();
 
@@ -612,24 +613,45 @@ impl IngestState {
             return serde_json::json!({"error": "session not found", "session_id": session_id});
         };
 
-        let total: i64 = conn
-            .query_row(
+        let keyword_filter = keyword.map(|k| format!("%{}%", k));
+
+        let total: i64 = if let Some(ref kf) = keyword_filter {
+            conn.query_row(
+                "SELECT COUNT(*) FROM messages WHERE session_id = ?1 AND (content_text LIKE ?2 OR content_full LIKE ?2)",
+                params![sid, kf],
+                |row| row.get(0),
+            )
+            .unwrap_or(0)
+        } else {
+            conn.query_row(
                 "SELECT COUNT(*) FROM messages WHERE session_id = ?1",
                 params![sid],
                 |row| row.get(0),
             )
-            .unwrap_or(0);
-
-        let sql = if order == "desc" {
-            "SELECT uuid, type, CASE WHEN content_text = '' THEN content_full ELSE content_text END, timestamp, sequence
-             FROM messages WHERE session_id = ?1
-             ORDER BY sequence DESC LIMIT ?2 OFFSET ?3"
-        } else {
-            "SELECT uuid, type, CASE WHEN content_text = '' THEN content_full ELSE content_text END, timestamp, sequence
-             FROM messages WHERE session_id = ?1
-             ORDER BY sequence ASC LIMIT ?2 OFFSET ?3"
+            .unwrap_or(0)
         };
 
+        let (sql_asc, sql_desc) = if keyword_filter.is_some() {
+            (
+                "SELECT uuid, type, CASE WHEN content_text = '' THEN content_full ELSE content_text END, timestamp, sequence
+                 FROM messages WHERE session_id = ?1 AND (content_text LIKE ?4 OR content_full LIKE ?4)
+                 ORDER BY sequence ASC LIMIT ?2 OFFSET ?3",
+                "SELECT uuid, type, CASE WHEN content_text = '' THEN content_full ELSE content_text END, timestamp, sequence
+                 FROM messages WHERE session_id = ?1 AND (content_text LIKE ?4 OR content_full LIKE ?4)
+                 ORDER BY sequence DESC LIMIT ?2 OFFSET ?3",
+            )
+        } else {
+            (
+                "SELECT uuid, type, CASE WHEN content_text = '' THEN content_full ELSE content_text END, timestamp, sequence
+                 FROM messages WHERE session_id = ?1
+                 ORDER BY sequence ASC LIMIT ?2 OFFSET ?3",
+                "SELECT uuid, type, CASE WHEN content_text = '' THEN content_full ELSE content_text END, timestamp, sequence
+                 FROM messages WHERE session_id = ?1
+                 ORDER BY sequence DESC LIMIT ?2 OFFSET ?3",
+            )
+        };
+
+        let sql = if order == "desc" { sql_desc } else { sql_asc };
         let limit = limit.min(200);
 
         let mut stmt = match conn.prepare(sql) {
@@ -640,8 +662,8 @@ impl IngestState {
             }
         };
 
-        let messages: Vec<serde_json::Value> = stmt
-            .query_map(params![sid, limit as i64, offset as i64], |row| {
+        let messages: Vec<serde_json::Value> = if let Some(ref kf) = keyword_filter {
+            stmt.query_map(params![sid, limit as i64, offset as i64, kf], |row| {
                 Ok(serde_json::json!({
                     "uuid": row.get::<_, String>(0)?,
                     "role": row.get::<_, String>(1)?,
@@ -652,7 +674,21 @@ impl IngestState {
             })
             .ok()
             .map(|r| r.filter_map(|v| v.ok()).collect())
-            .unwrap_or_default();
+            .unwrap_or_default()
+        } else {
+            stmt.query_map(params![sid, limit as i64, offset as i64], |row| {
+                Ok(serde_json::json!({
+                    "uuid": row.get::<_, String>(0)?,
+                    "role": row.get::<_, String>(1)?,
+                    "text": row.get::<_, String>(2)?,
+                    "timestamp": row.get::<_, i64>(3)?,
+                    "sequence": row.get::<_, i64>(4)?,
+                }))
+            })
+            .ok()
+            .map(|r| r.filter_map(|v| v.ok()).collect())
+            .unwrap_or_default()
+        };
 
         let has_more = (offset + messages.len()) < total as usize;
 
@@ -949,6 +985,8 @@ struct SessionMessagesQuery {
     offset: usize,
     #[serde(default = "default_order")]
     order: String,
+    #[serde(default)]
+    q: Option<String>,
 }
 
 fn default_session_limit() -> usize {
@@ -968,7 +1006,7 @@ async fn handle_session_messages(
     if !user.is_admin {
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "admin access required"}))).into_response();
     }
-    let result = state.query_session_messages(&id, params.limit, params.offset, &params.order);
+    let result = state.query_session_messages(&id, params.limit, params.offset, &params.order, params.q.as_deref());
     (StatusCode::OK, Json(result)).into_response()
 }
 
