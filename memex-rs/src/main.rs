@@ -67,18 +67,21 @@ async fn main() -> anyhow::Result<()> {
                 println!("Options:");
                 println!("  -V, --version    Show version");
                 println!("  -h, --help       Show help");
-                println!();
-                println!("Environment:");
-                println!("  PORT                 Server port (default: 10013)");
-                println!("  MEMEX_DATA_DIR       Data directory (default: ~/.vimo/db)");
-                println!("  MEMEX_WEB_DIR        Web static files (default: ~/.vimo/memex/web)");
-                println!("  OLLAMA_API           Ollama API URL (default: http://localhost:11434)");
-                println!("  EMBEDDING_MODEL      Embedding model (default: bge-m3)");
-                println!("  CHAT_MODEL           Chat model (default: qwen3:0.6b)");
-                println!("  ENABLE_AI_CHAT       Enable AI chat (default: false)");
-                println!();
-                println!("Config file: ~/.vimo/memex/config.json");
-                println!("  Example: {{\"compact\": {{\"enabled\": true}}}}");
+                #[cfg(not(feature = "team"))]
+                {
+                    println!();
+                    println!("Environment:");
+                    println!("  PORT                 Server port (default: 10013)");
+                    println!("  MEMEX_DATA_DIR       Data directory (default: ~/.vimo/db)");
+                    println!("  MEMEX_WEB_DIR        Web static files (default: ~/.vimo/memex/web)");
+                    println!("  OLLAMA_API           Ollama API URL (default: http://localhost:11434)");
+                    println!("  EMBEDDING_MODEL      Embedding model (default: bge-m3)");
+                    println!("  CHAT_MODEL           Chat model (default: qwen3:0.6b)");
+                    println!("  ENABLE_AI_CHAT       Enable AI chat (default: false)");
+                    println!();
+                    println!("Config file: ~/.vimo/memex/config.json");
+                    println!("  Example: {{\"compact\": {{\"enabled\": true}}}}");
+                }
                 return Ok(());
             }
             "archive" => {
@@ -95,20 +98,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // 初始化日志（使用东八区时间 UTC+8）
-    let timer = tracing_subscriber::fmt::time::OffsetTime::new(
-        time::UtcOffset::from_hms(8, 0, 0).unwrap(),
-        time::macros::format_description!(
-            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]+08:00"
-        ),
-    );
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "memex=info,tower_http=debug".into()),
-        )
-        .with(tracing_subscriber::fmt::layer().with_timer(timer))
-        .init();
+    init_logging("memex=info,tower_http=debug");
 
     // 记录启动开始时间
     let startup_start = std::time::Instant::now();
@@ -985,20 +975,7 @@ async fn setup_scheduler(
 
 /// Handle archive command
 async fn handle_archive_command(args: &[String]) -> anyhow::Result<()> {
-    // Initialize logging
-    let timer = tracing_subscriber::fmt::time::OffsetTime::new(
-        time::UtcOffset::from_hms(8, 0, 0).unwrap(),
-        time::macros::format_description!(
-            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]+08:00"
-        ),
-    );
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "memex=info".into()),
-        )
-        .with(tracing_subscriber::fmt::layer().with_timer(timer))
-        .init();
+    init_logging("memex=info");
 
     let config = memex::config::Config::load();
     let archive_dir = config.data_dir.join("archive");
@@ -1143,17 +1120,7 @@ async fn handle_archive_command(args: &[String]) -> anyhow::Result<()> {
 
 /// Handle extract-knowledge command
 async fn handle_extract_knowledge(args: &[String]) -> anyhow::Result<()> {
-    let timer = tracing_subscriber::fmt::time::OffsetTime::new(
-        time::UtcOffset::from_hms(8, 0, 0).unwrap(),
-        time::macros::format_description!("[hour]:[minute]:[second]"),
-    );
-    tracing_subscriber::fmt()
-        .with_timer(timer)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "memex=info".into()),
-        )
-        .init();
+    init_logging("memex=info");
 
     let config = Config::load();
 
@@ -1297,6 +1264,40 @@ fn glob_match(pattern: &str, text: &str) -> bool {
         true
     } else {
         text.contains(pattern)
+    }
+}
+
+fn init_logging(default_filter: &str) {
+    #[cfg(feature = "team")]
+    {
+        use ai_cli_session_db::team::EncryptedLogLayer;
+        let log_path = EncryptedLogLayer::default_log_path();
+        let layer = EncryptedLogLayer::from_team_key(&log_path)
+            .expect("failed to init encrypted log");
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| default_filter.into()),
+            )
+            .with(layer)
+            .init();
+    }
+
+    #[cfg(not(feature = "team"))]
+    {
+        let timer = tracing_subscriber::fmt::time::OffsetTime::new(
+            time::UtcOffset::from_hms(8, 0, 0).unwrap(),
+            time::macros::format_description!(
+                "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]+08:00"
+            ),
+        );
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| default_filter.into()),
+            )
+            .with(tracing_subscriber::fmt::layer().with_timer(timer))
+            .init();
     }
 }
 

@@ -44,3 +44,6 @@ Icon
 # 归档和历史文档
 archive/
 docs/
+
+# Team build secrets
+.team-keys
