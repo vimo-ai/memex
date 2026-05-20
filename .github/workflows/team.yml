@@ -9,11 +9,11 @@ on:
       sync_server:
         description: 'Sync server URL (hard-coded into binary)'
         required: true
-        default: 'https://memex.internal:10013'
+        default: 'https://***REMOVED-domain***:10013'
 
 env:
   CARGO_TERM_COLOR: always
-  TEAM_SYNC_SERVER: ${{ inputs.sync_server || 'https://memex.internal:10013' }}
+  TEAM_SYNC_SERVER: ${{ inputs.sync_server || 'https://***REMOVED-domain***:10013' }}
   TEAM_LOG_PUBKEY: ${{ secrets.TEAM_LOG_PUBKEY }}
 
 jobs:
