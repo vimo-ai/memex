@@ -13,6 +13,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+#[cfg(feature = "rust-embed")]
 use memex::embedded::{embedded_spa_handler, has_embedded_assets};
 use memex::api::{create_router, AppState};
 use memex::archive::ArchiveService;
@@ -589,18 +590,26 @@ async fn main() -> anyhow::Result<()> {
     // 1. MEMEX_WEB_DIR 环境变量（开发模式）
     // 2. 嵌入的 web 资源（生产模式）
     // 3. 默认 web_dir 目录（向后兼容）
+    #[cfg(feature = "rust-embed")]
     let use_embedded = env::var("MEMEX_WEB_DIR").is_err() && has_embedded_assets();
+    #[cfg(not(feature = "rust-embed"))]
+    let use_embedded = false;
 
     let app = if use_embedded {
-        tracing::info!("📦 Using embedded web assets");
-        create_router(state)
-            .fallback(embedded_spa_handler)
-            .layer(
-                CorsLayer::new()
-                    .allow_origin(Any)
-                    .allow_methods(Any)
-                    .allow_headers(Any),
-            )
+        #[cfg(feature = "rust-embed")]
+        {
+            tracing::info!("📦 Using embedded web assets");
+            create_router(state)
+                .fallback(embedded_spa_handler)
+                .layer(
+                    CorsLayer::new()
+                        .allow_origin(Any)
+                        .allow_methods(Any)
+                        .allow_headers(Any),
+                )
+        }
+        #[cfg(not(feature = "rust-embed"))]
+        unreachable!()
     } else {
         // 使用外部 web 目录
         let web_dir = &config.web_dir;

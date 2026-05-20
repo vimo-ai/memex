@@ -20,7 +20,8 @@ required-features = ["server-mode"]
 
 [features]
 default = ["cli"]
-cli = ["notify", "notify-debouncer-mini", "axum", "tower-http", "tokio-cron-scheduler", "rust-embed", "mime_guess"]
+cli = ["cli-core", "rust-embed", "mime_guess"]
+cli-core = ["notify", "notify-debouncer-mini", "axum", "tower-http", "tokio-cron-scheduler"]
 server-mode = ["axum", "tower-http", "dep:axum-server", "dep:rustls", "dep:rustls-pemfile"]
 team = ["ai-cli-session-db/team"]
 

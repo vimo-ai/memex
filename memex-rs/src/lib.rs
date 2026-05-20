@@ -32,7 +32,7 @@ pub mod api;
 pub mod archive;
 #[cfg(feature = "cli")]
 pub mod backup;
-#[cfg(feature = "cli")]
+#[cfg(all(feature = "cli-core", feature = "rust-embed"))]
 pub mod embedded;
 #[cfg(feature = "cli")]
 pub mod mcp;

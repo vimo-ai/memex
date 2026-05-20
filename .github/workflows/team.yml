@@ -87,7 +87,7 @@ jobs:
       - name: Build memex CLI
         working-directory: memex-rs
         run: |
-          cargo build --release --bin memex --features "cli,team" --target ${{ matrix.target }}
+          cargo build --release --no-default-features --bin memex --features "cli-core,team" --target ${{ matrix.target }}
           strip target/${{ matrix.target }}/release/memex
 
       - name: Package
