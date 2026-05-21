@@ -13,7 +13,7 @@ use axum::{
 use serde::Deserialize;
 use rusqlite::{params, Connection};
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use ai_cli_session_db::schema;
 use ai_cli_session_db::sync::{
@@ -132,13 +132,13 @@ impl IngestState {
 
         for project in &batch.projects {
             if let Err(e) = Self::upsert_project(&tx, project) {
-                debug!("upsert project 失败: {e}");
+                warn!("upsert project 失败: {e}");
             }
         }
 
         for session in &batch.sessions {
             if let Err(e) = Self::upsert_session(&tx, pushed_by, session) {
-                debug!("upsert session 失败: {e}");
+                warn!("upsert session 失败: {e}");
             }
         }
 
@@ -147,8 +147,8 @@ impl IngestState {
                 Ok(true) => result.accepted += 1,
                 Ok(false) => result.skipped += 1,
                 Err(e) => {
-                    debug!("insert message 失败: {e}");
-                    result.skipped += 1;
+                    warn!("insert message 失败: uuid={}, session={}, err={e}", msg.uuid, msg.session_id);
+                    result.failed += 1;
                 }
             }
         }
@@ -749,6 +749,7 @@ impl IngestState {
 struct IngestResult {
     accepted: u64,
     skipped: u64,
+    failed: u64,
 }
 
 // ==================== HTTP handlers ====================
@@ -765,8 +766,8 @@ async fn handle_push(
     state.update_device_heartbeat(&format!("http-{}", user.name), &user.name, 0);
 
     info!(
-        "ingest 完成: accepted={}, skipped={}",
-        result.accepted, result.skipped
+        "ingest 完成: accepted={}, skipped={}, failed={}",
+        result.accepted, result.skipped, result.failed
     );
 
     let response = SyncPushResponse {
@@ -775,7 +776,15 @@ async fn handle_push(
         server_cursors: request.cursors,
     };
 
-    (StatusCode::OK, Json(response))
+    if result.failed > 0 {
+        error!(
+            "ingest 有 {} 条消息写入失败，返回 500 让客户端重试",
+            result.failed
+        );
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(response))
+    } else {
+        (StatusCode::OK, Json(response))
+    }
 }
 
 async fn handle_peers(
