@@ -1981,6 +1981,10 @@ mod tests {
                     raw: None,
                     approval_status: None,
                     approval_resolved_at: None,
+                    input_tokens: None,
+                    output_tokens: None,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                 })
                 .collect();
             session_db.insert_messages(session_id, &messages).unwrap();
@@ -2298,6 +2302,10 @@ mod tests {
                     raw: None,
                     approval_status: None,
                     approval_resolved_at: None,
+                    input_tokens: None,
+                    output_tokens: None,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                 })
                 .collect();
             session_db.insert_messages(session_a, &messages_a).unwrap();
@@ -2329,6 +2337,10 @@ mod tests {
                     raw: None,
                     approval_status: None,
                     approval_resolved_at: None,
+                    input_tokens: None,
+                    output_tokens: None,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
                 })
                 .collect();
             session_db.insert_messages(session_b, &messages_b).unwrap();
