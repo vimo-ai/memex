@@ -67,7 +67,6 @@ async fn main() -> anyhow::Result<()> {
                 println!("Options:");
                 println!("  -V, --version    Show version");
                 println!("  -h, --help       Show help");
-                #[cfg(not(feature = "team"))]
                 {
                     println!();
                     println!("Environment:");
@@ -1310,22 +1309,6 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 }
 
 fn init_logging(default_filter: &str) {
-    #[cfg(feature = "team")]
-    {
-        use ai_cli_session_db::team::EncryptedLogLayer;
-        let log_path = EncryptedLogLayer::default_log_path();
-        let layer =
-            EncryptedLogLayer::from_team_key(&log_path).expect("failed to init encrypted log");
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| default_filter.into()),
-            )
-            .with(layer)
-            .init();
-    }
-
-    #[cfg(not(feature = "team"))]
     {
         let timer = tracing_subscriber::fmt::time::OffsetTime::new(
             time::UtcOffset::from_hms(8, 0, 0).unwrap(),
