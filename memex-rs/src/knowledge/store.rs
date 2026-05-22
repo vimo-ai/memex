@@ -520,6 +520,7 @@ pub struct PendingProject {
 
 // ==================== Schema ====================
 
+#[cfg(test)]
 impl KnowledgeStore {
     fn new_in_memory() -> Self {
         let conn = Connection::open_in_memory().unwrap();

@@ -115,6 +115,7 @@ impl Extractor {
 
     /// Two-pass LLM extraction: analysis → structured JSON → KnowledgeNodes.
     /// For long sessions, processes each chunk independently and merges results.
+    #[allow(clippy::too_many_arguments)]
     pub async fn extract_nodes(
         &self,
         chat: &dyn ChatProvider,
