@@ -297,6 +297,7 @@ fn log_endpoints(has_register: bool) {
     tracing::info!("  GET  /api/sync/peers/{{name}}/sessions   - Peer sessions [admin]");
     tracing::info!("  GET  /api/sync/peers/{{name}}/timeline   - Peer timeline [admin]");
     tracing::info!("  GET  /api/sessions/{{id}}/messages       - Session messages [admin]");
+    tracing::info!("  GET  /api/sync/pull                     - Download peer L0 sessions [admin]");
     tracing::info!("  GET  /api/search                       - Search (FTS/vector/hybrid)");
     if has_register {
         tracing::info!("  POST /api/auth/register                - Self-registration");

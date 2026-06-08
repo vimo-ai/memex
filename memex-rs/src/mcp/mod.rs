@@ -188,7 +188,7 @@ fn get_tools() -> Vec<Value> {
                     "to": { "type": "string", "description": "End date YYYY-MM-DD (forces raw level for accuracy)" },
                     "limit": { "type": "number", "description": "Max results, default 5" },
                     "sessionId": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Filter to specific session(s). Supports prefix matching (e.g. 'abc12' matches 'abc12345-...')" },
-                    "source": { "type": "string", "enum": ["local", "remote", "all"], "description": "Search source: local (default), remote (sync server only), all (local + remote merge)" }
+                    "source": { "type": "string", "enum": ["local", "remote", "all", "peers"], "description": "Search source: local (default), remote (sync server only), all (local + remote merge), peers (local peers.db pulled via 'memex pull')" }
                 },
                 "required": ["query"]
             }
@@ -443,6 +443,24 @@ async fn search_history(state: &AppState, args: Value) -> Result<Value, String> 
                     .to_string(),
             ),
         };
+    }
+
+    // peers-only: 查本地 peers.db（pull 下来的他人 session，FTS5）
+    if source == "peers" {
+        let peers_path = state
+            .config
+            .db_path()
+            .parent()
+            .map(|p| p.join("peers.db"))
+            .ok_or_else(|| "cannot locate peers.db".to_string())?;
+        let results = crate::pull::PeersDb::search_readonly(&peers_path, query, limit)
+            .map_err(|e| format!("peers search failed: {e}"))?;
+        return Ok(json!({
+            "results": results,
+            "total": results.len(),
+            "level": level,
+            "source": "peers"
+        }));
     }
 
     // 构建项目过滤器

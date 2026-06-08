@@ -22,6 +22,7 @@ use ai_cli_session_db::sync::{
 };
 
 use crate::auth::{AuthState, AuthenticatedUser};
+use crate::pull::{PullCursor, PullMessage, PullPage, PullProject, PullSession};
 
 use parking_lot::Mutex;
 
@@ -730,6 +731,167 @@ impl IngestState {
         })
     }
 
+    /// 导出某个 peer 的 L0 原文，按 (updated_at, session_id) keyset 分页。
+    ///
+    /// 纯 SELECT，不跑任何检索/LLM —— 把算力留在客户端。
+    pub fn export_l0_page(
+        &self,
+        peer: Option<&str>,
+        session_id: Option<&str>,
+        start: Option<i64>,
+        end: Option<i64>,
+        cursor: Option<PullCursor>,
+        limit: usize,
+    ) -> PullPage {
+        let conn = self.conn.lock();
+        let limit = limit.clamp(1, 100);
+
+        // 1) 按游标翻页拉 sessions（含 project 路径/名称）。
+        //    支持两种过滤：按 peer(+时间段) 或 按单个 session_id，至少给一个。
+        let mut sql = String::from(
+            "SELECT s.session_id, p.path, p.name, s.model, s.cwd,
+                    s.message_count, s.created_at, s.updated_at, s.pushed_by
+             FROM sessions s JOIN projects p ON p.id = s.project_id
+             WHERE 1=1",
+        );
+        let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(pe) = peer {
+            sql.push_str(&format!(" AND s.pushed_by = ?{}", binds.len() + 1));
+            binds.push(Box::new(pe.to_string()));
+        }
+        if let Some(sid) = session_id {
+            sql.push_str(&format!(" AND s.session_id = ?{}", binds.len() + 1));
+            binds.push(Box::new(sid.to_string()));
+        }
+        if let Some(st) = start {
+            sql.push_str(&format!(" AND s.updated_at >= ?{}", binds.len() + 1));
+            binds.push(Box::new(st));
+        }
+        if let Some(en) = end {
+            sql.push_str(&format!(" AND s.updated_at <= ?{}", binds.len() + 1));
+            binds.push(Box::new(en));
+        }
+        if let Some(ref c) = cursor {
+            let a = binds.len() + 1;
+            let b = binds.len() + 2;
+            sql.push_str(&format!(
+                " AND (s.updated_at > ?{a} OR (s.updated_at = ?{a} AND s.session_id > ?{b}))"
+            ));
+            binds.push(Box::new(c.updated_at));
+            binds.push(Box::new(c.session_id.clone()));
+        }
+        sql.push_str(&format!(
+            " ORDER BY s.updated_at ASC, s.session_id ASC LIMIT ?{}",
+            binds.len() + 1
+        ));
+        binds.push(Box::new(limit as i64));
+
+        let bind_refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+
+        let mut stmt = match conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("export_l0_page prepare 失败: {e}");
+                return PullPage::empty();
+            }
+        };
+
+        let sessions: Vec<PullSession> = stmt
+            .query_map(bind_refs.as_slice(), |row| {
+                Ok(PullSession {
+                    session_id: row.get(0)?,
+                    project_path: row.get(1)?,
+                    model: row.get(3)?,
+                    cwd: row.get(4)?,
+                    message_count: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                    pushed_by: row.get(8)?,
+                })
+            })
+            .and_then(|rows| rows.collect())
+            .unwrap_or_default();
+
+        if sessions.is_empty() {
+            return PullPage::empty();
+        }
+
+        // project 去重（一次性收集，project name 跟随 session 行）
+        let mut projects: Vec<PullProject> = Vec::new();
+        {
+            let mut seen = std::collections::HashSet::new();
+            let mut pstmt = conn
+                .prepare(
+                    "SELECT p.path, p.name FROM sessions s JOIN projects p ON p.id = s.project_id
+                     WHERE s.session_id = ?1",
+                )
+                .ok();
+            for s in &sessions {
+                if !seen.insert(s.project_path.clone()) {
+                    continue;
+                }
+                if let Some(ref mut ps) = pstmt {
+                    if let Ok((path, name)) = ps.query_row(params![s.session_id], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    }) {
+                        projects.push(PullProject { path, name });
+                    }
+                }
+            }
+        }
+
+        // 2) 拉这批 session 的全部 L0 消息（IN 占位符）
+        let placeholders: String = (0..sessions.len())
+            .map(|i| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+        let msg_sql = format!(
+            "SELECT session_id, uuid, type, content_text, content_full,
+                    timestamp, sequence, source, model, tool_name
+             FROM messages WHERE session_id IN ({placeholders})
+             ORDER BY session_id, sequence ASC"
+        );
+        let sid_binds: Vec<&dyn rusqlite::ToSql> = sessions
+            .iter()
+            .map(|s| &s.session_id as &dyn rusqlite::ToSql)
+            .collect();
+
+        let messages: Vec<PullMessage> = conn
+            .prepare(&msg_sql)
+            .and_then(|mut ms| {
+                ms.query_map(sid_binds.as_slice(), |row| {
+                    Ok(PullMessage {
+                        session_id: row.get(0)?,
+                        uuid: row.get(1)?,
+                        msg_type: row.get(2)?,
+                        content_text: row.get(3)?,
+                        content_full: row.get(4)?,
+                        timestamp: row.get(5)?,
+                        sequence: row.get(6)?,
+                        source: row.get(7)?,
+                        model: row.get(8)?,
+                        tool_name: row.get(9)?,
+                    })
+                })
+                .and_then(|rows| rows.collect())
+            })
+            .unwrap_or_default();
+
+        let has_more = sessions.len() == limit;
+        let next_cursor = sessions.last().map(|s| PullCursor {
+            updated_at: s.updated_at,
+            session_id: s.session_id.clone(),
+        });
+
+        PullPage {
+            projects,
+            sessions,
+            messages,
+            next_cursor: if has_more { next_cursor } else { None },
+            has_more,
+        }
+    }
+
     pub fn mark_device_connected(&self, device_id: &str, username: &str) {
         let conn = self.conn.lock();
         let now = chrono::Utc::now().timestamp_millis();
@@ -1036,6 +1198,76 @@ async fn handle_peer_sessions(
     (StatusCode::OK, Json(sessions)).into_response()
 }
 
+#[derive(Deserialize)]
+struct PullQuery {
+    #[serde(default)]
+    peer: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    start: Option<i64>,
+    #[serde(default)]
+    end: Option<i64>,
+    #[serde(default)]
+    cursor_ts: Option<i64>,
+    #[serde(default)]
+    cursor_sid: Option<String>,
+    #[serde(default = "default_pull_limit")]
+    limit: usize,
+}
+
+fn default_pull_limit() -> usize {
+    20
+}
+
+async fn handle_pull(
+    State(state): State<Arc<IngestState>>,
+    Extension(user): Extension<AuthenticatedUser>,
+    Query(params): Query<PullQuery>,
+) -> impl IntoResponse {
+    if !user.is_admin {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "admin access required"})),
+        )
+            .into_response();
+    }
+
+    if params.peer.is_none() && params.session_id.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "must provide peer or session_id"})),
+        )
+            .into_response();
+    }
+
+    let cursor = match (params.cursor_ts, params.cursor_sid) {
+        (Some(updated_at), Some(session_id)) => Some(PullCursor {
+            updated_at,
+            session_id,
+        }),
+        _ => None,
+    };
+
+    let page = state.export_l0_page(
+        params.peer.as_deref(),
+        params.session_id.as_deref(),
+        params.start,
+        params.end,
+        cursor,
+        params.limit,
+    );
+    info!(
+        "pull: peer={:?}, session_id={:?}, sessions={}, messages={}, has_more={}",
+        params.peer,
+        params.session_id,
+        page.sessions.len(),
+        page.messages.len(),
+        page.has_more
+    );
+    (StatusCode::OK, Json(page)).into_response()
+}
+
 async fn handle_peer_timeline(
     State(state): State<Arc<IngestState>>,
     Extension(user): Extension<AuthenticatedUser>,
@@ -1055,6 +1287,7 @@ pub fn create_sync_router(state: Arc<IngestState>) -> Router {
         .route("/api/sync/peers", get(handle_peers))
         .route("/api/sync/peers/{name}/sessions", get(handle_peer_sessions))
         .route("/api/sync/peers/{name}/timeline", get(handle_peer_timeline))
+        .route("/api/sync/pull", get(handle_pull))
         .route("/api/sessions/{id}/messages", get(handle_session_messages))
         .route("/api/sync/stream", get(handle_ws_upgrade))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))

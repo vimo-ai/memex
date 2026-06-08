@@ -25,6 +25,9 @@ pub mod vector;
 // 只读数据库（替代 SharedDbAdapter）
 pub mod db_reader;
 
+// Pull / Download —— 拉取他人 session 到本地 peers.db（传输类型两端共享）
+pub mod pull;
+
 // CLI 专用模块
 #[cfg(feature = "cli-core")]
 pub mod api;

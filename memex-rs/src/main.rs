@@ -64,6 +64,13 @@ async fn main() -> anyhow::Result<()> {
                 println!("    --dry-run          Preview only, don't write DB");
                 println!("    --desc <text>      Project description for LLM prompts");
                 println!();
+                println!("  pull                 Download peer/session L0 to local peers.db");
+                println!("    --peer <name>      Pull all of a peer's sessions");
+                println!("    --session <id>     Pull a single session by id");
+                println!("    --start <date>     Start date YYYY-MM-DD (with --peer)");
+                println!("    --end <date>       End date YYYY-MM-DD (with --peer)");
+                println!("    (need --peer or --session; uses sync_api_key admin key from config)");
+                println!();
                 println!("Options:");
                 println!("  -V, --version    Show version");
                 println!("  -h, --help       Show help");
@@ -92,6 +99,9 @@ async fn main() -> anyhow::Result<()> {
             }
             "extract-knowledge" => {
                 return handle_extract_knowledge(&args[2..]).await;
+            }
+            "pull" => {
+                return handle_pull_command(&args[2..]).await;
             }
             _ => {
                 eprintln!("Unknown argument: {}", args[1]);
@@ -1335,4 +1345,166 @@ async fn store_get_unprocessed(
     let store = KnowledgeStore::new(Arc::new(tokio::sync::Mutex::new(conn)));
     store.ensure_schema().await?;
     store.get_unprocessed_sessions(project_ids, limit).await
+}
+
+/// `memex pull --peer <name> [--start YYYY-MM-DD] [--end YYYY-MM-DD]`
+///
+/// 从 sync server 拉取某个 peer 的 L0 原文到本地 peers.db，之后本地搜索零负载于 server。
+/// 需要 admin key（server 端 /api/sync/pull 为 admin-only）。
+async fn handle_pull_command(args: &[String]) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    init_logging("memex=info");
+    let config = Config::load();
+
+    let server = config.sync_server.clone().ok_or_else(|| {
+        anyhow::anyhow!("sync_server 未配置（~/.vimo/memex/config.json 的 sync.server）")
+    })?;
+    let api_key = config
+        .sync_api_key
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("sync_api_key 未配置（pull 需要 admin key）"))?;
+
+    // 解析参数
+    let mut peer: Option<String> = None;
+    let mut session_id: Option<String> = None;
+    let mut start: Option<i64> = None;
+    let mut end: Option<i64> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--peer" => {
+                i += 1;
+                peer = args.get(i).cloned();
+            }
+            "--session" => {
+                i += 1;
+                session_id = args.get(i).cloned();
+            }
+            "--start" => {
+                i += 1;
+                start = args.get(i).and_then(|d| pull_date_to_ms(d, false));
+            }
+            "--end" => {
+                i += 1;
+                end = args.get(i).and_then(|d| pull_date_to_ms(d, true));
+            }
+            other => {
+                eprintln!("Unknown option: {other}");
+                std::process::exit(1);
+            }
+        }
+        i += 1;
+    }
+    if peer.is_none() && session_id.is_none() {
+        anyhow::bail!("需指定 --peer <name> 或 --session <id>");
+    }
+
+    // 构建 HTTP client（可选 CA cert，与远程搜索一致）
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
+    if let Some(ref ca_path) = config.sync_ca_cert {
+        let expanded = pull_expand_tilde(ca_path);
+        match std::fs::read(&expanded) {
+            Ok(pem) => match reqwest::Certificate::from_pem(&pem) {
+                Ok(cert) => builder = builder.add_root_certificate(cert),
+                Err(e) => tracing::warn!("解析 CA cert 失败: {e}"),
+            },
+            Err(e) => tracing::warn!("读取 CA cert {} 失败: {e}", expanded.display()),
+        }
+    }
+    let client = builder.use_rustls_tls().build()?;
+    let server = server.trim_end_matches('/').to_string();
+
+    // peers.db 与主库同目录
+    let peers_path = config
+        .db_path()
+        .parent()
+        .map(|p| p.join("peers.db"))
+        .ok_or_else(|| anyhow::anyhow!("无法定位 db 目录"))?;
+    let mut peers_db = memex::pull::PeersDb::open(&peers_path)?;
+    let fallback_peer = peer.clone().unwrap_or_else(|| "unknown".to_string());
+    let target = peer
+        .clone()
+        .map(|p| format!("peer='{p}'"))
+        .or_else(|| session_id.clone().map(|s| format!("session='{s}'")))
+        .unwrap_or_default();
+    println!("📥 pull {target} → {}", peers_path.display());
+
+    let mut cursor: Option<memex::pull::PullCursor> = None;
+    let mut total_sessions = 0usize;
+    let mut total_inserted = 0usize;
+    let mut page_no = 0;
+    loop {
+        page_no += 1;
+        let mut query: Vec<(String, String)> = vec![("limit".into(), "20".into())];
+        if let Some(ref p) = peer {
+            query.push(("peer".into(), p.clone()));
+        }
+        if let Some(ref s) = session_id {
+            query.push(("session_id".into(), s.clone()));
+        }
+        if let Some(s) = start {
+            query.push(("start".into(), s.to_string()));
+        }
+        if let Some(e) = end {
+            query.push(("end".into(), e.to_string()));
+        }
+        if let Some(ref c) = cursor {
+            query.push(("cursor_ts".into(), c.updated_at.to_string()));
+            query.push(("cursor_sid".into(), c.session_id.clone()));
+        }
+
+        let resp = client
+            .get(format!("{server}/api/sync/pull"))
+            .bearer_auth(&api_key)
+            .query(&query)
+            .send()
+            .await
+            .context("pull 请求失败")?;
+
+        let status = resp.status();
+        if status == reqwest::StatusCode::FORBIDDEN {
+            anyhow::bail!("pull 需要 admin key（403 Forbidden）");
+        }
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("pull 返回 {status}: {body}");
+        }
+
+        let page: memex::pull::PullPage = resp.json().await.context("解析 pull 响应失败")?;
+        let n = page.sessions.len();
+        let inserted = peers_db.ingest_page(&fallback_peer, &page)?;
+        total_sessions += n;
+        total_inserted += inserted;
+        println!("  page {page_no}: {n} sessions, +{inserted} messages");
+
+        if !page.has_more {
+            break;
+        }
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    println!("✅ 完成: {total_sessions} sessions, {total_inserted} 条新消息写入 peers.db");
+    Ok(())
+}
+
+fn pull_date_to_ms(date: &str, end_of_day: bool) -> Option<i64> {
+    let nd = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+    let t = if end_of_day {
+        nd.and_hms_opt(23, 59, 59)?
+    } else {
+        nd.and_hms_opt(0, 0, 0)?
+    };
+    Some(t.and_utc().timestamp_millis())
+}
+
+fn pull_expand_tilde(p: &str) -> std::path::PathBuf {
+    if let Some(rest) = p.strip_prefix("~/") {
+        if let Some(h) = dirs::home_dir() {
+            return h.join(rest);
+        }
+    }
+    std::path::PathBuf::from(p)
 }
